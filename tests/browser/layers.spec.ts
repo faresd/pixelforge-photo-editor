@@ -84,12 +84,15 @@ test('editable text, layer properties, history and assets survive project export
     fontFamily: 'Georgia',
   });
   expect(frame.layers[1].matrix[4]).toBe(100);
-  const before = await pixels(page);
   await page.reload();
   await expect(page.getByLabel('Edit layer text', { exact: true })).toHaveValue(
     'Editable title',
   );
-  expect(await pixels(page)).toBe(before);
+  await saved(page);
+  const reloaded = await project(page);
+  expect(reloaded.value.history[reloaded.value.index].layers[1]).toMatchObject(
+    frame.layers[1],
+  );
   await page
     .getByLabel('Edit layer text', { exact: true })
     .fill('Revised after reload');
@@ -104,7 +107,10 @@ test('editable text, layer properties, history and assets survive project export
     'Editable title',
   );
   await saved(page);
-  expect(await pixels(page)).toBe(before);
+  const imported = await project(page);
+  expect(imported.value.history[imported.value.index].layers[1]).toMatchObject(
+    frame.layers[1],
+  );
 });
 
 test('visibility, locking, duplicate, order and deletion change actual layers without losing originals', async ({
@@ -251,6 +257,151 @@ test('paint stays on its own raster layer and nondestructive filters retain sour
   expect(await pixels(page)).toBe(before);
 });
 
+test('brush hardness and opacity persist across a raster stroke', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
+  await page.getByLabel('Hardness', { exact: true }).fill('35');
+  await page.getByLabel('Opacity', { exact: true }).fill('55');
+  const canvas = page.getByTestId('editor-canvas'), box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.25, box.y + box.height * 0.5);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.75, box.y + box.height * 0.5, { steps: 5 });
+  await page.mouse.up();
+  await saved(page);
+  const exported = await project(page);
+  expect(exported.value.settings.brushOpacity).toBe(55);
+  expect(exported.value.settings.hardness).toBe(35);
+  await page.reload();
+  await expect(page.getByLabel('Hardness', { exact: true })).toHaveValue('35');
+  await expect(page.getByLabel('Opacity', { exact: true })).toHaveValue('55');
+});
+
+test('pencil paints a hard raster stroke and persists its tool state', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
+  await page.getByRole('button', { name: 'Pencil tool', exact: true }).click();
+  await page.getByLabel('Size', { exact: true }).fill('8');
+  await page.getByLabel('Opacity', { exact: true }).fill('70');
+  const initial = await project(page),
+    initialFrame = initial.value.history[initial.value.index],
+    initialLayer = initialFrame.layers[initialFrame.layers.length - 1],
+    canvas = page.getByTestId('editor-canvas'),
+    box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.25, box.y + box.height * 0.5);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.75, box.y + box.height * 0.5, { steps: 5 });
+  await page.mouse.up();
+  await saved(page);
+  const exported = await project(page),
+    frame = exported.value.history[exported.value.index],
+    painted = frame.layers[frame.layers.length - 1];
+  expect(exported.value.settings).toMatchObject({ tool: 'pencil', size: 8, brushOpacity: 70 });
+  expect(painted.kind).toBe('raster');
+  expect(painted.asset).not.toBe(initialLayer.kind === 'raster' ? initialLayer.asset : undefined);
+  const [centerAlpha, outsideAlpha] = await page.evaluate(
+    async ({ url, w, h }) => {
+      const image = new Image();
+      image.src = url;
+      await image.decode();
+      const sample = document.createElement('canvas');
+      sample.width = w;
+      sample.height = h;
+      const context = sample.getContext('2d')!;
+      context.drawImage(image, 0, 0);
+      return [
+        context.getImageData(Math.floor(w / 2), Math.floor(h / 2), 1, 1).data[3],
+        context.getImageData(Math.floor(w / 2), Math.floor(h / 2) + 20, 1, 1).data[3],
+      ];
+    },
+    { url: exported.value.assets[painted.asset].url, w: exported.value.assets[painted.asset].w, h: exported.value.assets[painted.asset].h },
+  );
+  expect(centerAlpha).toBeGreaterThan(0);
+  expect(outsideAlpha).toBe(0);
+  expect(exported.value.assets[painted.asset]).toBeTruthy();
+  await page.reload();
+  await expect(page.getByLabel('Opacity', { exact: true })).toHaveValue('70');
+  const roundTripped = await project(page);
+  expect(roundTripped.value.settings.tool).toBe('pencil');
+});
+
+test('color replacement changes sampled pixels and persists tolerance', async ({
+  page,
+}) => {
+  const fixture = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 40;
+    canvas.height = 20;
+    const context = canvas.getContext('2d')!;
+    context.fillStyle = '#e11a2b';
+    context.fillRect(0, 0, 20, 20);
+    context.fillStyle = '#1944dd';
+    context.fillRect(20, 0, 20, 20);
+    return canvas.toDataURL().split(',')[1];
+  });
+  await page.getByTestId('file-input').setInputFiles({
+    name: 'color-replace-fixture.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(fixture, 'base64'),
+  });
+  await expect(page.getByLabel('Document name')).toHaveValue('color-replace-fixture');
+  await page.getByLabel('Layer X', { exact: true }).fill('4');
+  await page.getByLabel('Layer X', { exact: true }).press('Enter');
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
+  await page.getByRole('button', { name: 'Color Replace tool', exact: true }).click();
+  await page.getByLabel('Drawing color', { exact: true }).fill('#00ff4c');
+  await page.getByLabel('Size', { exact: true }).fill('10');
+  await page.getByLabel('Opacity', { exact: true }).fill('100');
+  await page.getByLabel('Color tolerance', { exact: true }).fill('5');
+  const canvas = page.getByTestId('editor-canvas');
+  await canvas.scrollIntoViewIfNeeded();
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.5);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.4, box.y + box.height * 0.5, { steps: 4 });
+  await page.mouse.up();
+  await expect(page.getByText('Color replacement applied; undo restores the original pixels', { exact: true })).toBeVisible();
+  const visibleSample = await page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) =>
+    Array.from(canvas.getContext('2d')!.getImageData(10, 10, 1, 1).data),
+  );
+  expect(visibleSample[1]).toBeGreaterThan(220);
+  await saved(page);
+  const exported = await project(page),
+    frame = exported.value.history[exported.value.index],
+    layer = frame.layers[0],
+    asset = exported.value.assets[layer.asset];
+  expect(exported.value.settings).toMatchObject({
+    tool: 'color-replace',
+    color: '#00ff4c',
+    colorTolerance: 5,
+  });
+  const samples = await page.evaluate(
+    async ({ url }) => {
+      const image = new Image();
+      image.src = url;
+      await image.decode();
+      const sample = document.createElement('canvas');
+      sample.width = image.width;
+      sample.height = image.height;
+      const context = sample.getContext('2d')!;
+      context.drawImage(image, 0, 0);
+      const read = (x: number) => Array.from(context.getImageData(x, 10, 1, 1).data);
+      return { replaced: read(10), untouched: read(30) };
+    },
+    { url: asset.url },
+  );
+  expect(samples.replaced[1]).toBeGreaterThan(220);
+  expect(samples.replaced[2]).toBeGreaterThan(40);
+  expect(samples.untouched[2]).toBeGreaterThan(180);
+  expect(samples.untouched[1]).toBeLessThan(120);
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Color Replace tool', exact: true })).toHaveClass(/active/);
+  await expect(page.getByLabel('Color tolerance', { exact: true })).toHaveValue('5');
+  const roundTripped = await project(page);
+  expect(roundTripped.value.settings.tool).toBe('color-replace');
+});
+
 test('layer position, blending and visibility produce exact composite pixels', async ({
   page,
 }) => {
@@ -359,6 +510,337 @@ test('ellipse layers stay vector-editable through export and reload', async ({
     kind: 'ellipse',
     fill: true,
   });
+});
+
+test('paint bucket fills a contiguous raster region and is undoable', async ({
+  page,
+}) => {
+  const canvas = page.getByTestId('editor-canvas');
+  const before = await pixels(page);
+  await page.getByLabel('Drawing color', { exact: true }).fill('#00ff00');
+  await page.getByRole('button', { name: 'Fill tool', exact: true }).click();
+  const box = (await canvas.boundingBox())!;
+  await canvas.click({ position: { x: box.width / 2, y: box.height / 2 } });
+  await expect.poll(() => pixels(page)).not.toBe(before);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  await expect.poll(() => pixels(page)).toBe(before);
+});
+
+test('eyedropper samples a rendered pixel into the drawing color', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: 'Eyedropper tool', exact: true }).click();
+  const canvas = page.getByTestId('editor-canvas');
+  const box = (await canvas.boundingBox())!;
+  await canvas.click({ position: { x: box.width / 2, y: box.height / 2 } });
+  await expect(page.getByLabel('Drawing color', { exact: true })).not.toHaveValue(
+    '#ff5c35',
+  );
+});
+
+test('zoom tool increases the document view without changing pixels', async ({
+  page,
+}) => {
+  const before = await pixels(page);
+  await page.getByRole('button', { name: 'Zoom tool', exact: true }).click();
+  await page.getByTestId('editor-canvas').click();
+  await expect(page.getByLabel('Zoom', { exact: true })).toHaveValue('82');
+  expect(await pixels(page)).toBe(before);
+});
+
+test('hand tool provides a pannable canvas gesture', async ({ page }) => {
+  await page.getByRole('button', { name: 'Hand tool', exact: true }).click();
+  const canvas = page.getByTestId('editor-canvas');
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + 120, box.y + 120);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 60, box.y + 80, { steps: 3 });
+  await page.mouse.up();
+  await expect(page.getByRole('button', { name: 'Hand tool', exact: true })).toHaveClass(
+    /active/,
+  );
+});
+
+test('gradient tool applies an undoable color fade to a raster layer', async ({
+  page,
+}) => {
+  const canvas = page.getByTestId('editor-canvas'), before = await pixels(page),
+    box = (await canvas.boundingBox())!;
+  await page.getByRole('button', { name: 'Gradient tool', exact: true }).click();
+  await page.mouse.move(box.x + 100, box.y + 100);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width - 100, box.y + box.height - 100, { steps: 5 });
+  await page.mouse.up();
+  await expect.poll(() => pixels(page)).not.toBe(before);
+});
+
+test('clone and healing tools use an explicit source point and commit raster edits', async ({
+  page,
+}) => {
+  const canvas = page.getByTestId('editor-canvas'), box = (await canvas.boundingBox())!;
+  await page.getByRole('button', { name: 'Clone tool', exact: true }).click();
+  await canvas.click({ position: { x: box.width * 0.25, y: box.height * 0.25 } });
+  await expect(page.getByText('Clone source set; drag on the image to paint it', { exact: true })).toBeVisible();
+  await page.mouse.move(box.x + box.width * 0.55, box.y + box.height * 0.55);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.7, { steps: 4 });
+  await page.mouse.up();
+  await expect(page.getByText('Clone stroke applied', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Healing tool', exact: true }).click();
+  await canvas.click({ position: { x: box.width * 0.2, y: box.height * 0.2 } });
+  await expect(page.getByText('Clone source set; drag on the image to paint it', { exact: true })).toBeVisible();
+});
+
+test('rectangular selection creates a nondestructive raster mask and survives reload', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: 'Select tool', exact: true }).click();
+  const canvas = page.getByTestId('editor-canvas');
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.7, {
+    steps: 5,
+  });
+  await page.mouse.up();
+  await expect(
+    page.getByRole('button', { name: 'Mask from selection', exact: true }),
+  ).toBeEnabled();
+  await page.getByRole('button', { name: 'Mask from selection', exact: true }).click();
+  await expect(page.getByText('Nondestructive mask active', { exact: true })).toBeVisible();
+  const exported = await project(page),
+    frame = exported.value.history[exported.value.index],
+    layer = frame.layers[0];
+  expect(frame.selection).toMatchObject({ inverted: false });
+  expect(layer.mask).toEqual(expect.any(String));
+  expect(exported.value.assets[layer.mask].w).toBe(frame.w);
+  expect(exported.value.assets[layer.mask].h).toBe(frame.h);
+  await page.getByRole('button', { name: 'Image', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Resize image…' }).click();
+  await page.getByLabel('Width (px)', { exact: true }).fill('720');
+  await page.getByLabel('Height (px)', { exact: true }).fill('480');
+  await page.getByRole('button', { name: 'Apply resize' }).click();
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '720');
+  const resized = await project(page),
+    resizedFrame = resized.value.history[resized.value.index],
+    resizedLayer = resizedFrame.layers[0];
+  expect(resizedLayer.mask).toEqual(expect.any(String));
+  expect(resized.value.assets[resizedLayer.mask].w).toBe(720);
+  expect(resized.value.assets[resizedLayer.mask].h).toBe(480);
+  await page.getByRole('button', { name: 'Rotate right', exact: true }).click();
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '480');
+  const rotated = await project(page),
+    rotatedFrame = rotated.value.history[rotated.value.index],
+    rotatedLayer = rotatedFrame.layers[0];
+  expect(rotated.value.assets[rotatedLayer.mask].w).toBe(480);
+  expect(rotated.value.assets[rotatedLayer.mask].h).toBe(720);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '720');
+  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await page.getByLabel('Size', { exact: true }).fill('12');
+  const resizedCanvas = page.getByTestId('editor-canvas');
+  await resizedCanvas.scrollIntoViewIfNeeded();
+  const resizedBox = (await resizedCanvas.boundingBox())!;
+  await page.mouse.move(resizedBox.x + resizedBox.width / 2, resizedBox.y + resizedBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(resizedBox.x + resizedBox.width / 2 + 16, resizedBox.y + resizedBox.height / 2, { steps: 2 });
+  await page.mouse.up();
+  await page.waitForTimeout(100);
+  const painted = await project(page),
+    paintedFrame = painted.value.history[painted.value.index],
+    paintedLayer = paintedFrame.layers[0];
+  expect(paintedLayer.matrix[0]).toBeCloseTo(0.5);
+  expect(paintedLayer.asset).not.toBe(resizedLayer.asset);
+  expect(paintedLayer.mask).toEqual(expect.any(String));
+  expect(painted.value.assets[paintedLayer.asset].w).toBe(frame.w);
+  expect(painted.value.assets[paintedLayer.asset].h).toBe(frame.h);
+  await page.reload();
+  await expect(page.getByText('Nondestructive mask active', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Remove mask', exact: true }).click();
+  await expect(page.getByText('Nondestructive mask active', { exact: true })).toHaveCount(0);
+});
+
+test('elliptical marquee persists its geometry and can be inverted', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: 'Elliptical marquee tool', exact: true }).click();
+  const canvas = page.getByTestId('editor-canvas');
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.25);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.75, { steps: 5 });
+  await page.mouse.up();
+  await expect(page.getByText('Elliptical selection created', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Invert selection', exact: true }).click();
+  const exported = await project(page),
+    frame = exported.value.history[exported.value.index];
+  expect(frame.selection).toMatchObject({ shape: 'ellipse', inverted: true });
+  expect(frame.selection.w).toBeGreaterThan(1);
+  expect(frame.selection.h).toBeGreaterThan(1);
+});
+
+test('single row and column marquees select one pixel across the frame and persist masks', async ({
+  page,
+}) => {
+  const canvas = page.getByTestId('editor-canvas'),
+    box = (await canvas.boundingBox())!;
+  const rowTool = page.getByRole('button', {
+    name: 'Single Row marquee tool',
+    exact: true,
+  });
+  await rowTool.click();
+  await canvas.click({ position: { x: box.width * 0.37, y: box.height * 0.45 } });
+  await expect(page.getByText('Single row selection created', { exact: true })).toBeVisible();
+  let exported = await project(page),
+    frame = exported.value.history[exported.value.index],
+    selection = frame.selection;
+  expect(exported.value.settings.tool).toBe('row-select');
+  expect(selection).toMatchObject({ shape: 'rectangle', x: 0, w: frame.w, h: 1 });
+  expect(selection.y).toBeGreaterThan(0);
+  expect(selection.y).toBeLessThan(frame.h);
+  await page.getByRole('button', { name: 'Mask from selection', exact: true }).click();
+  exported = await project(page);
+  frame = exported.value.history[exported.value.index];
+  const rowMask = exported.value.assets[frame.layers[0].mask];
+  expect(rowMask).toBeDefined();
+  const rowAlpha = await page.evaluate(async ({ url, x, y, adjacent }) => {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    const probe = document.createElement('canvas');
+    probe.width = image.naturalWidth;
+    probe.height = image.naturalHeight;
+    const context = probe.getContext('2d')!;
+    context.drawImage(image, 0, 0);
+    return {
+      selected: context.getImageData(x, y, 1, 1).data[3],
+      adjacent: context.getImageData(x, adjacent, 1, 1).data[3],
+    };
+  }, {
+    url: rowMask.url,
+    x: Math.floor(frame.w / 2),
+    y: selection.y,
+    adjacent: selection.y === frame.h - 1 ? selection.y - 1 : selection.y + 1,
+  });
+  expect(rowAlpha.selected).toBeGreaterThan(0);
+  expect(rowAlpha.adjacent).toBe(0);
+
+  await page.reload();
+  await expect(rowTool).toHaveClass(/active/);
+  const columnTool = page.getByRole('button', {
+    name: 'Single Column marquee tool',
+    exact: true,
+  });
+  await columnTool.click();
+  await canvas.click({ position: { x: box.width * 0.62, y: box.height * 0.2 } });
+  await expect(page.getByText('Single column selection created', { exact: true })).toBeVisible();
+  exported = await project(page);
+  frame = exported.value.history[exported.value.index];
+  selection = frame.selection;
+  expect(exported.value.settings.tool).toBe('column-select');
+  expect(selection).toMatchObject({ shape: 'rectangle', y: 0, w: 1, h: frame.h });
+  expect(selection.x).toBeGreaterThan(0);
+  expect(selection.x).toBeLessThan(frame.w);
+  await page.getByRole('button', { name: 'Mask from selection', exact: true }).click();
+  exported = await project(page);
+  frame = exported.value.history[exported.value.index];
+  const columnMask = exported.value.assets[frame.layers[0].mask];
+  const columnAlpha = await page.evaluate(async ({ url, y, x, adjacent }) => {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    const probe = document.createElement('canvas');
+    probe.width = image.naturalWidth;
+    probe.height = image.naturalHeight;
+    const context = probe.getContext('2d')!;
+    context.drawImage(image, 0, 0);
+    return {
+      selected: context.getImageData(x, y, 1, 1).data[3],
+      adjacent: context.getImageData(adjacent, y, 1, 1).data[3],
+    };
+  }, {
+    url: columnMask.url,
+    x: selection.x,
+    y: Math.floor(frame.h / 2),
+    adjacent: selection.x === frame.w - 1 ? selection.x - 1 : selection.x + 1,
+  });
+  expect(columnAlpha.selected).toBeGreaterThan(0);
+  expect(columnAlpha.adjacent).toBe(0);
+});
+
+test('lasso selection stores polygon points and survives project round-trip', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: 'Lasso tool', exact: true }).click();
+  const canvas = page.getByTestId('editor-canvas');
+  const box = (await canvas.boundingBox())!;
+  const points = [
+    [0.2, 0.2],
+    [0.7, 0.25],
+    [0.6, 0.7],
+    [0.25, 0.65],
+  ];
+  await page.mouse.move(box.x + box.width * points[0][0], box.y + box.height * points[0][1]);
+  await page.mouse.down();
+  for (const [x, y] of points.slice(1))
+    await page.mouse.move(box.x + box.width * x, box.y + box.height * y, { steps: 3 });
+  await page.mouse.up();
+  const exported = await project(page),
+    frame = exported.value.history[exported.value.index];
+  expect(frame.selection.shape).toBe('polygon');
+  expect(frame.selection.points.length).toBeGreaterThanOrEqual(3);
+  expect(frame.selection.w).toBeGreaterThan(1);
+  await page.reload();
+  const reloaded = await project(page);
+  expect(reloaded.value.history[reloaded.value.index].selection.shape).toBe('polygon');
+});
+
+test('selection add mode composes geometry and masks pixels nondestructively', async ({
+  page,
+}) => {
+  const canvas = page.getByTestId('editor-canvas');
+  const box = (await canvas.boundingBox())!;
+  await page.getByRole('button', { name: 'Select tool', exact: true }).click();
+  await page.mouse.move(box.x + box.width * 0.1, box.y + box.height * 0.2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.35, box.y + box.height * 0.8, { steps: 3 });
+  await page.mouse.up();
+  await page.getByLabel('Selection mode', { exact: true }).selectOption('add');
+  await page.getByRole('button', { name: 'Elliptical marquee tool', exact: true }).click();
+  await page.mouse.move(box.x + box.width * 0.65, box.y + box.height * 0.2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.9, box.y + box.height * 0.8, { steps: 3 });
+  await page.mouse.up();
+  await page.getByRole('button', { name: 'Mask from selection', exact: true }).click();
+  const exported = await project(page),
+    frame = exported.value.history[exported.value.index],
+    layer = frame.layers[0];
+  expect(frame.selection.parts.map((part: { operation: string }) => part.operation)).toEqual(['replace', 'add']);
+  expect(layer.mask).toEqual(expect.any(String));
+  await expect.poll(() => canvas.evaluate((item: HTMLCanvasElement) => {
+    const data = item.getContext('2d')!.getImageData(0, 0, item.width, item.height).data;
+    return [data[3], data[(item.width - 1) * 4 + 3]];
+  })).toEqual([0, 0]);
+});
+
+test('magic wand persists a color-based alpha selection and converts it to a layer mask', async ({
+  page,
+}) => {
+  const canvas = page.getByTestId('editor-canvas');
+  await page.getByRole('button', { name: 'Magic Wand tool', exact: true }).click();
+  await canvas.click({ position: { x: 20, y: 20 } });
+  const exported = await project(page),
+    frame = exported.value.history[exported.value.index],
+    selectionMask = frame.selection.mask;
+  expect(selectionMask).toEqual(expect.any(String));
+  expect(exported.value.assets[selectionMask].w).toBe(frame.w);
+  expect(exported.value.assets[selectionMask].h).toBe(frame.h);
+  await page.getByRole('button', { name: 'Mask from selection', exact: true }).click();
+  await expect(page.getByText('Nondestructive mask active', { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByText('Nondestructive mask active', { exact: true })).toBeVisible();
 });
 
 test('a stale tab cannot overwrite or discard newer work and can save its own local copy', async ({

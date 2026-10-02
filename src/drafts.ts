@@ -1,4 +1,5 @@
 import type { CloudLink } from './cloud';
+import { EXPORT_FORMATS, validExportQuality, type ExportFormat } from './export';
 import {
   validAsset,
   validateFrame,
@@ -10,13 +11,18 @@ import {
   type Assets,
   type Frame,
 } from './document';
-export type Tool = 'move' | 'crop' | 'brush' | 'eraser' | 'text' | 'rectangle' | 'ellipse';
+export type Tool = 'move' | 'hand' | 'zoom' | 'eyedropper' | 'fill' | 'gradient' | 'clone' | 'heal' | 'crop' | 'brush' | 'pencil' | 'color-replace' | 'eraser' | 'text' | 'rectangle' | 'ellipse' | 'select' | 'ellipse-select' | 'row-select' | 'column-select' | 'lasso' | 'magic-wand';
 export type Shot = { url: string; w: number; h: number };
 export type Settings = {
   tool: Tool;
   zoom: number;
   color: string;
   size: number;
+  brushOpacity?: number;
+  hardness?: number;
+  colorTolerance?: number;
+  exportFormat?: ExportFormat;
+  exportQuality?: number;
   text: string;
   fontSize: number;
   brightness: number;
@@ -40,11 +46,13 @@ let database: Promise<IDBDatabase> | undefined;
 function validSettings(settings: Settings) {
   if (
     !settings ||
-    !['move', 'crop', 'brush', 'eraser', 'text', 'rectangle', 'ellipse'].includes(
+    !['move', 'hand', 'zoom', 'eyedropper', 'fill', 'gradient', 'clone', 'heal', 'crop', 'brush', 'pencil', 'color-replace', 'eraser', 'text', 'rectangle', 'ellipse', 'select', 'ellipse-select', 'row-select', 'column-select', 'lasso', 'magic-wand'].includes(
       settings.tool,
     ) ||
     typeof settings.text !== 'string' ||
     settings.text.length > 10000 ||
+    (settings.exportFormat !== undefined && !EXPORT_FORMATS.includes(settings.exportFormat)) ||
+    (settings.exportQuality !== undefined && !validExportQuality(settings.exportQuality)) ||
     !/^#[a-f\d]{6}$/i.test(settings.color)
   )
     return false;
@@ -53,11 +61,21 @@ function validSettings(settings: Settings) {
     [settings.size, 2, 100],
     [settings.fontSize, 16, 160],
   ];
+  const brushRanges = [
+    [settings.brushOpacity ?? 100, 1, 100],
+    [settings.hardness ?? 100, 1, 100],
+    [settings.colorTolerance ?? 24, 0, 255],
+  ];
   return (
     ranges.every(
       ([value, min, max]) =>
         Number.isFinite(value) && value >= min && value <= max,
-    ) && validAdjustments(settings)
+    ) &&
+    brushRanges.every(
+      ([value, min, max]) =>
+        Number.isFinite(value) && value >= min && value <= max,
+    ) &&
+    validAdjustments(settings)
   );
 }
 export function validateDraft(input: unknown): Draft {

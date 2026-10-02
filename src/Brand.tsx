@@ -3,10 +3,10 @@ import type { ReactNode } from 'react';
 /** First-party lockup: a Cheaply-inspired mark beside PixelForge's pixel mark. */
 export function BrandLockup({ home = false }: { home?: boolean }) {
   return (
-    <a href="/" className="brand-lockup" aria-label="PixelForge by Cheaply">
-      <span className="cheaply-lockup"><span className="cheaply-mark" aria-hidden="true">C</span><span className="cheaply-word">cheaply</span></span>
+    <a href="/" className="brand-lockup" aria-label="Pixel by Cheaply">
+      <span className="cheaply-lockup"><img src="/cheaply-logo-source.png" alt="Cheaply" /></span>
       <span className="brand-plus" aria-hidden="true">×</span>
-      <span className="pixel-lockup"><span className="pixel-mark" aria-hidden="true"><i /><i /><i /><i /></span><span>Pixel<b>Forge</b></span></span>
+      <span className="pixel-lockup"><img className="pixel-symbol" src="/pixel-logo.svg" alt="" aria-hidden="true" /><span>Pixel</span></span>
       {!home && <em>FREE</em>}
     </a>
   );
