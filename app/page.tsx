@@ -58,6 +58,7 @@ import {
   identity,
   neutral,
   rasterFrame,
+  replaceColorStroke,
   renderFrame,
   surface,
   transformFrame,
@@ -115,6 +116,7 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'crop', label: 'Crop', icon: Crop, key: 'C' },
   { id: 'brush', label: 'Brush', icon: Brush, key: 'B' },
   { id: 'pencil', label: 'Pencil', icon: Pencil, key: 'P' },
+  { id: 'color-replace', label: 'Color Replace', icon: Palette, key: 'A' },
   { id: 'eraser', label: 'Eraser', icon: Eraser, key: 'E' },
   { id: 'text', label: 'Text', icon: Type, key: 'T' },
   { id: 'rectangle', label: 'Shape', icon: Shapes, key: 'R' },
@@ -178,6 +180,7 @@ type Gesture = {
   layer?: Layer;
   buffer?: HTMLCanvasElement;
   source?: HTMLCanvasElement;
+  replaceTarget?: [number, number, number, number];
   pending?: Promise<void>;
   queued?: { x: number; y: number }[];
   points?: { x: number; y: number }[];
@@ -214,6 +217,7 @@ export default function Home() {
     [size, setSize] = useState(18),
     [brushOpacity, setBrushOpacity] = useState(100),
     [hardness, setHardness] = useState(100),
+    [colorTolerance, setColorTolerance] = useState(24),
     [text, setText] = useState('Your text'),
     [fontSize, setFontSize] = useState(56);
   const [cloneSource, setCloneSource] = useState<{ x: number; y: number } | null>(null);
@@ -249,6 +253,7 @@ export default function Home() {
     size,
     brushOpacity,
     hardness,
+    colorTolerance,
     text,
     fontSize,
     ...neutral,
@@ -268,6 +273,7 @@ export default function Home() {
     setSize(s.size);
     setBrushOpacity(s.brushOpacity ?? 100);
     setHardness(s.hardness ?? 100);
+    setColorTolerance(s.colorTolerance ?? 24);
     setText(s.text);
     setFontSize(s.fontSize);
   };
@@ -500,7 +506,7 @@ export default function Home() {
       assets: { ...assets.current },
       index: index.current,
       name,
-      settings: { tool, zoom, color, size, brushOpacity, hardness, text, fontSize, ...neutral },
+      settings: { tool, zoom, color, size, brushOpacity, hardness, colorTolerance, text, fontSize, ...neutral },
     };
     saveQueue.current = saveQueue.current
       .then(async () => {
@@ -540,6 +546,7 @@ export default function Home() {
     size,
     brushOpacity,
     hardness,
+    colorTolerance,
     text,
     fontSize,
     history,
@@ -867,6 +874,71 @@ export default function Home() {
       await g.pending;
       return;
     }
+    if (tool === 'color-replace') {
+      if (layer.locked || !layer.visible || layer.kind !== 'raster') {
+        setNotice('Select a visible, unlocked raster layer before replacing colors');
+        return;
+      }
+      const g = {
+        tool,
+        start: p,
+        last: p,
+        frame: f,
+        layer,
+        moved: false,
+      } as Gesture;
+      gesture.current = g;
+      g.pending = (async () => {
+        try {
+          const source = await renderFrame(
+            {
+              ...f,
+              layers: [
+                {
+                  ...layer,
+                  opacity: 1,
+                  blend: 'source-over',
+                  adjustments: { ...neutral },
+                },
+              ],
+            },
+            assets.current,
+          );
+          if (gesture.current !== g) return;
+          const sample = source
+            .getContext('2d')!
+            .getImageData(
+              Math.max(0, Math.min(f.w - 1, Math.floor(p.x))),
+              Math.max(0, Math.min(f.h - 1, Math.floor(p.y))),
+              1,
+              1,
+            ).data;
+          g.source = source;
+          g.replaceTarget = [sample[0], sample[1], sample[2], sample[3]];
+          g.buffer = surface(f.w, f.h);
+          g.buffer.getContext('2d')!.drawImage(source, 0, 0);
+          replaceColorStroke(
+            source,
+            g.buffer,
+            g.replaceTarget,
+            p.x,
+            p.y,
+            p.x,
+            p.y,
+            color,
+            size,
+            colorTolerance,
+            brushOpacity / 100,
+          );
+          void paint(f, { [layer.id]: g.buffer });
+        } catch {
+          gesture.current = null;
+          setNotice('Could not prepare color replacement');
+        }
+      })();
+      await g.pending;
+      return;
+    }
     if (tool === 'gradient') {
       if (layer.locked || !layer.visible || layer.kind !== 'raster') {
         setNotice('Select a visible, unlocked raster layer before applying a gradient');
@@ -1009,6 +1081,24 @@ export default function Home() {
       x.drawImage(g.source, cloneSource.x + dx - radius, cloneSource.y + dy - radius, radius * 2, radius * 2, p.x - radius, p.y - radius, radius * 2, radius * 2);
       x.restore();
       void paint(g.frame, { [g.layer!.id]: g.buffer });
+      g.last = p;
+      return;
+    }
+    if (g.tool === 'color-replace' && g.buffer && g.source && g.replaceTarget && g.layer) {
+      replaceColorStroke(
+        g.source,
+        g.buffer,
+        g.replaceTarget,
+        g.last.x,
+        g.last.y,
+        p.x,
+        p.y,
+        color,
+        size,
+        colorTolerance,
+        (brushOpacity / 100) * pressure(e),
+      );
+      void paint(g.frame, { [g.layer.id]: g.buffer });
       g.last = p;
       return;
     }
@@ -1209,6 +1299,10 @@ export default function Home() {
       const asset = addAsset(assets.current, g.buffer);
       if (commit({ ...f, layers: f.layers.map((item) => item.id === g.layer!.id ? { ...item, asset, mask: undefined } : item) }))
         setNotice(g.tool === 'heal' ? 'Healing stroke applied' : 'Clone stroke applied');
+    } else if (g.tool === 'color-replace' && g.buffer && g.layer) {
+      const asset = addAsset(assets.current, g.buffer);
+      if (commit({ ...f, layers: f.layers.map((item) => item.id === g.layer!.id ? { ...item, asset, mask: undefined } : item) }))
+        setNotice('Color replacement applied; undo restores the original pixels');
     } else void paint(f);
   };
   const transform = (a: 'left' | 'right' | 'h' | 'v') => {
@@ -1663,7 +1757,7 @@ export default function Home() {
               </button>
             </div>
           </section>
-          {(tool === 'brush' || tool === 'pencil' || tool === 'eraser' || tool === 'clone' || tool === 'heal' || tool === 'rectangle' || tool === 'ellipse') && (
+          {(tool === 'brush' || tool === 'pencil' || tool === 'color-replace' || tool === 'eraser' || tool === 'clone' || tool === 'heal' || tool === 'rectangle' || tool === 'ellipse') && (
             <section className="panel">
               <Title icon={Brush} text="Tool options" />
               <Slider
@@ -1674,9 +1768,9 @@ export default function Home() {
                 set={setSize}
                 suffix="px"
               />
-              {(tool === 'brush' || tool === 'pencil' || tool === 'eraser' || tool === 'clone' || tool === 'heal') && (
+              {(tool === 'brush' || tool === 'pencil' || tool === 'color-replace' || tool === 'eraser' || tool === 'clone' || tool === 'heal') && (
                 <>
-                  {tool !== 'pencil' && (
+                  {tool !== 'pencil' && tool !== 'color-replace' && (
                     <Slider
                       label="Hardness"
                       value={hardness}
@@ -1694,6 +1788,16 @@ export default function Home() {
                     set={setBrushOpacity}
                     suffix="%"
                   />
+                  {tool === 'color-replace' && (
+                    <Slider
+                      label="Color tolerance"
+                      value={colorTolerance}
+                      min={0}
+                      max={255}
+                      set={setColorTolerance}
+                      suffix=""
+                    />
+                  )}
                 </>
               )}
             </section>

@@ -427,6 +427,77 @@ export function floodFill(
   context.putImageData(image, 0, 0);
   return true;
 }
+
+/**
+ * Replaces sampled colors under a circular brush stroke while preserving the
+ * source alpha. The source surface remains immutable so repeated pointer
+ * events cannot gradually widen the sampled color range.
+ */
+export function replaceColorStroke(
+  source: HTMLCanvasElement,
+  output: HTMLCanvasElement,
+  target: [number, number, number, number],
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  color: string,
+  size: number,
+  tolerance = 24,
+  opacity = 1,
+) {
+  const match = color.match(/^#([a-f\d]{6})$/i);
+  if (!match) throw new Error('Replacement color is invalid');
+  const replacement = [
+    parseInt(match[1].slice(0, 2), 16),
+    parseInt(match[1].slice(2, 4), 16),
+    parseInt(match[1].slice(4, 6), 16),
+  ];
+  const width = source.width,
+    height = source.height,
+    sourceData = source.getContext('2d')!.getImageData(0, 0, width, height).data,
+    context = output.getContext('2d')!,
+    image = context.getImageData(0, 0, width, height),
+    outputData = image.data,
+    radius = Math.max(1, size / 2),
+    distance = Math.hypot(x2 - x1, y2 - y1),
+    steps = Math.max(1, Math.ceil(distance / Math.max(1, radius * 0.5))),
+    amount = Math.max(0, Math.min(1, opacity));
+  let changed = false;
+  const matches = (offset: number) =>
+    sourceData[offset + 3] > 0 &&
+    Math.max(
+      Math.abs(sourceData[offset] - target[0]),
+      Math.abs(sourceData[offset + 1] - target[1]),
+      Math.abs(sourceData[offset + 2] - target[2]),
+      Math.abs(sourceData[offset + 3] - target[3]),
+    ) <= tolerance;
+  for (let step = 0; step <= steps; step += 1) {
+    const cx = x1 + ((x2 - x1) * step) / steps,
+      cy = y1 + ((y2 - y1) * step) / steps,
+      left = Math.max(0, Math.floor(cx - radius)),
+      right = Math.min(width - 1, Math.ceil(cx + radius)),
+      top = Math.max(0, Math.floor(cy - radius)),
+      bottom = Math.min(height - 1, Math.ceil(cy + radius));
+    for (let y = top; y <= bottom; y += 1) {
+      for (let x = left; x <= right; x += 1) {
+        if (Math.hypot(x - cx, y - cy) > radius) continue;
+        const offset = (y * width + x) * 4;
+        if (!matches(offset)) continue;
+        for (let channel = 0; channel < 3; channel += 1)
+          outputData[offset + channel] = Math.round(
+            sourceData[offset + channel] * (1 - amount) +
+              replacement[channel] * amount,
+          );
+        outputData[offset + 3] = sourceData[offset + 3];
+        changed = true;
+      }
+    }
+  }
+  if (changed) context.putImageData(image, 0, 0);
+  return changed;
+}
+
 /** Creates a canvas-sized alpha mask for a contiguous color selection. */
 export function colorSelectMask(
   canvas: HTMLCanvasElement,

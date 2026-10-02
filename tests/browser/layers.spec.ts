@@ -326,6 +326,76 @@ test('pencil paints a hard raster stroke and persists its tool state', async ({
   expect(roundTripped.value.settings.tool).toBe('pencil');
 });
 
+test('color replacement changes sampled pixels and persists tolerance', async ({
+  page,
+}) => {
+  const fixture = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 40;
+    canvas.height = 20;
+    const context = canvas.getContext('2d')!;
+    context.fillStyle = '#e11a2b';
+    context.fillRect(0, 0, 20, 20);
+    context.fillStyle = '#1944dd';
+    context.fillRect(20, 0, 20, 20);
+    return canvas.toDataURL().split(',')[1];
+  });
+  await page.getByTestId('file-input').setInputFiles({
+    name: 'color-replace-fixture.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(fixture, 'base64'),
+  });
+  await expect(page.getByLabel('Document name')).toHaveValue('color-replace-fixture');
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
+  await page.getByRole('button', { name: 'Color Replace tool', exact: true }).click();
+  await page.getByLabel('Drawing color', { exact: true }).fill('#00ff4c');
+  await page.getByLabel('Size', { exact: true }).fill('10');
+  await page.getByLabel('Opacity', { exact: true }).fill('100');
+  await page.getByLabel('Color tolerance', { exact: true }).fill('5');
+  const canvas = page.getByTestId('editor-canvas');
+  await canvas.scrollIntoViewIfNeeded();
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.5);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.4, box.y + box.height * 0.5, { steps: 4 });
+  await page.mouse.up();
+  await expect(page.getByText('Color replacement applied; undo restores the original pixels', { exact: true })).toBeVisible();
+  await saved(page);
+  const exported = await project(page),
+    frame = exported.value.history[exported.value.index],
+    layer = frame.layers[0],
+    asset = exported.value.assets[layer.asset];
+  expect(exported.value.settings).toMatchObject({
+    tool: 'color-replace',
+    color: '#00ff4c',
+    colorTolerance: 5,
+  });
+  const samples = await page.evaluate(
+    async ({ url }) => {
+      const image = new Image();
+      image.src = url;
+      await image.decode();
+      const sample = document.createElement('canvas');
+      sample.width = image.width;
+      sample.height = image.height;
+      const context = sample.getContext('2d')!;
+      context.drawImage(image, 0, 0);
+      const read = (x: number) => Array.from(context.getImageData(x, 10, 1, 1).data);
+      return { replaced: read(10), untouched: read(30) };
+    },
+    { url: asset.url },
+  );
+  expect(samples.replaced[1]).toBeGreaterThan(220);
+  expect(samples.replaced[2]).toBeGreaterThan(40);
+  expect(samples.untouched[2]).toBeGreaterThan(180);
+  expect(samples.untouched[1]).toBeLessThan(120);
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Color Replace tool', exact: true })).toHaveClass(/active/);
+  await expect(page.getByLabel('Color tolerance', { exact: true })).toHaveValue('5');
+  const roundTripped = await project(page);
+  expect(roundTripped.value.settings.tool).toBe('color-replace');
+});
+
 test('layer position, blending and visibility produce exact composite pixels', async ({
   page,
 }) => {

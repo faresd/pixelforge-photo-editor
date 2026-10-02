@@ -10,7 +10,7 @@ import {
   type Assets,
   type Frame,
 } from './document';
-export type Tool = 'move' | 'hand' | 'zoom' | 'eyedropper' | 'fill' | 'gradient' | 'clone' | 'heal' | 'crop' | 'brush' | 'pencil' | 'eraser' | 'text' | 'rectangle' | 'ellipse' | 'select' | 'ellipse-select' | 'lasso' | 'magic-wand';
+export type Tool = 'move' | 'hand' | 'zoom' | 'eyedropper' | 'fill' | 'gradient' | 'clone' | 'heal' | 'crop' | 'brush' | 'pencil' | 'color-replace' | 'eraser' | 'text' | 'rectangle' | 'ellipse' | 'select' | 'ellipse-select' | 'lasso' | 'magic-wand';
 export type Shot = { url: string; w: number; h: number };
 export type Settings = {
   tool: Tool;
@@ -19,6 +19,7 @@ export type Settings = {
   size: number;
   brushOpacity?: number;
   hardness?: number;
+  colorTolerance?: number;
   text: string;
   fontSize: number;
   brightness: number;
@@ -42,7 +43,7 @@ let database: Promise<IDBDatabase> | undefined;
 function validSettings(settings: Settings) {
   if (
     !settings ||
-    !['move', 'hand', 'zoom', 'eyedropper', 'fill', 'gradient', 'clone', 'heal', 'crop', 'brush', 'pencil', 'eraser', 'text', 'rectangle', 'ellipse', 'select', 'ellipse-select', 'lasso', 'magic-wand'].includes(
+    !['move', 'hand', 'zoom', 'eyedropper', 'fill', 'gradient', 'clone', 'heal', 'crop', 'brush', 'pencil', 'color-replace', 'eraser', 'text', 'rectangle', 'ellipse', 'select', 'ellipse-select', 'lasso', 'magic-wand'].includes(
       settings.tool,
     ) ||
     typeof settings.text !== 'string' ||
@@ -58,6 +59,7 @@ function validSettings(settings: Settings) {
   const brushRanges = [
     [settings.brushOpacity ?? 100, 1, 100],
     [settings.hardness ?? 100, 1, 100],
+    [settings.colorTolerance ?? 24, 0, 255],
   ];
   return (
     ranges.every(
