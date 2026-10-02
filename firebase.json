@@ -31,7 +31,7 @@
           },
           {
             "key": "Content-Security-Policy",
-            "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self' https://*.cheaply.fr; form-action 'self'"
+            "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://marketplace.cheaply.fr; object-src 'none'; base-uri 'self'; frame-ancestors 'self' https://*.cheaply.fr; form-action 'self'"
           }
         ]
       },

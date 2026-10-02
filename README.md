@@ -32,4 +32,8 @@ Browser tests cover desktop and mobile menus, image import, transformations, und
 
 See [deployment operations](docs/deployment.md). Pull requests run checks. A tested `main` build is deployed automatically through GitHub Actions using short-lived Google credentials. The same build artifact is promoted; the deploy job does not rebuild it.
 
-Images and editing history remain in the current tab. Export your image before closing it. Persistent recovery, editable layers, HEIC support and batch editing are roadmap proposals rather than current capabilities.
+Draft pixels, settings and undo history autosave in IndexedDB. Document bookmarks restore work in the same browser; clearing browser data can remove local work. The home page promotes available tools and lets users continue their last draft. Discard draft removes the current local document and returns home.
+
+Optional sign-in reuses the existing Marketplace session. The private project library supports explicit cloud save/update, reopen and removal; anonymous images never upload automatically. Cloud storage starts at 30 projects, 16 MB per project and 256 MB per account. New edits autosave locally; use Update cloud project to sync them across devices.
+
+Professional layers, masks, selections, HEIC and batch editing remain future stages described in [product scope](docs/product-scope.md).

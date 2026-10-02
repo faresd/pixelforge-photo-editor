@@ -1,5 +1,9 @@
 import { test, expect } from '@playwright/test';
 
+test.beforeEach(async ({ page }) => {
+  await page.route('https://marketplace.cheaply.fr/marketplace/api/photoeditor**', route => route.fulfill({ json: { authenticated: false } }));
+});
+
 test('menus, transformations, undo and PNG export work', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -42,7 +46,7 @@ test('anonymous draft survives reload and bookmark; discard returns home', async
   await page.getByRole('button', { name: 'Image', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Rotate right', exact: true }).click();
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '960');
-  await expect(page.getByRole('status')).toHaveText('Saved on this device');
+  await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Saved on this device');
   const bookmark = page.url();
   const pixels = await page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
   await page.reload();
@@ -52,15 +56,15 @@ test('anonymous draft survives reload and bookmark; discard returns home', async
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Undo/ }).click();
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '1440');
-  await expect(page.getByRole('status')).toHaveText('Saved on this device');
+  await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Saved on this device');
   await page.getByRole('link', { name: 'Home', exact: true }).click();
   await page.getByRole('link', { name: 'Start editing' }).click();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   expect(page.url()).not.toBe(bookmark);
-  await expect(page.getByRole('status')).toHaveText('Saved on this device');
+  await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Saved on this device');
   await page.goto(bookmark);
   await expect(page.getByLabel('Document name')).toHaveValue('Recovery test');
-  await expect(page.getByRole('status')).toHaveText('Saved on this device');
+  await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Saved on this device');
   page.once('dialog', dialog => dialog.dismiss());
   await page.getByRole('button', { name: 'Discard draft' }).click();
   await expect(page.getByLabel('Document name')).toHaveValue('Recovery test');
@@ -77,6 +81,41 @@ test('blocked local storage never reports a successful save', async ({ page }) =
   await page.addInitScript(() => { Object.defineProperty(window, 'indexedDB', { get() { throw new Error('Storage blocked'); } }); });
   await page.goto('/editor?new=1');
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
-  await expect(page.getByRole('status')).toHaveText('Local save failed — export a copy');
+  await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Local save failed — export a copy');
   await expect(page.getByRole('button', { name: 'Export', exact: true })).toBeEnabled();
+});
+
+test('signed-in users save, revisit and continue cloud projects without automatic uploads', async ({ page }) => {
+  const member = { id: 'a6135ab2-0c9f-4f07-a78d-86648d6fb10a', name: 'Test member' };
+  let saved: { id: string; generation: string; document: unknown } | undefined;
+  let saves = 0;
+  await page.route('https://marketplace.cheaply.fr/marketplace/api/photoeditor**', async route => {
+    const request = route.request(), url = new URL(request.url());
+    if (url.searchParams.get('action') === 'session') return route.fulfill({ json: { authenticated: true, user: member } });
+    if (request.method() === 'POST') {
+      const body = JSON.parse(request.postData()!);
+      saves++;
+      saved = { id: body.id, generation: String(saves), document: body.document };
+      return route.fulfill({ json: { id: saved.id, generation: saved.generation } });
+    }
+    if (url.searchParams.has('id')) return route.fulfill({ json: saved });
+    return route.fulfill({ json: { projects: saved ? [{ id: saved.id, name: 'My private art', generation: saved.generation, updatedAt: '2026-10-02T12:00:00Z', bytes: 1000 }] : [] } });
+  });
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByLabel('Document name').fill('My private art');
+  await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Saved on this device');
+  expect(saves).toBe(0);
+  await page.getByRole('button', { name: 'Save to my projects' }).click();
+  await expect(page.getByText('Cloud copy saved.', { exact: false })).toBeVisible();
+  expect(saves).toBe(1);
+  await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Saved on this device');
+  await page.getByRole('link', { name: 'View my projects' }).click();
+  await expect(page.getByRole('heading', { name: 'My projects' })).toBeVisible();
+  await page.getByRole('button', { name: 'Continue editing' }).click();
+  await expect(page.getByLabel('Document name')).toHaveValue('My private art');
+  await page.getByLabel('Document name').fill('My private art continued');
+  await page.getByRole('button', { name: 'Update cloud project' }).click();
+  await expect(page.getByText('Cloud copy saved.', { exact: false })).toBeVisible();
+  expect(saves).toBe(2);
 });

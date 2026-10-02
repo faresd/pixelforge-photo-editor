@@ -1,7 +1,9 @@
+import type { CloudLink } from './cloud';
 export type Tool = 'move' | 'crop' | 'brush' | 'eraser' | 'text' | 'rectangle';
 export type Shot = { url: string; w: number; h: number };
 export type Draft = {
   version: 1;
+  cloud?: CloudLink;
   history: Shot[];
   index: number;
   name: string;
