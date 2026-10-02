@@ -1,27 +1,141 @@
 import type { CloudLink } from './cloud';
+import {
+  validAsset,
+  validateFrame,
+  validAdjustments,
+  referencedAssets,
+  commonLayer,
+  neutral,
+  validId,
+  type Assets,
+  type Frame,
+} from './document';
 export type Tool = 'move' | 'crop' | 'brush' | 'eraser' | 'text' | 'rectangle';
 export type Shot = { url: string; w: number; h: number };
+export type Settings = {
+  tool: Tool;
+  zoom: number;
+  color: string;
+  size: number;
+  text: string;
+  fontSize: number;
+  brightness: number;
+  contrast: number;
+  saturation: number;
+  blur: number;
+  filter: string;
+};
 export type Draft = {
-  version: 1;
+  version: 2;
   cloud?: CloudLink;
-  history: Shot[];
+  history: Frame[];
+  assets: Assets;
   index: number;
   name: string;
-  settings: { tool: Tool; zoom: number; color: string; size: number; text: string; fontSize: number; brightness: number; contrast: number; saturation: number; blur: number; filter: string };
+  settings: Settings;
+  migrated?: true;
 };
-
 let database: Promise<IDBDatabase> | undefined;
-function validSettings(settings: Draft['settings']) {
-  if (!settings || !['move', 'crop', 'brush', 'eraser', 'text', 'rectangle'].includes(settings.tool) || typeof settings.text !== 'string' || settings.text.length > 10000 || !/^#[a-f\d]{6}$/i.test(settings.color)) return false;
-  const ranges = [[settings.zoom, 20, 140], [settings.size, 2, 100], [settings.fontSize, 16, 160], [settings.brightness, 0, 200], [settings.contrast, 0, 200], [settings.saturation, 0, 200], [settings.blur, 0, 20]];
-  return ranges.every(([value, min, max]) => Number.isFinite(value) && value >= min && value <= max) && ['none', 'saturate(1.45) contrast(1.08)', 'grayscale(1) contrast(1.12)', 'sepia(.35) saturate(1.2)', 'hue-rotate(18deg) saturate(.9)'].includes(settings.filter);
+function validSettings(settings: Settings) {
+  if (
+    !settings ||
+    !['move', 'crop', 'brush', 'eraser', 'text', 'rectangle'].includes(
+      settings.tool,
+    ) ||
+    typeof settings.text !== 'string' ||
+    settings.text.length > 10000 ||
+    !/^#[a-f\d]{6}$/i.test(settings.color)
+  )
+    return false;
+  const ranges = [
+    [settings.zoom, 20, 140],
+    [settings.size, 2, 100],
+    [settings.fontSize, 16, 160],
+  ];
+  return (
+    ranges.every(
+      ([value, min, max]) =>
+        Number.isFinite(value) && value >= min && value <= max,
+    ) && validAdjustments(settings)
+  );
 }
-
 export function validateDraft(input: unknown): Draft {
-  if (!input || typeof input !== 'object') throw new Error('Invalid project file');
+  if (!input || typeof input !== 'object')
+    throw new Error('Invalid project file');
   const value = input as Draft;
-  if (value.version !== 1 || !Array.isArray(value.history) || !value.history.length || value.history.length > 24 || !Number.isInteger(value.index) || value.index < 0 || value.index >= value.history.length || !validSettings(value.settings) || typeof value.name !== 'string' || value.name.length > 160 || value.history.some(shot => !shot || typeof shot.url !== 'string' || !shot.url.startsWith('data:image/png;base64,') || !Number.isInteger(shot.w) || !Number.isInteger(shot.h) || shot.w < 1 || shot.h < 1 || shot.w > 20000 || shot.h > 20000)) throw new Error('Saved document is not supported');
-  return value;
+  if (
+    !Array.isArray(value.history) ||
+    !value.history.length ||
+    value.history.length > 24 ||
+    !Number.isInteger(value.index) ||
+    value.index < 0 ||
+    value.index >= value.history.length ||
+    !validSettings(value.settings) ||
+    typeof value.name !== 'string' ||
+    value.name.length > 160
+  )
+    throw new Error('Saved document is not supported');
+  if ((input as { version: number }).version === 1) {
+    const assets: Assets = {},
+      id = crypto.randomUUID();
+    const history = (value.history as unknown as Shot[]).map((shot) => {
+      if (!validAsset(shot))
+        throw new Error('Saved image is invalid or too large');
+      const asset =
+        Object.keys(assets).find((key) => assets[key].url === shot.url) ||
+        crypto.randomUUID();
+      assets[asset] = shot;
+      return {
+        w: shot.w,
+        h: shot.h,
+        active: id,
+        layers: [
+          {
+            ...commonLayer('Background'),
+            id,
+            kind: 'raster' as const,
+            asset,
+            adjustments: {
+              brightness: value.settings.brightness,
+              contrast: value.settings.contrast,
+              saturation: value.settings.saturation,
+              blur: value.settings.blur,
+              filter: value.settings.filter,
+            },
+          },
+        ],
+      };
+    });
+    return {
+      ...value,
+      version: 2,
+      assets,
+      history,
+      settings: { ...value.settings, ...neutral },
+      migrated: true,
+    };
+  }
+  if (
+    value.version !== 2 ||
+    !value.assets ||
+    typeof value.assets !== 'object' ||
+    Array.isArray(value.assets) ||
+    Object.keys(value.assets).length > 768 ||
+    Object.entries(value.assets).some(
+      ([id, asset]) => !validId(id) || !validAsset(asset),
+    )
+  )
+    throw new Error('Invalid project assets');
+  value.history.forEach((frame) => validateFrame(frame, value.assets));
+  if (
+    Object.values(value.assets).reduce(
+      (total, asset) => total + asset.url.length,
+      0,
+    ) >
+    64 * 1024 * 1024
+  )
+    throw new Error('Project assets exceed 64 MB');
+  return { ...value, assets: referencedAssets(value.history, value.assets) };
 }
 function openDatabase() {
   database ??= new Promise<IDBDatabase>((resolve, reject) => {
@@ -40,16 +154,29 @@ export function rememberDraft(id: string) {
   url.searchParams.delete('new');
   url.hash = 'draft=' + id;
   window.history.replaceState(null, '', url);
-  try { localStorage.setItem('pixelforge:last-draft', id); } catch { /* IndexedDB can still be available. */ }
+  try {
+    localStorage.setItem('pixelforge:last-draft', id);
+  } catch {
+    /* IndexedDB can still be available. */
+  }
   return id;
 }
 
-export function createDraftId() { return rememberDraft(crypto.randomUUID()); }
+export function createDraftId() {
+  return rememberDraft(crypto.randomUUID());
+}
 
 export function initialDraftId() {
-  if (new URL(location.href).searchParams.get('new') === '1') return createDraftId();
+  if (new URL(location.href).searchParams.get('new') === '1')
+    return createDraftId();
   let id = new URLSearchParams(location.hash.slice(1)).get('draft');
-  if (!id) { try { id = localStorage.getItem('pixelforge:last-draft'); } catch { /* Use a new draft. */ } }
+  if (!id) {
+    try {
+      id = localStorage.getItem('pixelforge:last-draft');
+    } catch {
+      /* Use a new draft. */
+    }
+  }
   return id && /^[a-f0-9-]{36}$/.test(id) ? rememberDraft(id) : createDraftId();
 }
 
@@ -62,7 +189,12 @@ export async function discardDraft(id: string) {
     transaction.onabort = () => reject(transaction.error);
     transaction.onerror = () => reject(transaction.error);
   });
-  try { if (localStorage.getItem('pixelforge:last-draft') === id) localStorage.removeItem('pixelforge:last-draft'); } catch { /* Already unavailable. */ }
+  try {
+    if (localStorage.getItem('pixelforge:last-draft') === id)
+      localStorage.removeItem('pixelforge:last-draft');
+  } catch {
+    /* Already unavailable. */
+  }
 }
 
 export async function readDraft(id: string): Promise<Draft | undefined> {
@@ -72,8 +204,15 @@ export async function readDraft(id: string): Promise<Draft | undefined> {
     request.onerror = () => reject(request.error);
     request.onsuccess = () => {
       const value = request.result as Draft | undefined;
-      if (value === undefined) { resolve(undefined); return; }
-      try { resolve(validateDraft(value)); } catch (error) { reject(error); }
+      if (value === undefined) {
+        resolve(undefined);
+        return;
+      }
+      try {
+        resolve(validateDraft(value));
+      } catch (error) {
+        reject(error);
+      }
     };
   });
 }

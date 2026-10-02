@@ -19,3 +19,26 @@
 @media(max-width:420px){.brand{font-size:15px}.brand-mark{width:28px;height:28px}.inspector{grid-template-columns:1fr}.panel{border-right:0}.zoom input{width:86px}}
 /* Keep export in the first row; auto-placement otherwise pushes it under the document bar. */
 @media(max-width:680px){.topbar>.brand{grid-row:1;grid-column:1}.topbar>.top-actions{grid-row:1;grid-column:2}.topbar>nav{grid-row:2}.docbar{padding-inline:10px}.docbar input{width:120px}}
+
+.layers-panel h3 { display:flex; justify-content:space-between; margin:0 0 12px; font-size:14px; }
+.layers-panel h3 small { color:#9ba5b5; font-weight:400; }
+.layer-actions { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin:10px 0; }
+.layer-actions button { padding:8px 5px; border:1px solid #374151; border-radius:6px; background:#252d39; font-size:11px; }
+.layer-actions button:disabled { opacity:.4; cursor:not-allowed; }
+.layer-list { display:flex; flex-direction:column; gap:4px; max-height:240px; overflow:auto; }
+.layer-row { display:flex; text-align:left; align-items:center; gap:10px; padding:9px; background:#202834; border:1px solid transparent; border-radius:6px; width:100%; }
+.layer-row.selected { border-color:#8b5cf6; background:#342c4b; }
+.layer-row b { display:block; max-width:170px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+.layer-row small { display:block; font-size:10px; color:#afb8c8; margin-top:3px; }
+.layer-type { font-size:22px; width:24px; text-align:center; }
+.layer-toggles { display:flex; justify-content:space-between; margin:12px 0; font-size:11px; }
+.layers-panel input[type=checkbox] { margin-right:5px; accent-color:#8b5cf6; }
+.layer-field { display:flex; flex-direction:column; gap:5px; font-size:11px; margin:9px 0; }
+.layer-field input:not([type=range]),.layer-field select,.layer-field textarea { width:100%; min-width:0; border:1px solid #3c4657; border-radius:5px; background:#17202d; color:#e9edf5; padding:7px; }
+.layer-field input[type=color] { padding:2px; height:32px; }
+.layer-field input[type=range] { width:100%; accent-color:#8b5cf6; }
+.layer-position { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.layers-panel p,.adjust-note { color:#aeb8c8; font-size:11px; line-height:1.5; margin:9px 0 0; }
+.layer-typography textarea { min-height:70px; resize:vertical; }
+.canvas-wrap { background: repeating-conic-gradient(#e4e4e7 0% 25%,#ffffff 0% 50%) 50% / 16px 16px; }
+.tool-move { cursor: move; }
