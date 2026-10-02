@@ -11,7 +11,7 @@ import {
   type Assets,
   type Frame,
 } from './document';
-export type Tool = 'move' | 'hand' | 'zoom' | 'eyedropper' | 'fill' | 'gradient' | 'clone' | 'heal' | 'crop' | 'brush' | 'pencil' | 'color-replace' | 'eraser' | 'text' | 'rectangle' | 'ellipse' | 'select' | 'ellipse-select' | 'row-select' | 'column-select' | 'lasso' | 'magic-wand';
+export type Tool = 'move' | 'hand' | 'zoom' | 'eyedropper' | 'fill' | 'gradient' | 'clone' | 'heal' | 'crop' | 'brush' | 'pencil' | 'color-replace' | 'eraser' | 'text' | 'rectangle' | 'ellipse' | 'select' | 'ellipse-select' | 'row-select' | 'column-select' | 'lasso' | 'polygonal-lasso' | 'magic-wand';
 export type Shot = { url: string; w: number; h: number };
 export type Settings = {
   tool: Tool;
@@ -48,7 +48,7 @@ let database: Promise<IDBDatabase> | undefined;
 function validSettings(settings: Settings) {
   if (
     !settings ||
-    !['move', 'hand', 'zoom', 'eyedropper', 'fill', 'gradient', 'clone', 'heal', 'crop', 'brush', 'pencil', 'color-replace', 'eraser', 'text', 'rectangle', 'ellipse', 'select', 'ellipse-select', 'row-select', 'column-select', 'lasso', 'magic-wand'].includes(
+    !['move', 'hand', 'zoom', 'eyedropper', 'fill', 'gradient', 'clone', 'heal', 'crop', 'brush', 'pencil', 'color-replace', 'eraser', 'text', 'rectangle', 'ellipse', 'select', 'ellipse-select', 'row-select', 'column-select', 'lasso', 'polygonal-lasso', 'magic-wand'].includes(
       settings.tool,
     ) ||
     typeof settings.text !== 'string' ||

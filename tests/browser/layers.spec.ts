@@ -863,6 +863,125 @@ test('lasso selection stores polygon points and survives project round-trip', as
   expect(reloaded.value.history[reloaded.value.index].selection.shape).toBe('polygon');
 });
 
+test('polygonal lasso closes by vertex, masks representative pixels and survives reload', async ({
+  page,
+}) => {
+  const canvas = page.getByTestId('editor-canvas');
+  const box = (await canvas.boundingBox())!;
+  await page.getByRole('button', { name: 'Polygonal Lasso tool', exact: true }).click();
+  const points = [
+    [0.2, 0.2],
+    [0.8, 0.2],
+    [0.5, 0.75],
+  ];
+  for (const [x, y] of points)
+    await page.mouse.click(box.x + box.width * x, box.y + box.height * y);
+  // Clicking the first vertex closes the polygon on both mouse and touch-style
+  // pointer sequences; the gesture does not require a drag.
+  await page.mouse.click(box.x + box.width * points[0][0], box.y + box.height * points[0][1]);
+  await expect(page.getByText('Polygonal selection created', { exact: true })).toBeVisible();
+
+  const exported = await project(page),
+    frame = exported.value.history[exported.value.index],
+    selection = frame.selection;
+  expect(selection).toMatchObject({ shape: 'polygon', points: expect.any(Array) });
+  expect(selection.points).toHaveLength(3);
+  expect(selection.w).toBeGreaterThan(1);
+  await page.getByRole('button', { name: 'Mask from selection', exact: true }).click();
+  await expect(page.getByText('Nondestructive mask active', { exact: true })).toBeVisible();
+  await expect.poll(() => canvas.evaluate((item: HTMLCanvasElement) => {
+    const context = item.getContext('2d')!,
+      inside = context.getImageData(Math.floor(item.width * 0.5), Math.floor(item.height * 0.4), 1, 1).data[3],
+      outside = context.getImageData(Math.floor(item.width * 0.1), Math.floor(item.height * 0.1), 1, 1).data[3];
+    return { inside: inside > 0, outside: outside === 0 };
+  })).toEqual({ inside: true, outside: true });
+  const masked = await canvas.evaluate((item: HTMLCanvasElement) => {
+    const context = item.getContext('2d')!,
+      inside = context.getImageData(Math.floor(item.width * 0.5), Math.floor(item.height * 0.4), 1, 1).data[3],
+      outside = context.getImageData(Math.floor(item.width * 0.1), Math.floor(item.height * 0.1), 1, 1).data[3];
+    return { inside, outside };
+  });
+  expect(masked.inside).toBeGreaterThan(0);
+  expect(masked.outside).toBe(0);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  await expect(page.getByText('Nondestructive mask active', { exact: true })).toHaveCount(0);
+  let afterUndo = await project(page);
+  expect(afterUndo.value.history[afterUndo.value.index].layers[0].mask).toBeUndefined();
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Redo/ }).click();
+  await expect(page.getByText('Nondestructive mask active', { exact: true })).toBeVisible();
+  afterUndo = await project(page);
+  expect(afterUndo.value.history[afterUndo.value.index].layers[0].mask).toEqual(expect.any(String));
+  const roundTrip = afterUndo;
+  await page.reload();
+  await expect(page.getByText('Nondestructive mask active', { exact: true })).toBeVisible();
+  const reloaded = await project(page),
+    reloadedFrame = reloaded.value.history[reloaded.value.index];
+  expect(reloadedFrame.selection.points).toHaveLength(3);
+  expect(reloadedFrame.layers[0].mask).toEqual(expect.any(String));
+  await page.getByTestId('project-input').setInputFiles(roundTrip.path);
+  await expect(page.getByText('Nondestructive mask active', { exact: true })).toBeVisible();
+  const imported = await project(page),
+    importedFrame = imported.value.history[imported.value.index];
+  expect(importedFrame.selection.points).toEqual(reloadedFrame.selection.points);
+  expect(importedFrame.layers[0].mask).toEqual(expect.any(String));
+});
+
+test('polygonal lasso double-click finalizes a desktop path', async ({ page }, testInfo) => {
+  testInfo.skip(testInfo.project.name !== 'desktop', 'Double-click coverage runs in the desktop profile');
+  const canvas = page.getByTestId('editor-canvas'), box = (await canvas.boundingBox())!;
+  await page.getByRole('button', { name: 'Polygonal Lasso tool', exact: true }).click();
+  const points = [
+    [0.2, 0.2],
+    [0.8, 0.2],
+    [0.5, 0.75],
+  ];
+  await page.mouse.click(box.x + box.width * points[0][0], box.y + box.height * points[0][1]);
+  await page.mouse.click(box.x + box.width * points[1][0], box.y + box.height * points[1][1]);
+  await page.mouse.dblclick(box.x + box.width * points[2][0], box.y + box.height * points[2][1]);
+  await expect(page.getByText('Polygonal selection created', { exact: true })).toBeVisible();
+  const exported = await project(page),
+    frame = exported.value.history[exported.value.index];
+  expect(frame.selection.shape).toBe('polygon');
+  expect(frame.selection.points).toHaveLength(3);
+});
+
+test('polygonal lasso touch taps close on mobile and persist the same geometry', async ({ page }, testInfo) => {
+  testInfo.skip(testInfo.project.name !== 'mobile', 'Touch coverage runs in the mobile profile');
+  const canvas = page.getByTestId('editor-canvas'), box = (await canvas.boundingBox())!;
+  await page.getByRole('button', { name: 'Polygonal Lasso tool', exact: true }).click();
+  const points = [
+    [0.2, 0.2],
+    [0.8, 0.2],
+    [0.5, 0.75],
+  ];
+  for (const [x, y] of points)
+    await page.touchscreen.tap(box.x + box.width * x, box.y + box.height * y);
+  await page.touchscreen.tap(box.x + box.width * points[0][0], box.y + box.height * points[0][1]);
+  await expect(page.getByText('Polygonal selection created', { exact: true })).toBeVisible();
+  const exported = await project(page),
+    frame = exported.value.history[exported.value.index];
+  expect(frame.selection.shape).toBe('polygon');
+  expect(frame.selection.points).toHaveLength(3);
+  expect(Math.abs(frame.selection.points[0].x - frame.w * points[0][0])).toBeLessThan(3);
+});
+
+test('Escape cancels an unfinished polygonal lasso without saving a selection', async ({ page }) => {
+  const canvas = page.getByTestId('editor-canvas'), box = (await canvas.boundingBox())!;
+  await page.getByRole('button', { name: 'Polygonal Lasso tool', exact: true }).click();
+  await page.mouse.click(box.x + box.width * 0.2, box.y + box.height * 0.2);
+  await page.mouse.click(box.x + box.width * 0.8, box.y + box.height * 0.2);
+  await page.keyboard.press('Escape');
+  await expect(page.getByText('Polygonal lasso cancelled', { exact: true })).toBeVisible();
+  const exported = await project(page),
+    frame = exported.value.history[exported.value.index];
+  expect(frame.selection).toBeUndefined();
+  await page.reload();
+  const reloaded = await project(page);
+  expect(reloaded.value.history[reloaded.value.index].selection).toBeUndefined();
+});
+
 test('selection add mode composes geometry and masks pixels nondestructively', async ({
   page,
 }) => {

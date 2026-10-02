@@ -82,8 +82,9 @@ import ExportDialog from '../src/ExportDialog';
 import { type ExportFormat } from '../src/export';
 import { renderSelection } from '../src/selections';
 import { BrandLockup } from '../src/Brand';
-type MenuName = 'File' | 'Edit' | 'Image' | 'Filter' | 'View';
+type MenuName = 'File' | 'Edit' | 'Image' | 'Layer' | 'Type' | 'Select' | 'Filter' | 'View' | 'Plugins';
 type Command =
+  | 'noop'
   | 'resize'
   | 'project-save'
   | 'project-open'
@@ -95,6 +96,24 @@ type Command =
   | 'webp'
   | 'undo'
   | 'redo'
+  | 'copy-layer'
+  | 'cut-layer'
+  | 'paste-layer'
+  | 'clear-layer'
+  | 'fill-layer'
+  | 'new-layer'
+  | 'duplicate-layer'
+  | 'delete-layer'
+  | 'group-layer'
+  | 'ungroup-layer'
+  | 'hide-layer'
+  | 'merge-visible'
+  | 'flatten'
+  | 'text-tool'
+  | 'select-all'
+  | 'deselect'
+  | 'invert-selection'
+  | 'mask-selection'
   | 'reset'
   | 'crop'
   | 'rotate-left'
@@ -110,7 +129,13 @@ type Command =
   | 'zoom-out'
   | 'fit'
   | 'actual';
-type MenuItem = { label: string; shortcut?: string; command: Command };
+type MenuItem = {
+  label: string;
+  shortcut?: string;
+  command: Command;
+  disabled?: boolean;
+  separator?: boolean;
+};
 
 const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'move', label: 'Move', icon: MousePointer2, key: 'V' },
@@ -134,6 +159,7 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'row-select', label: 'Single Row marquee', icon: Rows3, key: 'M' },
   { id: 'column-select', label: 'Single Column marquee', icon: Columns3, key: 'M' },
   { id: 'lasso', label: 'Lasso', icon: WandSparkles, key: 'L' },
+  { id: 'polygonal-lasso', label: 'Polygonal Lasso', icon: WandSparkles, key: 'L' },
   { id: 'magic-wand', label: 'Magic Wand', icon: Wand2, key: 'W' },
 ];
 const MARQUEE_TOOLS: Tool[] = [
@@ -148,6 +174,7 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   b: ['brush', 'pencil', 'color-replace'],
   u: ['rectangle', 'ellipse'],
   m: MARQUEE_TOOLS,
+  l: ['lasso', 'polygonal-lasso'],
 };
 /** Existing PixelForge aliases retained while the primary keys follow Photoshop. */
 const TOOL_ALIASES: Record<string, Tool> = {
@@ -177,16 +204,139 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
   Edit: [
     { label: 'Undo', shortcut: 'Ctrl+Z', command: 'undo' },
     { label: 'Redo', shortcut: 'Ctrl+Y', command: 'redo' },
+    { label: 'Toggle Last State', shortcut: 'Ctrl+Alt+Z', command: 'undo', disabled: true },
+    { label: '', command: 'noop', separator: true },
+    { label: 'Fade…', shortcut: 'Ctrl+Shift+F', command: 'noop', disabled: true },
+    { label: '', command: 'noop', separator: true },
+    { label: 'Copy Layer', shortcut: 'Ctrl+C', command: 'copy-layer' },
+    { label: 'Cut Layer', shortcut: 'Ctrl+X', command: 'cut-layer' },
+    { label: 'Paste Layer', shortcut: 'Ctrl+V', command: 'paste-layer' },
+    { label: 'Copy Merged', shortcut: 'Ctrl+Shift+C', command: 'noop', disabled: true },
+    { label: 'Clear', command: 'clear-layer' },
+    { label: '', command: 'noop', separator: true },
+    { label: 'Search', shortcut: 'Ctrl+F', command: 'noop', disabled: true },
+    { label: 'Check Spelling…', command: 'noop', disabled: true },
+    { label: 'Find and Replace Text…', command: 'noop', disabled: true },
+    { label: '', command: 'noop', separator: true },
+    { label: 'Fill…', shortcut: 'Shift+F5', command: 'fill-layer' },
+    { label: 'Stroke…', command: 'noop', disabled: true },
+    { label: 'Content-Aware Fill…', command: 'noop', disabled: true },
+    { label: 'Prompt to Edit…', command: 'noop', disabled: true },
+    { label: 'Generative Fill…', command: 'noop', disabled: true },
+    { label: 'Generate Image…', command: 'noop', disabled: true },
+    { label: 'Reflection Removal…', command: 'noop', disabled: true },
+    { label: '', command: 'noop', separator: true },
+    { label: 'Free Transform', shortcut: 'Ctrl+T', command: 'noop', disabled: true },
+    { label: 'Transform', command: 'noop', disabled: true },
+    { label: 'Perspective Warp', command: 'noop', disabled: true },
+    { label: 'Puppet Warp', command: 'noop', disabled: true },
+    { label: 'Content-Aware Scale', command: 'noop', disabled: true },
+    { label: '', command: 'noop', separator: true },
+    { label: 'Define Brush Preset…', command: 'noop', disabled: true },
+    { label: 'Define Pattern…', command: 'noop', disabled: true },
+    { label: 'Purge', command: 'noop', disabled: true },
+    { label: '', command: 'noop', separator: true },
+    { label: 'Color Settings…', command: 'noop', disabled: true },
+    { label: 'Keyboard Shortcuts…', command: 'noop', disabled: true },
+    { label: 'Menus…', command: 'noop', disabled: true },
+    { label: 'Toolbar…', command: 'noop', disabled: true },
     { label: 'Reset adjustments', command: 'reset' },
-    { label: 'Clear to transparent', command: 'new-transparent' },
   ],
   Image: [
+    { label: 'Mode', command: 'noop', disabled: true },
+    { label: 'Adjustments', command: 'reset', disabled: true },
+    { label: 'Auto Tone', shortcut: 'Shift+Ctrl+L', command: 'noop', disabled: true },
+    { label: 'Auto Contrast', command: 'noop', disabled: true },
+    { label: 'Auto Color', command: 'noop', disabled: true },
+    { label: '', command: 'noop', separator: true },
+    { label: 'Image Size…', shortcut: 'Alt+Ctrl+I', command: 'resize' },
+    { label: 'Generative Upscale…', command: 'noop', disabled: true },
+    { label: 'Canvas Size…', command: 'noop', disabled: true },
+    { label: 'Image Rotation', command: 'noop', disabled: true },
     { label: 'Resize image…', command: 'resize' },
     { label: 'Crop', shortcut: 'C', command: 'crop' },
     { label: 'Rotate left', command: 'rotate-left' },
     { label: 'Rotate right', command: 'rotate-right' },
     { label: 'Flip horizontal', command: 'flip-h' },
     { label: 'Flip vertical', command: 'flip-v' },
+    { label: 'Trim…', command: 'noop', disabled: true },
+    { label: 'Reveal All', command: 'noop', disabled: true },
+    { label: '', command: 'noop', separator: true },
+    { label: 'Duplicate…', command: 'noop', disabled: true },
+    { label: 'Apply Image…', command: 'noop', disabled: true },
+    { label: 'Calculations…', command: 'noop', disabled: true },
+    { label: 'Analysis', command: 'noop', disabled: true },
+  ],
+  Layer: [
+    { label: 'New Paint Layer', command: 'new-layer' },
+    { label: 'Duplicate Layer…', shortcut: 'Ctrl+J', command: 'duplicate-layer' },
+    { label: 'Delete Layer', command: 'delete-layer' },
+    { label: '', command: 'noop', separator: true },
+    { label: 'Quick Export document as PNG', command: 'png' },
+    { label: 'Export As…', command: 'png' },
+    { label: 'Rename Layer…', command: 'noop', disabled: true },
+    { label: 'Layer Style', command: 'noop', disabled: true },
+    { label: 'Smart Filter', command: 'noop', disabled: true },
+    { label: 'New Fill Layer', command: 'noop', disabled: true },
+    { label: 'New Adjustment Layer', command: 'noop', disabled: true },
+    { label: 'Layer Mask', command: 'mask-selection' },
+    { label: 'Vector Mask', command: 'noop', disabled: true },
+    { label: 'Create Clipping Mask', command: 'noop', disabled: true },
+    { label: 'Smart Objects', command: 'noop', disabled: true },
+    { label: 'Rasterize', command: 'noop', disabled: true },
+    { label: '', command: 'noop', separator: true },
+    { label: 'Group Layers', shortcut: 'Ctrl+G', command: 'group-layer' },
+    { label: 'Ungroup Layers', shortcut: 'Ctrl+Shift+G', command: 'ungroup-layer' },
+    { label: 'Hide Layers', shortcut: 'Ctrl+,', command: 'hide-layer' },
+    { label: 'Merge Layers', command: 'noop', disabled: true },
+    { label: 'Merge Visible', command: 'merge-visible' },
+    { label: 'Flatten Image', command: 'flatten' },
+    { label: 'Arrange', command: 'noop', disabled: true },
+    { label: 'Align', command: 'noop', disabled: true },
+    { label: 'Distribute', command: 'noop', disabled: true },
+    { label: 'Lock Layers…', command: 'noop', disabled: true },
+  ],
+  Type: [
+    { label: 'Text Tool', shortcut: 'T', command: 'text-tool' },
+    { label: 'Panels', command: 'noop', disabled: true },
+    { label: 'Anti-Alias', command: 'noop', disabled: true },
+    { label: 'Orientation', command: 'noop', disabled: true },
+    { label: 'OpenType', command: 'noop', disabled: true },
+    { label: 'Create Work Path', command: 'noop', disabled: true },
+    { label: 'Convert to Shape', command: 'noop', disabled: true },
+    { label: 'Rasterize Type Layer', command: 'noop', disabled: true },
+    { label: 'Warp Text…', command: 'noop', disabled: true },
+    { label: 'Font Preview Size', command: 'noop', disabled: true },
+    { label: 'Language Options', command: 'noop', disabled: true },
+    { label: 'Update All Text Layers', command: 'noop', disabled: true },
+    { label: 'Manage Missing Fonts', command: 'noop', disabled: true },
+    { label: 'Paste Lorem Ipsum', command: 'noop', disabled: true },
+    { label: 'Load Default Type Styles', command: 'noop', disabled: true },
+    { label: 'Save Default Type Styles', command: 'noop', disabled: true },
+  ],
+  Select: [
+    { label: 'All', shortcut: 'Ctrl+A', command: 'select-all' },
+    { label: 'Deselect', shortcut: 'Ctrl+D', command: 'deselect' },
+    { label: 'Reselect', command: 'noop', disabled: true },
+    { label: 'Inverse', shortcut: 'Ctrl+Shift+I', command: 'invert-selection' },
+    { label: '', command: 'noop', separator: true },
+    { label: 'All Layers', command: 'noop', disabled: true },
+    { label: 'Deselect Layers', command: 'noop', disabled: true },
+    { label: 'Find Layers', command: 'noop', disabled: true },
+    { label: 'Isolate Layers', command: 'noop', disabled: true },
+    { label: 'Color Range…', command: 'noop', disabled: true },
+    { label: 'Focus Area…', command: 'noop', disabled: true },
+    { label: 'Subject', command: 'noop', disabled: true },
+    { label: 'Sky', command: 'noop', disabled: true },
+    { label: 'Select and Mask…', command: 'noop', disabled: true },
+    { label: 'Modify', command: 'noop', disabled: true },
+    { label: 'Grow', command: 'noop', disabled: true },
+    { label: 'Similar', command: 'noop', disabled: true },
+    { label: 'Transform Selection', command: 'noop', disabled: true },
+    { label: 'Edit in Quick Mask Mode', command: 'noop', disabled: true },
+    { label: 'Load Selection…', command: 'noop', disabled: true },
+    { label: 'Save Selection…', command: 'noop', disabled: true },
+    { label: 'Mask from Selection', command: 'mask-selection' },
   ],
   Filter: [
     { label: 'Original', command: 'filter-original' },
@@ -194,12 +344,68 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Mono', command: 'filter-mono' },
     { label: 'Warm', command: 'filter-warm' },
     { label: 'Cool', command: 'filter-cool' },
+    { label: '', command: 'noop', separator: true },
+    { label: 'Convert for Smart Filters', command: 'noop', disabled: true },
+    { label: 'Neural Filters…', command: 'noop', disabled: true },
+    { label: 'Filter Gallery…', command: 'noop', disabled: true },
+    { label: 'Camera Raw Filter…', command: 'noop', disabled: true },
+    { label: 'AI Denoise…', command: 'noop', disabled: true },
+    { label: 'AI Sharpen…', command: 'noop', disabled: true },
+    { label: 'Lens Correction…', command: 'noop', disabled: true },
+    { label: 'Liquify…', command: 'noop', disabled: true },
+    { label: 'Vanishing Point…', command: 'noop', disabled: true },
+    { label: '', command: 'noop', separator: true },
+    { label: 'Blur', command: 'noop', disabled: true },
+    { label: 'Average', command: 'noop', disabled: true },
+    { label: 'Blur More', command: 'noop', disabled: true },
+    { label: 'Box Blur…', command: 'noop', disabled: true },
+    { label: 'Gaussian Blur…', command: 'noop', disabled: true },
+    { label: 'Motion Blur…', command: 'noop', disabled: true },
+    { label: 'Radial Blur…', command: 'noop', disabled: true },
+    { label: 'Smart Blur…', command: 'noop', disabled: true },
+    { label: 'Blur Gallery', command: 'noop', disabled: true },
+    { label: 'Field Blur…', command: 'noop', disabled: true },
+    { label: 'Iris Blur…', command: 'noop', disabled: true },
+    { label: 'Tilt-Shift…', command: 'noop', disabled: true },
+    { label: 'Distort', command: 'noop', disabled: true },
+    { label: 'Displace…', command: 'noop', disabled: true },
+    { label: 'Pinch…', command: 'noop', disabled: true },
+    { label: 'Ripple…', command: 'noop', disabled: true },
+    { label: 'Shear…', command: 'noop', disabled: true },
+    { label: 'Spherize…', command: 'noop', disabled: true },
+    { label: 'Twirl…', command: 'noop', disabled: true },
+    { label: 'Wave…', command: 'noop', disabled: true },
+    { label: 'Noise', command: 'noop', disabled: true },
+    { label: 'Add Noise…', command: 'noop', disabled: true },
+    { label: 'Pixelate', command: 'noop', disabled: true },
+    { label: 'Color Halftone…', command: 'noop', disabled: true },
+    { label: 'Mosaic…', command: 'noop', disabled: true },
+    { label: 'Pointillize…', command: 'noop', disabled: true },
+    { label: 'Render', command: 'noop', disabled: true },
+    { label: 'Clouds', command: 'noop', disabled: true },
+    { label: 'Difference Clouds', command: 'noop', disabled: true },
+    { label: 'Fibers…', command: 'noop', disabled: true },
+    { label: 'Lens Flare…', command: 'noop', disabled: true },
+    { label: 'Sharpen', command: 'noop', disabled: true },
+    { label: 'Sharpen Edges', command: 'noop', disabled: true },
+    { label: 'Sharpen More', command: 'noop', disabled: true },
+    { label: 'Smart Sharpen…', command: 'noop', disabled: true },
+    { label: 'Unsharp Mask…', command: 'noop', disabled: true },
+    { label: 'Stylize', command: 'noop', disabled: true },
+    { label: 'Video', command: 'noop', disabled: true },
+    { label: 'De-Interlace…', command: 'noop', disabled: true },
+    { label: 'NTSC Colors', command: 'noop', disabled: true },
   ],
   View: [
     { label: 'Zoom in', shortcut: '+', command: 'zoom-in' },
     { label: 'Zoom out', shortcut: '−', command: 'zoom-out' },
     { label: 'Fit to screen', shortcut: '0', command: 'fit' },
     { label: 'Actual size', shortcut: '1', command: 'actual' },
+    { label: 'Full Screen Mode', command: 'noop', disabled: true },
+  ],
+  Plugins: [
+    { label: 'No plugins installed', command: 'noop', disabled: true },
+    { label: 'Plugin Manager…', command: 'noop', disabled: true },
   ],
 };
 
@@ -255,6 +461,8 @@ export default function Home() {
     [text, setText] = useState('Your text'),
     [fontSize, setFontSize] = useState(56);
   const [cloneSource, setCloneSource] = useState<{ x: number; y: number } | null>(null);
+  const clipboardLayer = useRef<Layer | null>(null);
+  const [hasClipboard, setHasClipboard] = useState(false);
   const [activeMenu, setActiveMenu] = useState<MenuName | null>(null),
     [exporting, setExporting] = useState<{ frame: Frame; assets: typeof assets.current; name: string } | null>(null),
     [drag, setDrag] = useState(false),
@@ -329,6 +537,42 @@ export default function Home() {
     setNotice('Foreground and background colors swapped');
   };
   const current = () => history.current[index.current];
+  const localSelectionMask = async (
+    selection: Selection,
+    frameWidth: number,
+    frameHeight: number,
+    layer: Layer,
+    width: number,
+    height: number,
+  ) => {
+    const frameMask = await renderSelection(selection, frameWidth, frameHeight, assets.current);
+    const [a, b, c, d, e, f] = layer.matrix;
+    if (
+      a === 1 &&
+      b === 0 &&
+      c === 0 &&
+      d === 1 &&
+      e === 0 &&
+      f === 0 &&
+      width === frameWidth &&
+      height === frameHeight
+    )
+      return frameMask;
+    const determinant = a * d - b * c;
+    if (Math.abs(determinant) < 0.000000000001) return frameMask;
+    const localMask = surface(width, height), context = localMask.getContext('2d')!;
+    context.setTransform(
+      d / determinant,
+      -b / determinant,
+      -c / determinant,
+      a / determinant,
+      (c * f - d * e) / determinant,
+      (b * e - a * f) / determinant,
+    );
+    context.drawImage(frameMask, 0, 0);
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    return localMask;
+  };
   const groupForLayer = (f: Frame, layer: Layer) =>
     layer.groupId ? f.groups?.find((group) => group.id === layer.groupId) : undefined;
   const layerIsLocked = (f: Frame, layer: Layer) =>
@@ -386,8 +630,14 @@ export default function Home() {
   const setSelection = (selection: Selection | undefined) => {
     const f = current();
     if (JSON.stringify(f.selection) === JSON.stringify(selection)) return;
-    if (commit({ ...f, selection }))
-      setNotice(selection ? `${selection.shape === 'ellipse' ? 'Elliptical' : 'Rectangular'} selection created` : 'Selection cleared');
+    if (commit({ ...f, selection })) {
+      const label = selection?.shape === 'ellipse'
+        ? 'Elliptical'
+        : selection?.shape === 'polygon'
+          ? 'Polygonal'
+          : 'Rectangular';
+      setNotice(selection ? `${label} selection created` : 'Selection cleared');
+    }
   };
   const selectAll = () => {
     const f = current();
@@ -430,6 +680,38 @@ export default function Home() {
     const parts = currentSelection.parts?.slice() || [selectionPart(currentSelection)];
     parts.push({ ...selectionPart(next), operation: selectionOperation });
     setSelection({ ...next, parts });
+  };
+  const finishPolygonalLasso = (g: Gesture) => {
+    const points = g.points || [];
+    if (points.length < 3) {
+      void paint(g.frame);
+      setNotice('Polygonal lasso needs at least three points');
+      return;
+    }
+    const bounded = points.map((point) => ({
+      x: Math.max(0, Math.min(g.frame.w, point.x)),
+      y: Math.max(0, Math.min(g.frame.h, point.y)),
+    }));
+    const x = Math.min(...bounded.map((point) => point.x)),
+      y = Math.min(...bounded.map((point) => point.y)),
+      right = Math.max(...bounded.map((point) => point.x)),
+      bottom = Math.max(...bounded.map((point) => point.y));
+    if (right - x <= 0 || bottom - y <= 0) {
+      void paint(g.frame);
+      setNotice('Polygonal lasso needs a non-zero area');
+      return;
+    }
+    mergeSelection({
+      shape: 'polygon',
+      x,
+      y,
+      w: right - x,
+      h: bottom - y,
+      points: bounded,
+      feather: 0,
+      inverted: false,
+    });
+    setNotice('Polygonal selection created');
   };
   const invertSelection = () => {
     const f = current();
@@ -482,6 +764,7 @@ export default function Home() {
   const startRaster = (image: HTMLCanvasElement, title: string) => {
     const f = rasterFrame(image, assets.current);
     if (commit(f, true)) {
+      clearClipboard();
       setDraftId(createDraftId());
       clearCloud();
       setName(title.slice(0, 160));
@@ -698,6 +981,7 @@ export default function Home() {
       if (current() !== expected)
         throw new Error('Document changed during import. Please try again.');
       await install(saved);
+      clearClipboard();
       setDraftId(createDraftId());
       clearCloud();
       setName(saved.name);
@@ -838,13 +1122,194 @@ export default function Home() {
       locked: false,
     });
   };
+  const copyLayer = () => {
+    const f = current(), layer = f.layers.find((item) => item.id === f.active);
+    if (!layer) {
+      setNotice('Select a layer before copying');
+      return false;
+    }
+    clipboardLayer.current = structuredClone(layer);
+    setHasClipboard(true);
+    setNotice('Active layer copied');
+    return true;
+  };
+  const clearClipboard = () => {
+    clipboardLayer.current = null;
+    setHasClipboard(false);
+  };
+  const pasteLayer = () => {
+    const copied = clipboardLayer.current;
+    if (!copied) {
+      setNotice('Copy a layer before pasting');
+      return;
+    }
+    const f = current();
+    if (
+      (copied.kind === 'raster' &&
+        (!assets.current[copied.asset] || (copied.mask && !assets.current[copied.mask])))
+    ) {
+      clearClipboard();
+      setNotice('The copied layer is no longer available in this document');
+      return;
+    }
+    const copiedGroup = copied.groupId
+      ? f.groups?.find((group) => group.id === copied.groupId)
+      : undefined;
+    const pasted = {
+      ...structuredClone(copied),
+      id: crypto.randomUUID(),
+      name: `${copied.name} copy`.slice(0, 160),
+      locked: false,
+      ...(copiedGroup && !copiedGroup.locked ? { groupId: copiedGroup.id } : { groupId: undefined }),
+    } as Layer;
+    addLayer(pasted);
+    setNotice('Layer pasted');
+  };
+  const cutLayer = () => {
+    const f = current(), layer = f.layers.find((item) => item.id === f.active);
+    if (!layer) {
+      setNotice('Select a layer before cutting');
+      return false;
+    }
+    if (f.layers.length === 1) {
+      setNotice('The last layer cannot be cut');
+      return false;
+    }
+    if (layerIsLocked(f, layer)) {
+      setNotice('Unlock this layer before cutting');
+      return false;
+    }
+    if (!copyLayer()) return false;
+    if (!remove()) return false;
+    setNotice('Layer cut');
+    return true;
+  };
+  const hideActiveLayer = () => {
+    const layer = current().layers.find((item) => item.id === current().active);
+    if (layer) editLayer({ visible: !layer.visible });
+  };
+  const fillActiveLayer = async () => {
+    const f = current(), layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || layer.kind !== 'raster' || layerIsLocked(f, layer) || !layer.visible) {
+      setNotice('Select a visible, unlocked raster layer before filling');
+      return;
+    }
+    try {
+      const image = await decodeAsset(assets.current[layer.asset]),
+        output = surface(image.naturalWidth, image.naturalHeight),
+        context = output.getContext('2d')!;
+      context.drawImage(image, 0, 0);
+      const fill = surface(output.width, output.height), fillContext = fill.getContext('2d')!;
+      fillContext.fillStyle = color;
+      fillContext.fillRect(0, 0, fill.width, fill.height);
+      if (f.selection) {
+        const mask = await localSelectionMask(
+          f.selection,
+          f.w,
+          f.h,
+          layer,
+          output.width,
+          output.height,
+        );
+        fillContext.globalCompositeOperation = 'destination-in';
+        fillContext.drawImage(mask, 0, 0);
+      }
+      context.drawImage(fill, 0, 0);
+      const asset = addAsset(assets.current, output);
+      if (commit({ ...f, layers: f.layers.map((item) => item.id === layer.id ? { ...item, asset } : item) }))
+        setNotice(f.selection ? 'Selection filled; undo restores the original pixels' : 'Layer filled; undo restores the original pixels');
+    } catch {
+      setNotice('Could not fill this layer');
+    }
+  };
+  const clearActiveLayer = async () => {
+    const f = current(), layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || layer.kind !== 'raster' || layerIsLocked(f, layer) || !layer.visible) {
+      setNotice('Select a visible, unlocked raster layer before clearing');
+      return;
+    }
+    try {
+      const image = await decodeAsset(assets.current[layer.asset]),
+        output = surface(image.naturalWidth, image.naturalHeight),
+        context = output.getContext('2d')!;
+      if (f.selection) {
+        context.drawImage(image, 0, 0);
+        const mask = await localSelectionMask(
+          f.selection,
+          f.w,
+          f.h,
+          layer,
+          output.width,
+          output.height,
+        );
+        context.globalCompositeOperation = 'destination-out';
+        context.drawImage(mask, 0, 0);
+      }
+      const asset = addAsset(assets.current, output);
+      if (
+        commit({
+          ...f,
+          layers: f.layers.map((item) => (item.id === layer.id ? { ...item, asset } : item)),
+        })
+      )
+        setNotice(f.selection ? 'Selection cleared; undo restores the original pixels' : 'Layer cleared; undo restores the original pixels');
+    } catch {
+      setNotice('Could not clear this layer');
+    }
+  };
+  const mergeVisible = async () => {
+    try {
+      const f = current(), groups = new Map((f.groups || []).map((group) => [group.id, group]));
+      const visibleIds = new Set(
+        f.layers
+          .filter((layer) => layer.visible && (!layer.groupId || groups.get(layer.groupId)?.visible !== false))
+          .map((layer) => layer.id),
+      );
+      if (!visibleIds.size) {
+        setNotice('There are no visible layers to merge');
+        return;
+      }
+      const image = await renderFrame(
+          { ...f, layers: f.layers.map((layer) => ({ ...layer, visible: visibleIds.has(layer.id) })) },
+          assets.current,
+        ),
+        merged = rasterFrame(image, assets.current, 'Merged visible'),
+        topVisibleIndex = Math.max(...f.layers.map((layer, index) => (visibleIds.has(layer.id) ? index : -1))),
+        layers: Layer[] = [];
+      f.layers.forEach((layer, index) => {
+        if (index === topVisibleIndex) layers.push(merged.layers[0]);
+        if (!visibleIds.has(layer.id)) layers.push(layer);
+      });
+      const usedGroups = new Set(layers.flatMap((layer) => (layer.groupId ? [layer.groupId] : [])));
+      if (
+        commit({
+          ...f,
+          layers,
+          groups: (f.groups || []).filter((group) => usedGroups.has(group.id)),
+          active: merged.layers[0].id,
+        })
+      )
+        setNotice('Visible layers merged; undo restores the individual layers');
+    } catch {
+      setNotice('Could not merge visible layers');
+    }
+  };
+  const flattenImage = async () => {
+    try {
+      const f = current(), image = await renderFrame(f, assets.current), flattened = rasterFrame(image, assets.current, 'Flattened image');
+      if (commit(flattened)) setNotice('Image flattened; undo restores editable layers');
+    } catch {
+      setNotice('Could not flatten the image');
+    }
+  };
   const remove = () => {
     const f = current(),
-      layer = f.layers.find((l) => l.id === f.active)!;
-    if (layerIsLocked(f, layer) || f.layers.length === 1) return;
+      layer = f.layers.find((l) => l.id === f.active);
+    if (!layer || layerIsLocked(f, layer) || f.layers.length === 1) return false;
     const layers = f.layers.filter((l) => l.id !== f.active);
-    commit({ ...f, layers, active: layers.at(-1)!.id });
+    if (!commit({ ...f, layers, active: layers.at(-1)!.id })) return false;
     setNotice('Layer deleted. Undo restores it.');
+    return true;
   };
   const reorder = (direction: number) => {
     const f = current(),
@@ -945,7 +1410,7 @@ export default function Home() {
       if (layerFile.current) layerFile.current.value = '';
     }
   };
-  const point = (e: React.PointerEvent<HTMLCanvasElement>) => {
+  const point = (e: Pick<React.PointerEvent<HTMLCanvasElement>, 'clientX' | 'clientY'>) => {
     const c = canvas.current!,
       r = c.getBoundingClientRect();
     return {
@@ -958,6 +1423,41 @@ export default function Home() {
       ? e.pressure
       : 1;
   const pointerDown = async (e: React.PointerEvent<HTMLCanvasElement>) => {
+    // Polygonal lasso is a click-to-place workflow. Keep its gesture alive
+    // between pointer events so touch, pen and mouse can place vertices one
+    // at a time; clicking near the first point closes the path.
+    if (gesture.current?.tool === 'polygonal-lasso') {
+      const g = gesture.current,
+        p = point(e),
+        points = g.points || (g.points = []),
+        first = points[0];
+      if (first && points.length >= 3 && Math.hypot(p.x - first.x, p.y - first.y) <= 14) {
+        gesture.current = null;
+        finishPolygonalLasso(g);
+      } else {
+        points.push({
+          x: Math.max(0, Math.min(g.frame.w, p.x)),
+          y: Math.max(0, Math.min(g.frame.h, p.y)),
+        });
+        g.last = p;
+        g.moved = points.length > 1;
+        void paint(g.frame).then(() => {
+          if (gesture.current !== g) return;
+          const context = canvas.current?.getContext('2d');
+          if (!context || !g.points?.length) return;
+          context.save();
+          context.strokeStyle = '#fff';
+          context.lineWidth = 2;
+          context.setLineDash([8, 5]);
+          context.beginPath();
+          context.moveTo(g.points[0].x, g.points[0].y);
+          for (const point of g.points.slice(1)) context.lineTo(point.x, point.y);
+          context.stroke();
+          context.restore();
+        });
+      }
+      return;
+    }
     if (gesture.current || doc.rendering || !frame) return;
     const f = current(),
       layer = f.layers.find((l) => l.id === f.active)!,
@@ -1149,6 +1649,11 @@ export default function Home() {
       gesture.current = { tool, start: p, last: p, frame: f, moved: false, points: [p] };
       return;
     }
+    if (tool === 'polygonal-lasso') {
+      gesture.current = { tool, start: p, last: p, frame: f, moved: false, points: [p] };
+      setNotice('Polygonal lasso: click to place points, click the first point to close');
+      return;
+    }
     if (tool === 'rectangle' || tool === 'ellipse' || tool === 'crop') {
       gesture.current = { tool, start: p, last: p, frame: f, moved: false };
       return;
@@ -1338,6 +1843,22 @@ export default function Home() {
         x.stroke();
         x.restore();
       });
+    } else if (g.tool === 'polygonal-lasso') {
+      const points = g.points || (g.points = [g.start]);
+      void paint(g.frame).then(() => {
+        if (gesture.current !== g) return;
+        const x = canvas.current!.getContext('2d')!;
+        x.save();
+        x.strokeStyle = '#fff';
+        x.lineWidth = 2;
+        x.setLineDash([8, 5]);
+        x.beginPath();
+        x.moveTo(points[0].x, points[0].y);
+        for (const point of points.slice(1)) x.lineTo(point.x, point.y);
+        x.lineTo(p.x, p.y);
+        x.stroke();
+        x.restore();
+      });
     } else if (g.tool === 'crop') {
       const c = canvas.current!,
         x = c.getContext('2d')!;
@@ -1356,6 +1877,16 @@ export default function Home() {
   const pointerUp = async (e: React.PointerEvent<HTMLCanvasElement>) => {
     const g = gesture.current;
     if (!g) return;
+    if (g.tool === 'polygonal-lasso') {
+      if (e.type === 'pointercancel') {
+        gesture.current = null;
+        void paint(current());
+        setNotice('Polygonal lasso cancelled');
+      }
+      // A polygonal lasso remains active after each click. It is finalized by
+      // clicking its first vertex or by the double-click handler below.
+      return;
+    }
     const p = point(e),
       f = g.frame;
     const local =
@@ -1470,6 +2001,22 @@ export default function Home() {
         setNotice('Color replacement applied; undo restores the original pixels');
     } else void paint(f);
   };
+  const doubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const g = gesture.current;
+    if (g?.tool !== 'polygonal-lasso') return;
+    // Double-clicking the final vertex is the desktop equivalent of clicking
+    // the first vertex. The second pointer-down may already have added that
+    // vertex, so remove it when it duplicates the preceding point.
+    const p = point(e),
+      points = g.points || [];
+    if (points.length >= 2) {
+      const last = points[points.length - 1], previous = points[points.length - 2];
+      if (Math.hypot(last.x - p.x, last.y - p.y) <= 14 && Math.hypot(last.x - previous.x, last.y - previous.y) <= 1)
+        points.pop();
+    }
+    gesture.current = null;
+    finishPolygonalLasso(g);
+  };
   const transform = async (a: 'left' | 'right' | 'h' | 'v') => {
     const f = current();
     const matrix: Matrix =
@@ -1523,22 +2070,29 @@ export default function Home() {
           /INPUT|TEXTAREA|SELECT/.test(target.tagName) ||
           target.isContentEditable,
         command = e.ctrlKey || e.metaKey;
-      if (
-        !ready ||
-        cloudBusy ||
-        gesture.current ||
-        document.querySelector('dialog[open]')
-      )
+      if (!ready || cloudBusy || document.querySelector('dialog[open]'))
         return;
+      if (e.key === 'Escape' && gesture.current?.tool === 'polygonal-lasso') {
+        gesture.current = null;
+        void paint(current());
+        setNotice('Polygonal lasso cancelled');
+        return;
+      }
+      if (gesture.current) return;
       if (e.key === 'Escape') {
         setActiveMenu(null);
         return;
       }
       if (typing) return;
+      if (e.key === 'F5' && e.shiftKey) {
+        e.preventDefault();
+        void fillActiveLayer();
+        return;
+      }
       if (command) {
         const k = e.key.toLowerCase();
         if (
-          ['z', 'y', 's', 'o', 'n', 'a', 'd', 'g', 'j', 'i'].includes(k) ||
+          ['z', 'y', 's', 'o', 'n', 'a', 'd', 'g', 'j', 'i', 'c', 'v', 'x'].includes(k) ||
           (k === 'w' && !e.altKey)
         )
           e.preventDefault();
@@ -1567,6 +2121,9 @@ export default function Home() {
           else groupActiveLayer();
         }
         if (k === 'j' && !e.shiftKey) duplicate();
+        if (k === 'c' && !e.shiftKey) copyLayer();
+        if (k === 'x' && !e.shiftKey) cutLayer();
+        if (k === 'v' && !e.shiftKey) pasteLayer();
         return;
       }
       if (e.key.toLowerCase() === 'd') {
@@ -1624,6 +2181,7 @@ export default function Home() {
     return () => window.removeEventListener('keydown', key);
   });
   const runCommand = (command: Command) => {
+    if (command === 'noop') return;
     if (command === 'resize')
       setResizing({ width: current().w, height: current().h });
     else if (command === 'project-save') exportProject();
@@ -1636,6 +2194,26 @@ export default function Home() {
     else if (command === 'webp') download('webp');
     else if (command === 'undo') undo();
     else if (command === 'redo') redo();
+    else if (command === 'copy-layer') copyLayer();
+    else if (command === 'cut-layer') cutLayer();
+    else if (command === 'paste-layer') pasteLayer();
+    else if (command === 'clear-layer') void clearActiveLayer();
+    else if (command === 'fill-layer') void fillActiveLayer();
+    else if (command === 'new-layer') addPaint();
+    else if (command === 'duplicate-layer') duplicate();
+    else if (command === 'delete-layer') remove();
+    else if (command === 'group-layer') groupActiveLayer();
+    else if (command === 'ungroup-layer') ungroupActiveLayer();
+    else if (command === 'hide-layer') hideActiveLayer();
+    else if (command === 'merge-visible') void mergeVisible();
+    else if (command === 'flatten') void flattenImage();
+    else if (command === 'text-tool') {
+      setTool('text');
+      setNotice('Text tool selected');
+    } else if (command === 'select-all') selectAll();
+    else if (command === 'deselect') setSelection(undefined);
+    else if (command === 'invert-selection') invertSelection();
+    else if (command === 'mask-selection') void createMaskFromSelection();
     else if (command === 'reset') resetAdjustments();
     else if (command === 'crop') {
       setTool('crop');
@@ -1653,6 +2231,44 @@ export default function Home() {
     else if (command === 'zoom-out') setZoom((v) => Math.max(20, v - 10));
     else if (command === 'fit') fitToScreen();
     else if (command === 'actual') setZoom(100);
+  };
+  const menuItemDisabled = (item: MenuItem) => {
+    if (item.disabled || !frame) return true;
+    const layer = frame.layers.find((item) => item.id === frame.active);
+    const locked = layer ? layerIsLocked(frame, layer) : true;
+    switch (item.command) {
+      case 'undo':
+        return !canUndo;
+      case 'redo':
+        return !canRedo;
+      case 'copy-layer':
+        return !layer;
+      case 'cut-layer':
+        return !layer || locked || frame.layers.length <= 1;
+      case 'paste-layer':
+        return !hasClipboard || frame.layers.length >= 32;
+      case 'new-layer':
+        return frame.layers.length >= 32;
+      case 'clear-layer':
+      case 'fill-layer':
+        return !layer || layer.kind !== 'raster' || locked || !layer.visible;
+      case 'duplicate-layer':
+        return !layer || locked || frame.layers.length >= 32;
+      case 'delete-layer':
+        return !layer || locked || frame.layers.length <= 1;
+      case 'group-layer':
+        return !layer || Boolean(layer.groupId) || (frame.groups || []).length >= 32;
+      case 'ungroup-layer':
+        return !layer?.groupId || Boolean(frame.groups?.find((group) => group.id === layer.groupId)?.locked);
+      case 'mask-selection':
+        return !layer || layer.kind !== 'raster' || locked || !frame.selection;
+      case 'hide-layer':
+        return !layer || Boolean(groupForLayer(frame, layer)?.locked);
+      case 'merge-visible':
+        return !frame.layers.some((item) => item.visible && (!item.groupId || frame.groups?.find((group) => group.id === item.groupId)?.visible !== false));
+      default:
+        return false;
+    }
   };
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
@@ -1730,14 +2346,14 @@ export default function Home() {
                   role="menu"
                   aria-label={`${menuName} menu`}
                 >
-                  {MENU_DEFS[menuName].map((item) => (
+                  {MENU_DEFS[menuName].map((item, index) => item.separator ? (
+                    <hr key={`separator-${menuName}-${index}`} />
+                  ) : (
                     <button
-                      key={item.label}
+                      key={`${item.label}-${index}`}
                       role="menuitem"
-                      disabled={
-                        (item.command === 'undo' && !canUndo) ||
-                        (item.command === 'redo' && !canRedo)
-                      }
+                      disabled={menuItemDisabled(item)}
+                      title={item.disabled ? 'Planned for a later roadmap stage' : undefined}
                       onClick={() => {
                         setActiveMenu(null);
                         runCommand(item.command);
@@ -1866,6 +2482,7 @@ export default function Home() {
               onPointerMove={pointerMove}
               onPointerUp={(e) => void pointerUp(e)}
               onPointerCancel={(e) => void pointerUp(e)}
+              onDoubleClick={doubleClick}
               className={`tool-${tool}`}
             />
           </div>

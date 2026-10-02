@@ -17,7 +17,7 @@ The long-term target is a professional image editor with Photoshop-class breadth
 
 ## Release gates
 
-No decorative controls presented as working tools. Use versioned documents and migrations, pixel/round-trip tests, private-project authorization tests, concurrent-save conflict protection, storage failure/recovery tests and desktop/mobile browser acceptance. CI must verify the deployed revision, not only build successfully. Cloud project storage must be owner-scoped, free to end users and separate from anonymous local storage. Do not silently upload existing local photos upon sign-in.
+No decorative controls presented as working tools. Every implemented feature (including each tool, menu command, dialog branch, filter effect, export option and persisted setting) ships with extensive tests: valid and boundary inputs, representative pixel/alpha or geometry assertions, undo/cancel behavior, malformed/error cases, keyboard and pointer/touch access, desktop and mobile browser acceptance, local reload/bookmark and project export/import round trips, and a documented performance or large-image check where applicable. Use versioned documents and migrations, private-project authorization tests, concurrent-save conflict protection, storage failure/recovery tests and desktop/mobile browser acceptance. CI must verify the deployed revision, not only build successfully. Cloud project storage must be owner-scoped, free to end users and separate from anonymous local storage. Do not silently upload existing local photos upon sign-in.
 
 Current implementation status is recorded in the PR and deployment evidence; this document is a direction and acceptance contract, not a completion checklist.
 
