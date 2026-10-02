@@ -11,6 +11,11 @@ export type Draft = {
 };
 
 let database: Promise<IDBDatabase> | undefined;
+function validSettings(settings: Draft['settings']) {
+  if (!settings || !['move', 'crop', 'brush', 'eraser', 'text', 'rectangle'].includes(settings.tool) || typeof settings.text !== 'string' || settings.text.length > 10000 || !/^#[a-f\d]{6}$/i.test(settings.color)) return false;
+  const ranges = [[settings.zoom, 20, 140], [settings.size, 2, 100], [settings.fontSize, 16, 160], [settings.brightness, 0, 200], [settings.contrast, 0, 200], [settings.saturation, 0, 200], [settings.blur, 0, 20]];
+  return ranges.every(([value, min, max]) => Number.isFinite(value) && value >= min && value <= max) && ['none', 'saturate(1.45) contrast(1.08)', 'grayscale(1) contrast(1.12)', 'sepia(.35) saturate(1.2)', 'hue-rotate(18deg) saturate(.9)'].includes(settings.filter);
+}
 function openDatabase() {
   database ??= new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open('pixelforge-documents', 1);
@@ -61,7 +66,7 @@ export async function readDraft(id: string): Promise<Draft | undefined> {
     request.onsuccess = () => {
       const value = request.result as Draft | undefined;
       if (value === undefined) { resolve(undefined); return; }
-      if (value.version !== 1 || !Array.isArray(value.history) || !value.history.length || value.history.length > 24 || !Number.isInteger(value.index) || value.index < 0 || value.index >= value.history.length || !value.settings || typeof value.name !== 'string' || value.history.some(shot => !shot.url?.startsWith('data:image/png;base64,') || !Number.isInteger(shot.w) || !Number.isInteger(shot.h) || shot.w < 1 || shot.h < 1 || shot.w > 20000 || shot.h > 20000)) {
+      if (value.version !== 1 || !Array.isArray(value.history) || !value.history.length || value.history.length > 24 || !Number.isInteger(value.index) || value.index < 0 || value.index >= value.history.length || !validSettings(value.settings) || typeof value.name !== 'string' || value.history.some(shot => !shot || typeof shot.url !== 'string' || !shot.url.startsWith('data:image/png;base64,') || !Number.isInteger(shot.w) || !Number.isInteger(shot.h) || shot.w < 1 || shot.h < 1 || shot.w > 20000 || shot.h > 20000)) {
         reject(new Error('Saved document is not supported')); return;
       }
       resolve(value);

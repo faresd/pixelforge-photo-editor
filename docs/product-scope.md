@@ -20,3 +20,5 @@ The long-term target is a professional image editor with Photoshop-class breadth
 No decorative controls presented as working tools. Use versioned documents and migrations, pixel/round-trip tests, private-project authorization tests, concurrent-save conflict protection, storage failure/recovery tests and desktop/mobile browser acceptance. CI must verify the deployed revision, not only build successfully. Cloud project storage must be owner-scoped, free to end users and separate from anonymous local storage. Do not silently upload existing local photos upon sign-in.
 
 Current implementation status is recorded in the PR and deployment evidence; this document is a direction and acceptance contract, not a completion checklist.
+
+Reference architecture: Adobe describes editable masks, adjustment layers and smart filters as complementary nondestructive mechanisms: https://helpx.adobe.com/photoshop/using/nondestructive-editing.html. PixelForge needs a structured document engine to provide equivalent behaviors.

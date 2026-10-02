@@ -8,7 +8,7 @@
 - Custom domain: `https://photoeditor.cheaply.fr`
 - DNS: Cloudflare, `cheaply.fr` zone
 
-The application is entirely client-side. Firebase Hosting serves the Vite build over HTTPS. No image upload backend, database, model API, persistent cloud photo storage or mandatory login was added. This migration uses the existing GitHub editor, including its menu fixes; the older Sites publication is a separate deployment.
+Image editing runs client-side and Firebase Hosting serves the Vite build over HTTPS. Optional shared-session authentication and cloud project storage are provided by the existing Cheaply Marketplace backend; no account is required for editing. This migration uses the existing GitHub editor, including its menu fixes; the older Sites publication is a separate deployment.
 
 ## CI/CD
 
@@ -45,4 +45,4 @@ Use the exact DNS records returned by Firebase's custom-domain setup. Keep owner
 - Build succeeds but browser tests fail: inspect the attached Playwright trace; fix the editor before deploying.
 - Verification finds the wrong commit: check the target project/site and cached release metadata. Only hashed assets are cached immutably.
 
-The build uses only static hosting. Firebase usage quotas still apply; monitor the project's usage before scaling traffic or adding paid processing.
+The editor build uses static hosting. Optional project storage runs through Marketplace in project blissful-scout-290322, using a separate private EU bucket blissful-scout-290322-pixelforge-projects. The existing Marketplace session cookie remains host-only and HttpOnly; the project API accepts only the exact photoeditor.cheaply.fr origin. Local photos upload only after an explicit save action. Cloud saves are version-checked and limited to 16 MB per document, 30 projects and 256 MB per library. Deleted cloud objects have a seven-day provider recovery period. Firebase usage quotas still apply; monitor the project's usage before scaling traffic or adding paid processing.
