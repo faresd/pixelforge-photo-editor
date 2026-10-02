@@ -91,6 +91,8 @@ export type Selection = {
   inverted: boolean;
   points?: { x: number; y: number }[];
   parts?: SelectionPart[];
+  /** Canvas-sized alpha asset for a color-based selection. */
+  mask?: string;
 };
 export type Frame = {
   w: number;
@@ -295,7 +297,12 @@ export function validateFrame(
         (!Array.isArray(s.parts) ||
           s.parts.length < 1 ||
           s.parts.length > 1000 ||
-          s.parts.some((part) => !validPart(part, true))))
+          s.parts.some((part) => !validPart(part, true)))) ||
+      (s.mask !== undefined &&
+        (!validId(s.mask) ||
+          !Object.hasOwn(assets, s.mask) ||
+          assets[s.mask].w !== frameWidth ||
+          assets[s.mask].h !== frameHeight))
     )
       return fail();
   }
@@ -304,12 +311,14 @@ export function validateFrame(
 }
 export function referencedAssets(history: Frame[], assets: Assets): Assets {
   const used: Assets = {};
-  for (const frame of history)
+  for (const frame of history) {
+    if (frame.selection?.mask) used[frame.selection.mask] = assets[frame.selection.mask];
     for (const layer of frame.layers)
       if (layer.kind === 'raster') {
         used[layer.asset] = assets[layer.asset];
         if (layer.mask) used[layer.mask] = assets[layer.mask];
       }
+  }
   return used;
 }
 export function addAsset(assets: Assets, canvas: HTMLCanvasElement): string {
@@ -417,6 +426,50 @@ export function floodFill(
   }
   context.putImageData(image, 0, 0);
   return true;
+}
+/** Creates a canvas-sized alpha mask for a contiguous color selection. */
+export function colorSelectMask(
+  canvas: HTMLCanvasElement,
+  x: number,
+  y: number,
+  tolerance = 24,
+) {
+  const context = canvas.getContext('2d')!,
+    source = context.getImageData(0, 0, canvas.width, canvas.height),
+    output = context.createImageData(canvas.width, canvas.height),
+    data = source.data,
+    startX = Math.max(0, Math.min(canvas.width - 1, Math.floor(x))),
+    startY = Math.max(0, Math.min(canvas.height - 1, Math.floor(y))),
+    start = (startY * canvas.width + startX) * 4,
+    target = [data[start], data[start + 1], data[start + 2], data[start + 3]],
+    same = (index: number) =>
+      Math.max(
+        Math.abs(data[index] - target[0]),
+        Math.abs(data[index + 1] - target[1]),
+        Math.abs(data[index + 2] - target[2]),
+        Math.abs(data[index + 3] - target[3]),
+      ) <= tolerance;
+  if (!same(start)) return surface(canvas.width, canvas.height);
+  const seen = new Uint8Array(canvas.width * canvas.height), queue = [startX, startY];
+  while (queue.length) {
+    const cy = queue.pop()!,
+      cx = queue.pop()!,
+      pixel = cy * canvas.width + cx,
+      offset = pixel * 4;
+    if (seen[pixel] || !same(offset)) continue;
+    seen[pixel] = 1;
+    output.data[offset] = 255;
+    output.data[offset + 1] = 255;
+    output.data[offset + 2] = 255;
+    output.data[offset + 3] = 255;
+    if (cx > 0) queue.push(cx - 1, cy);
+    if (cx + 1 < canvas.width) queue.push(cx + 1, cy);
+    if (cy > 0) queue.push(cx, cy - 1);
+    if (cy + 1 < canvas.height) queue.push(cx, cy + 1);
+  }
+  const mask = surface(canvas.width, canvas.height);
+  mask.getContext('2d')!.putImageData(output, 0, 0);
+  return mask;
 }
 /** Render into an isolated surface. Callers publish only the newest completed render. */
 export async function renderFrame(

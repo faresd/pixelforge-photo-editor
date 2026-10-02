@@ -545,6 +545,24 @@ test('selection add mode composes geometry and masks pixels nondestructively', a
   })).toEqual([0, 0]);
 });
 
+test('magic wand persists a color-based alpha selection and converts it to a layer mask', async ({
+  page,
+}) => {
+  const canvas = page.getByTestId('editor-canvas');
+  await page.getByRole('button', { name: 'Magic Wand tool', exact: true }).click();
+  await canvas.click({ position: { x: 20, y: 20 } });
+  const exported = await project(page),
+    frame = exported.value.history[exported.value.index],
+    selectionMask = frame.selection.mask;
+  expect(selectionMask).toEqual(expect.any(String));
+  expect(exported.value.assets[selectionMask].w).toBe(frame.w);
+  expect(exported.value.assets[selectionMask].h).toBe(frame.h);
+  await page.getByRole('button', { name: 'Mask from selection', exact: true }).click();
+  await expect(page.getByText('Nondestructive mask active', { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByText('Nondestructive mask active', { exact: true })).toBeVisible();
+});
+
 test('a stale tab cannot overwrite or discard newer work and can save its own local copy', async ({
   page,
   context,

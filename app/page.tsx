@@ -25,6 +25,7 @@ import {
   Undo2,
   Upload,
   WandSparkles,
+  Wand2,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
@@ -50,7 +51,9 @@ import {
 } from '../src/cloud';
 import {
   addAsset,
+  colorSelectMask,
   commonLayer,
+  decodeAsset,
   identity,
   neutral,
   rasterFrame,
@@ -117,6 +120,7 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'select', label: 'Select', icon: Crop, key: 'M' },
   { id: 'ellipse-select', label: 'Elliptical marquee', icon: Shapes, key: 'M' },
   { id: 'lasso', label: 'Lasso', icon: WandSparkles, key: 'L' },
+  { id: 'magic-wand', label: 'Magic Wand', icon: Wand2, key: 'W' },
 ];
 const FILTERS = [
   ['Original', 'none', '#315277', '#d59b6c'],
@@ -318,7 +322,7 @@ export default function Home() {
     if (f.selection && commit({ ...f, selection: { ...f.selection, feather } }))
       setNotice(`Selection feather set to ${Math.round(feather)} px`);
   };
-  const createMaskFromSelection = () => {
+  const createMaskFromSelection = async () => {
     const f = current(), layer = f.layers.find((l) => l.id === f.active);
     if (!f.selection || !layer || layer.kind !== 'raster') {
       setNotice('Select a raster layer and create a selection first');
@@ -329,8 +333,11 @@ export default function Home() {
       return;
     }
     const mask = surface(f.w, f.h), context = mask.getContext('2d')!;
-    const parts = f.selection.parts?.length ? f.selection.parts : [selectionPart(f.selection)];
-    context.clearRect(0, 0, f.w, f.h);
+    if (f.selection.mask) {
+      context.drawImage(await decodeAsset(assets.current[f.selection.mask]), 0, 0);
+    }
+    const parts = f.selection.mask ? [] : (f.selection.parts?.length ? f.selection.parts : [selectionPart(f.selection)]);
+    if (!f.selection.mask) context.clearRect(0, 0, f.w, f.h);
     for (const part of parts) {
       const shape = surface(f.w, f.h), shapeContext = shape.getContext('2d')!;
       shapeContext.fillStyle = '#fff';
@@ -852,6 +859,24 @@ export default function Home() {
         return;
       }
       gesture.current = { tool, start: p, last: p, frame: f, layer, moved: false };
+      return;
+    }
+    if (tool === 'magic-wand') {
+      if (layer.locked || !layer.visible || layer.kind !== 'raster') {
+        setNotice('Select a visible, unlocked raster layer before color-selecting');
+        return;
+      }
+      try {
+        const source = await renderFrame({ ...f, layers: [layer] }, assets.current),
+          mask = colorSelectMask(source, p.x, p.y),
+          maskId = addAsset(assets.current, mask);
+        if (selectionOperation !== 'replace')
+          setNotice('Color selection currently replaces the active selection; geometric selections support composition');
+        setSelection({ shape: 'rectangle', x: 0, y: 0, w: f.w, h: f.h, feather: 0, inverted: false, mask: maskId });
+        setNotice('Color selection created from contiguous pixels');
+      } catch {
+        setNotice('Could not create a color selection');
+      }
       return;
     }
     if (tool === 'text') {
