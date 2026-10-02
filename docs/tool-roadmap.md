@@ -9,7 +9,7 @@ This matrix distills the two user-provided toolbar references into an implementa
 | Navigation | Move (V), Hand (H), Zoom, Rotate View (R), toolbar layout | Move exists; Hand, Zoom are the next tools; add rotate-view viewport state and compact/expanded toolbar later | Keyboard shortcuts, pointer/touch gestures, no document-pixel mutation for viewport actions |
 | Marquee selection | Rectangular, Elliptical, Single Row, Single Column (M) | Rectangular and elliptical marquee tools; row/column remain planned presets | Selection bounds round-trip, add/subtract/intersect/invert and feather pixel tests |
 | Free selection | Lasso, Polygonal Lasso, Magnetic Lasso (L) | Freehand lasso polygon is implemented; polygonal and magnetic variants remain planned | Closed-path hit testing, feather/invert, mask export and undo |
-| Automatic selection | Object Selection, Quick Selection, Magic Wand (W) | Magic Wand color tolerance first; object/quick selection after measured local or remote inference | Deterministic tolerance fixtures, disconnected regions, privacy disclosure for inference |
+| Automatic selection | Object Selection, Quick Selection, Magic Wand (W) | Contiguous Magic Wand color selection with a deterministic tolerance; object/quick selection after measured local or remote inference | Deterministic tolerance fixtures, disconnected regions, privacy disclosure for inference |
 | Sampling and measurement | Eyedropper, Color Sampler, Ruler, Note, Count (I) | Eyedropper is implemented next; add multi-sample color table, ruler overlays and private notes | Sampled RGB/alpha exactness, non-destructive overlays, export omission rules |
 | Crop and slicing | Crop, Perspective Crop, Slice, Slice Select (C) | Crop exists; add perspective transform and export slices as separate assets | Corner transform pixel comparison, non-overwrite export, undo and mobile controls |
 | Retouching | Spot Healing, Remove, Healing Brush, Patch, Content-Aware Move, Red Eye (J) | Add clone/heal brush primitives, then patch and constrained content-aware operations | Before/after fixtures, source preservation, bounded memory, explicit undo |
@@ -30,7 +30,7 @@ This matrix distills the two user-provided toolbar references into an implementa
 
 Implemented and deployed: Move, Crop, Brush, Eraser, Text, Rectangle, Ellipse, layer properties, nondestructive per-layer adjustments, rotate/flip, local/cloud project persistence, optional Cheaply session and production CI/CD. The supplied Cheaply artwork is used in the brand lockup beside an original cyan Pixel monogram.
 
-The active implementation increment adds Hand, Zoom, Eyedropper, Paint Bucket, Gradient, Clone, Healing, rectangular/elliptical/lasso selection, selection composition (replace/add/subtract/intersect), inversion, feather control and alpha-correct nondestructive masks. Each tool must have a dedicated desktop and mobile browser acceptance test before merge. Pixel does not claim Photoshop equivalence while the remaining families are incomplete.
+The active implementation increment adds Hand, Zoom, Eyedropper, Paint Bucket, Gradient, Clone, Healing, rectangular/elliptical/lasso and Magic Wand color selection, selection composition (replace/add/subtract/intersect), inversion, feather control and alpha-correct nondestructive masks. Each tool must have a dedicated desktop and mobile browser acceptance test before merge. Pixel does not claim Photoshop equivalence while the remaining families are incomplete.
 
 ## Delivery gates
 
