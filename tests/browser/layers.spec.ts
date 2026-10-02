@@ -361,6 +361,86 @@ test('ellipse layers stay vector-editable through export and reload', async ({
   });
 });
 
+test('paint bucket fills a contiguous raster region and is undoable', async ({
+  page,
+}) => {
+  const canvas = page.getByTestId('editor-canvas');
+  const before = await pixels(page);
+  await page.getByLabel('Drawing color', { exact: true }).fill('#00ff00');
+  await page.getByRole('button', { name: 'Fill tool', exact: true }).click();
+  const box = (await canvas.boundingBox())!;
+  await canvas.click({ position: { x: box.width / 2, y: box.height / 2 } });
+  await expect.poll(() => pixels(page)).not.toBe(before);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  await expect.poll(() => pixels(page)).toBe(before);
+});
+
+test('eyedropper samples a rendered pixel into the drawing color', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: 'Eyedropper tool', exact: true }).click();
+  const canvas = page.getByTestId('editor-canvas');
+  const box = (await canvas.boundingBox())!;
+  await canvas.click({ position: { x: box.width / 2, y: box.height / 2 } });
+  await expect(page.getByLabel('Drawing color', { exact: true })).not.toHaveValue(
+    '#ff5c35',
+  );
+});
+
+test('zoom tool increases the document view without changing pixels', async ({
+  page,
+}) => {
+  const before = await pixels(page);
+  await page.getByRole('button', { name: 'Zoom tool', exact: true }).click();
+  await page.getByTestId('editor-canvas').click();
+  await expect(page.getByLabel('Zoom', { exact: true })).toHaveValue('82');
+  expect(await pixels(page)).toBe(before);
+});
+
+test('hand tool provides a pannable canvas gesture', async ({ page }) => {
+  await page.getByRole('button', { name: 'Hand tool', exact: true }).click();
+  const canvas = page.getByTestId('editor-canvas');
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + 120, box.y + 120);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 60, box.y + 80, { steps: 3 });
+  await page.mouse.up();
+  await expect(page.getByRole('button', { name: 'Hand tool', exact: true })).toHaveClass(
+    /active/,
+  );
+});
+
+test('gradient tool applies an undoable color fade to a raster layer', async ({
+  page,
+}) => {
+  const canvas = page.getByTestId('editor-canvas'), before = await pixels(page),
+    box = (await canvas.boundingBox())!;
+  await page.getByRole('button', { name: 'Gradient tool', exact: true }).click();
+  await page.mouse.move(box.x + 100, box.y + 100);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width - 100, box.y + box.height - 100, { steps: 5 });
+  await page.mouse.up();
+  await expect.poll(() => pixels(page)).not.toBe(before);
+});
+
+test('clone and healing tools use an explicit source point and commit raster edits', async ({
+  page,
+}) => {
+  const canvas = page.getByTestId('editor-canvas'), box = (await canvas.boundingBox())!;
+  await page.getByRole('button', { name: 'Clone tool', exact: true }).click();
+  await canvas.click({ position: { x: box.width * 0.25, y: box.height * 0.25 } });
+  await expect(page.getByText('Clone source set; drag on the image to paint it', { exact: true })).toBeVisible();
+  await page.mouse.move(box.x + box.width * 0.55, box.y + box.height * 0.55);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.7, { steps: 4 });
+  await page.mouse.up();
+  await expect(page.getByText('Clone stroke applied', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Healing tool', exact: true }).click();
+  await canvas.click({ position: { x: box.width * 0.2, y: box.height * 0.2 } });
+  await expect(page.getByText('Clone source set; drag on the image to paint it', { exact: true })).toBeVisible();
+});
+
 test('a stale tab cannot overwrite or discard newer work and can save its own local copy', async ({
   page,
   context,

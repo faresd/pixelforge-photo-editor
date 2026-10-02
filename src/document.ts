@@ -289,6 +289,51 @@ export function surface(w: number, h: number) {
   canvas.height = h;
   return canvas;
 }
+/** Paints a contiguous region, preserving antialias-free source pixels for undo. */
+export function floodFill(
+  canvas: HTMLCanvasElement,
+  x: number,
+  y: number,
+  color: string,
+  tolerance = 24,
+) {
+  const context = canvas.getContext('2d')!,
+    image = context.getImageData(0, 0, canvas.width, canvas.height),
+    data = image.data,
+    startX = Math.max(0, Math.min(canvas.width - 1, Math.floor(x))),
+    startY = Math.max(0, Math.min(canvas.height - 1, Math.floor(y))),
+    start = (startY * canvas.width + startX) * 4,
+    target = [data[start], data[start + 1], data[start + 2], data[start + 3]],
+    match = color.match(/^#([a-f\d]{6})$/i);
+  if (!match) throw new Error('Fill color is invalid');
+  const replacement = [
+    parseInt(match[1].slice(0, 2), 16),
+    parseInt(match[1].slice(2, 4), 16),
+    parseInt(match[1].slice(4, 6), 16),
+    255,
+  ];
+  const same = (index: number) =>
+    Math.max(
+      Math.abs(data[index] - target[0]),
+      Math.abs(data[index + 1] - target[1]),
+      Math.abs(data[index + 2] - target[2]),
+      Math.abs(data[index + 3] - target[3]),
+    ) <= tolerance;
+  if (!same(start)) return false;
+  const seen = new Uint8Array(canvas.width * canvas.height), queue = [startX, startY];
+  while (queue.length) {
+    const cy = queue.pop()!, cx = queue.pop()!, offset = (cy * canvas.width + cx) * 4;
+    if (seen[cy * canvas.width + cx] || !same(offset)) continue;
+    seen[cy * canvas.width + cx] = 1;
+    data.set(replacement, offset);
+    if (cx > 0) queue.push(cx - 1, cy);
+    if (cx + 1 < canvas.width) queue.push(cx + 1, cy);
+    if (cy > 0) queue.push(cx, cy - 1);
+    if (cy + 1 < canvas.height) queue.push(cx, cy + 1);
+  }
+  context.putImageData(image, 0, 0);
+  return true;
+}
 /** Render into an isolated surface. Callers publish only the newest completed render. */
 export async function renderFrame(
   frame: Frame,

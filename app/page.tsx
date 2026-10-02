@@ -6,9 +6,14 @@ import {
   Download,
   Eraser,
   FileImage,
+  Copy,
+  Palette,
   FlipHorizontal2,
   FlipVertical2,
   ImagePlus,
+  Hand,
+  Pipette,
+  PaintBucket,
   MousePointer2,
   Redo2,
   RotateCcw,
@@ -52,6 +57,7 @@ import {
   renderFrame,
   surface,
   transformFrame,
+  floodFill,
   type Adjustments,
   type Layer,
   type Frame,
@@ -92,6 +98,13 @@ type MenuItem = { label: string; shortcut?: string; command: Command };
 
 const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'move', label: 'Move', icon: MousePointer2, key: 'V' },
+  { id: 'hand', label: 'Hand', icon: Hand, key: 'H' },
+  { id: 'zoom', label: 'Zoom', icon: ZoomIn, key: 'Z' },
+  { id: 'eyedropper', label: 'Eyedropper', icon: Pipette, key: 'I' },
+  { id: 'fill', label: 'Fill', icon: PaintBucket, key: 'G' },
+  { id: 'gradient', label: 'Gradient', icon: Palette, key: 'D' },
+  { id: 'clone', label: 'Clone', icon: Copy, key: 'S' },
+  { id: 'heal', label: 'Healing', icon: WandSparkles, key: 'J' },
   { id: 'crop', label: 'Crop', icon: Crop, key: 'C' },
   { id: 'brush', label: 'Brush', icon: Brush, key: 'B' },
   { id: 'eraser', label: 'Eraser', icon: Eraser, key: 'E' },
@@ -152,6 +165,7 @@ type Gesture = {
   frame: Frame;
   layer?: Layer;
   buffer?: HTMLCanvasElement;
+  source?: HTMLCanvasElement;
   pending?: Promise<void>;
   queued?: { x: number; y: number }[];
   moved: boolean;
@@ -186,6 +200,7 @@ export default function Home() {
     [size, setSize] = useState(18),
     [text, setText] = useState('Your text'),
     [fontSize, setFontSize] = useState(56);
+  const [cloneSource, setCloneSource] = useState<{ x: number; y: number } | null>(null);
   const [activeMenu, setActiveMenu] = useState<MenuName | null>(null),
     [drag, setDrag] = useState(false),
     [resizing, setResizing] = useState<{
@@ -682,6 +697,77 @@ export default function Home() {
       layer = f.layers.find((l) => l.id === f.active)!,
       p = point(e);
     canvas.current!.setPointerCapture(e.pointerId);
+    if (tool === 'zoom') {
+      setZoom((value) => Math.min(140, value + 10));
+      setNotice('Zoomed in');
+      return;
+    }
+    if (tool === 'eyedropper') {
+      const pixel = canvas.current!.getContext('2d')!.getImageData(Math.floor(p.x), Math.floor(p.y), 1, 1).data;
+      setColor('#' + [pixel[0], pixel[1], pixel[2]].map((value) => value.toString(16).padStart(2, '0')).join(''));
+      setNotice('Color sampled from image');
+      return;
+    }
+    if (tool === 'hand') {
+      gesture.current = { tool, start: p, last: p, frame: f, moved: false };
+      return;
+    }
+    if (tool === 'fill') {
+      if (layer.locked || !layer.visible || layer.kind !== 'raster') {
+        setNotice('Select a visible, unlocked raster layer before filling');
+        return;
+      }
+      try {
+        const buffer = await renderFrame({ ...f, layers: [layer] }, assets.current);
+        if (!floodFill(buffer, p.x, p.y, color)) {
+          setNotice('No contiguous pixels matched at that point');
+          return;
+        }
+        const asset = addAsset(assets.current, buffer);
+        if (commit({ ...f, layers: f.layers.map((item) => item.id === layer.id ? { ...item, asset, mask: undefined } : item) }))
+          setNotice('Area filled; undo restores the original pixels');
+      } catch {
+        setNotice('Could not fill this layer');
+      }
+      return;
+    }
+    if (tool === 'clone' || tool === 'heal') {
+      if (layer.locked || !layer.visible || layer.kind !== 'raster') {
+        setNotice('Select a visible, unlocked raster layer before retouching');
+        return;
+      }
+      if (!cloneSource) {
+        setCloneSource(p);
+        setNotice('Clone source set; drag on the image to paint it');
+        return;
+      }
+      const g = {
+        tool,
+        start: p,
+        last: p,
+        frame: f,
+        layer,
+        moved: false,
+      } as Gesture;
+      gesture.current = g;
+      g.pending = (async () => {
+        const source = await renderFrame({ ...f, layers: [layer] }, assets.current);
+        if (gesture.current !== g) return;
+        g.source = source;
+        g.buffer = surface(f.w, f.h);
+        g.buffer.getContext('2d')!.drawImage(source, 0, 0);
+      })();
+      await g.pending;
+      return;
+    }
+    if (tool === 'gradient') {
+      if (layer.locked || !layer.visible || layer.kind !== 'raster') {
+        setNotice('Select a visible, unlocked raster layer before applying a gradient');
+        return;
+      }
+      gesture.current = { tool, start: p, last: p, frame: f, layer, moved: false };
+      return;
+    }
     if (tool === 'text') {
       const added = addLayer({
         ...commonLayer('Text ' + f.layers.length),
@@ -767,8 +853,31 @@ export default function Home() {
     if (!g) return;
     const p = point(e);
     g.moved = true;
+    if (g.tool === 'hand') {
+      if (stage.current) {
+        stage.current.scrollLeft -= p.x - g.last.x;
+        stage.current.scrollTop -= p.y - g.last.y;
+      }
+      g.last = p;
+      return;
+    }
     if ((g.tool === 'brush' || g.tool === 'eraser') && !g.buffer)
       g.queued?.push(p);
+    if ((g.tool === 'clone' || g.tool === 'heal') && g.buffer && g.source && cloneSource) {
+      const x = g.buffer.getContext('2d')!, radius = Math.max(4, size / 2);
+      const dx = p.x - g.start.x, dy = p.y - g.start.y;
+      x.save();
+      x.globalAlpha = g.tool === 'heal' ? 0.65 : 1;
+      x.filter = g.tool === 'heal' ? 'blur(1px)' : 'none';
+      x.beginPath();
+      x.arc(p.x, p.y, radius, 0, Math.PI * 2);
+      x.clip();
+      x.drawImage(g.source, cloneSource.x + dx - radius, cloneSource.y + dy - radius, radius * 2, radius * 2, p.x - radius, p.y - radius, radius * 2, radius * 2);
+      x.restore();
+      void paint(g.frame, { [g.layer!.id]: g.buffer });
+      g.last = p;
+      return;
+    }
     if (g.tool === 'move' && g.layer) {
       const matrix = [...g.layer.matrix] as Matrix;
       matrix[4] += p.x - g.start.x;
@@ -779,7 +888,7 @@ export default function Home() {
           l.id === g.layer!.id ? { ...l, matrix } : l,
         ),
       });
-    } else if (g.buffer && g.layer) {
+    } else if ((g.tool === 'brush' || g.tool === 'eraser') && g.buffer && g.layer) {
       const x = g.buffer.getContext('2d')!;
       x.strokeStyle = color;
       x.lineWidth = size;
@@ -850,7 +959,7 @@ export default function Home() {
         ),
       });
       if (changed) setNotice('Layer moved');
-    } else if (g.buffer && g.layer) {
+    } else if ((g.tool === 'brush' || g.tool === 'eraser') && g.buffer && g.layer) {
       const x = g.buffer.getContext('2d')!;
       x.beginPath();
       x.moveTo(g.last.x, g.last.y);
@@ -893,6 +1002,25 @@ export default function Home() {
         if (commit(transformFrame(f, [1, 0, 0, 1, -left, -top], w, h)))
           setNotice('Canvas cropped; layer pixels retained');
       } else void paint(f);
+    } else if (g.tool === 'gradient' && g.moved && g.layer) {
+      try {
+        const buffer = await renderFrame({ ...f, layers: [g.layer] }, assets.current),
+          context = buffer.getContext('2d')!,
+          gradient = context.createLinearGradient(g.start.x, g.start.y, p.x, p.y);
+        gradient.addColorStop(0, color);
+        gradient.addColorStop(1, '#ffffff00');
+        context.fillStyle = gradient;
+        context.fillRect(0, 0, f.w, f.h);
+        const asset = addAsset(assets.current, buffer);
+        if (commit({ ...f, layers: f.layers.map((item) => item.id === g.layer!.id ? { ...item, asset, mask: undefined } : item) }))
+          setNotice('Gradient applied; undo restores the original pixels');
+      } catch {
+        setNotice('Could not apply gradient');
+      }
+    } else if ((g.tool === 'clone' || g.tool === 'heal') && g.buffer && g.layer) {
+      const asset = addAsset(assets.current, g.buffer);
+      if (commit({ ...f, layers: f.layers.map((item) => item.id === g.layer!.id ? { ...item, asset, mask: undefined } : item) }))
+        setNotice(g.tool === 'heal' ? 'Healing stroke applied' : 'Clone stroke applied');
     } else void paint(f);
   };
   const transform = (a: 'left' | 'right' | 'h' | 'v') => {
@@ -1185,6 +1313,7 @@ export default function Home() {
               className={tool === id ? 'active' : ''}
               onClick={() => {
                 setTool(id);
+                setCloneSource(null);
                 setNotice(`${label} tool selected`);
               }}
               aria-label={`${label} tool`}
