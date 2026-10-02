@@ -18,8 +18,14 @@ export function useMember() {
   const [checking, setChecking] = useState(true);
   useEffect(() => {
     let active = true;
-    void request<{ authenticated: boolean; user?: Member }>('?action=session').then(value => { if (active) setMember(value.authenticated && value.user ? value.user : null); }).catch(() => { /* Editing remains available when sign-in is unavailable. */ }).finally(() => { if (active) setChecking(false); });
-    return () => { active = false; };
+    let sequence = 0;
+    const refresh = () => {
+      const latest = ++sequence;
+      void request<{ authenticated: boolean; user?: Member }>('?action=session').then(value => { if (active && latest === sequence) setMember(value.authenticated && value.user ? value.user : null); }).catch(() => { /* Editing remains available when sign-in is unavailable. */ }).finally(() => { if (active) setChecking(false); });
+    };
+    refresh();
+    window.addEventListener('focus', refresh);
+    return () => { active = false; window.removeEventListener('focus', refresh); };
   }, []);
   return { member, checking };
 }
