@@ -610,6 +610,46 @@ test('rectangular selection creates a nondestructive raster mask and survives re
   expect(layer.mask).toEqual(expect.any(String));
   expect(exported.value.assets[layer.mask].w).toBe(frame.w);
   expect(exported.value.assets[layer.mask].h).toBe(frame.h);
+  await page.getByRole('button', { name: 'Image', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Resize image…' }).click();
+  await page.getByLabel('Width (px)', { exact: true }).fill('720');
+  await page.getByLabel('Height (px)', { exact: true }).fill('480');
+  await page.getByRole('button', { name: 'Apply resize' }).click();
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '720');
+  const resized = await project(page),
+    resizedFrame = resized.value.history[resized.value.index],
+    resizedLayer = resizedFrame.layers[0];
+  expect(resizedLayer.mask).toEqual(expect.any(String));
+  expect(resized.value.assets[resizedLayer.mask].w).toBe(720);
+  expect(resized.value.assets[resizedLayer.mask].h).toBe(480);
+  await page.getByRole('button', { name: 'Rotate right', exact: true }).click();
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '480');
+  const rotated = await project(page),
+    rotatedFrame = rotated.value.history[rotated.value.index],
+    rotatedLayer = rotatedFrame.layers[0];
+  expect(rotated.value.assets[rotatedLayer.mask].w).toBe(480);
+  expect(rotated.value.assets[rotatedLayer.mask].h).toBe(720);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '720');
+  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await page.getByLabel('Size', { exact: true }).fill('12');
+  const resizedCanvas = page.getByTestId('editor-canvas');
+  await resizedCanvas.scrollIntoViewIfNeeded();
+  const resizedBox = (await resizedCanvas.boundingBox())!;
+  await page.mouse.move(resizedBox.x + resizedBox.width / 2, resizedBox.y + resizedBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(resizedBox.x + resizedBox.width / 2 + 16, resizedBox.y + resizedBox.height / 2, { steps: 2 });
+  await page.mouse.up();
+  await page.waitForTimeout(100);
+  const painted = await project(page),
+    paintedFrame = painted.value.history[painted.value.index],
+    paintedLayer = paintedFrame.layers[0];
+  expect(paintedLayer.matrix[0]).toBeCloseTo(0.5);
+  expect(paintedLayer.asset).not.toBe(resizedLayer.asset);
+  expect(paintedLayer.mask).toEqual(expect.any(String));
+  expect(painted.value.assets[paintedLayer.asset].w).toBe(frame.w);
+  expect(painted.value.assets[paintedLayer.asset].h).toBe(frame.h);
   await page.reload();
   await expect(page.getByText('Nondestructive mask active', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Remove mask', exact: true }).click();

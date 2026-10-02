@@ -139,6 +139,58 @@ export const transformFrame = (
     matrix: multiply(matrix, layer.matrix),
   })),
 });
+
+/**
+ * Applies a document transform while also transforming canvas-space layer
+ * masks. Raster source assets stay untouched; masks are regenerated at the
+ * new frame dimensions so resize/crop/rotate can never leave an invalid mask
+ * reference behind.
+ */
+export async function transformFrameWithMasks(
+  frame: Frame,
+  matrix: Matrix,
+  assets: Assets,
+  w = frame.w,
+  h = frame.h,
+): Promise<Frame> {
+  const next = transformFrame(frame, matrix, w, h);
+  const layers = await Promise.all(
+    next.layers.map(async (layer) => {
+      if (layer.kind !== 'raster' || !layer.mask) return layer;
+      const mask = assets[layer.mask];
+      if (!mask) throw new Error('Layer mask asset is missing');
+      const image = await decodeAsset(mask),
+        transformed = surface(w, h),
+        context = transformed.getContext('2d')!;
+      context.setTransform(...matrix);
+      context.drawImage(image, 0, 0);
+      context.setTransform(1, 0, 0, 1, 0, 0);
+      return { ...layer, mask: addAsset(assets, transformed) };
+    }),
+  );
+  return { ...next, layers };
+}
+
+/** Map a frame-space pointer into a raster layer's untransformed asset space. */
+export function inversePoint(
+  matrix: Matrix,
+  point: { x: number; y: number },
+): { x: number; y: number } | null {
+  const determinant = matrix[0] * matrix[3] - matrix[1] * matrix[2];
+  if (Math.abs(determinant) < 0.000000000001) return null;
+  const dx = point.x - matrix[4],
+    dy = point.y - matrix[5];
+  return {
+    x: (matrix[3] * dx - matrix[2] * dy) / determinant,
+    y: (-matrix[1] * dx + matrix[0] * dy) / determinant,
+  };
+}
+
+/** Convert a display-space diameter to a conservative local-space diameter. */
+export function localSize(matrix: Matrix, diameter: number): number {
+  const determinant = Math.abs(matrix[0] * matrix[3] - matrix[1] * matrix[2]);
+  return Math.max(0.25, diameter / Math.max(0.0001, Math.sqrt(determinant)));
+}
 export const filterCSS = (a: Adjustments) =>
   `${a.filter === 'none' ? '' : a.filter} brightness(${a.brightness}%) contrast(${a.contrast}%) saturate(${a.saturation}%) blur(${a.blur}px)`;
 const record = (v: unknown): v is Record<string, unknown> =>
@@ -557,7 +609,12 @@ export async function renderFrame(
       layer.kind === 'raster' && !override
         ? await decodeAsset(assets[layer.asset])
         : undefined;
-    if (layer.kind === 'raster' && layer.mask && image) {
+    // Overrides are raw, layer-local buffers. They must travel through the
+    // exact same matrix, opacity, blend, adjustment and mask pipeline as the
+    // immutable source asset; resetting the transform here would bake a
+    // translated/scaled layer into the wrong frame coordinates.
+    const rasterSource = override || image;
+    if (layer.kind === 'raster' && layer.mask && rasterSource) {
       const masked = surface(frame.w, frame.h),
         maskContext = masked.getContext('2d')!;
       maskContext.save();
@@ -565,7 +622,7 @@ export async function renderFrame(
       maskContext.globalAlpha = 1;
       maskContext.globalCompositeOperation = 'source-over';
       maskContext.filter = filterCSS(layer.adjustments);
-      maskContext.drawImage(image, 0, 0);
+      maskContext.drawImage(rasterSource, 0, 0);
       maskContext.restore();
       const maskImage = await decodeAsset(assets[layer.mask]);
       maskContext.save();
@@ -586,7 +643,6 @@ export async function renderFrame(
     context.globalCompositeOperation = layer.blend;
     context.filter = filterCSS(layer.adjustments);
     if (override) {
-      context.setTransform(1, 0, 0, 1, 0, 0);
       context.drawImage(override, 0, 0);
       context.restore();
       continue;
