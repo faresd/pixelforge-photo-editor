@@ -635,6 +635,95 @@ test('elliptical marquee persists its geometry and can be inverted', async ({
   expect(frame.selection.h).toBeGreaterThan(1);
 });
 
+test('single row and column marquees select one pixel across the frame and persist masks', async ({
+  page,
+}) => {
+  const canvas = page.getByTestId('editor-canvas'),
+    box = (await canvas.boundingBox())!;
+  const rowTool = page.getByRole('button', {
+    name: 'Single Row marquee tool',
+    exact: true,
+  });
+  await rowTool.click();
+  await canvas.click({ position: { x: box.width * 0.37, y: box.height * 0.45 } });
+  await expect(page.getByText('Single row selection created', { exact: true })).toBeVisible();
+  let exported = await project(page),
+    frame = exported.value.history[exported.value.index],
+    selection = frame.selection;
+  expect(exported.value.settings.tool).toBe('row-select');
+  expect(selection).toMatchObject({ shape: 'rectangle', x: 0, w: frame.w, h: 1 });
+  expect(selection.y).toBeGreaterThan(0);
+  expect(selection.y).toBeLessThan(frame.h);
+  await page.getByRole('button', { name: 'Mask from selection', exact: true }).click();
+  exported = await project(page);
+  frame = exported.value.history[exported.value.index];
+  const rowMask = exported.value.assets[frame.layers[0].mask];
+  expect(rowMask).toBeDefined();
+  const rowAlpha = await page.evaluate(async ({ url, x, y, adjacent }) => {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    const probe = document.createElement('canvas');
+    probe.width = image.naturalWidth;
+    probe.height = image.naturalHeight;
+    const context = probe.getContext('2d')!;
+    context.drawImage(image, 0, 0);
+    return {
+      selected: context.getImageData(x, y, 1, 1).data[3],
+      adjacent: context.getImageData(x, adjacent, 1, 1).data[3],
+    };
+  }, {
+    url: rowMask.url,
+    x: Math.floor(frame.w / 2),
+    y: selection.y,
+    adjacent: selection.y === frame.h - 1 ? selection.y - 1 : selection.y + 1,
+  });
+  expect(rowAlpha.selected).toBeGreaterThan(0);
+  expect(rowAlpha.adjacent).toBe(0);
+
+  await page.reload();
+  await expect(rowTool).toHaveClass(/active/);
+  const columnTool = page.getByRole('button', {
+    name: 'Single Column marquee tool',
+    exact: true,
+  });
+  await columnTool.click();
+  await canvas.click({ position: { x: box.width * 0.62, y: box.height * 0.2 } });
+  await expect(page.getByText('Single column selection created', { exact: true })).toBeVisible();
+  exported = await project(page);
+  frame = exported.value.history[exported.value.index];
+  selection = frame.selection;
+  expect(exported.value.settings.tool).toBe('column-select');
+  expect(selection).toMatchObject({ shape: 'rectangle', y: 0, w: 1, h: frame.h });
+  expect(selection.x).toBeGreaterThan(0);
+  expect(selection.x).toBeLessThan(frame.w);
+  await page.getByRole('button', { name: 'Mask from selection', exact: true }).click();
+  exported = await project(page);
+  frame = exported.value.history[exported.value.index];
+  const columnMask = exported.value.assets[frame.layers[0].mask];
+  const columnAlpha = await page.evaluate(async ({ url, y, x, adjacent }) => {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    const probe = document.createElement('canvas');
+    probe.width = image.naturalWidth;
+    probe.height = image.naturalHeight;
+    const context = probe.getContext('2d')!;
+    context.drawImage(image, 0, 0);
+    return {
+      selected: context.getImageData(x, y, 1, 1).data[3],
+      adjacent: context.getImageData(adjacent, y, 1, 1).data[3],
+    };
+  }, {
+    url: columnMask.url,
+    x: selection.x,
+    y: Math.floor(frame.h / 2),
+    adjacent: selection.x === frame.w - 1 ? selection.x - 1 : selection.x + 1,
+  });
+  expect(columnAlpha.selected).toBeGreaterThan(0);
+  expect(columnAlpha.adjacent).toBe(0);
+});
+
 test('lasso selection stores polygon points and survives project round-trip', async ({
   page,
 }) => {

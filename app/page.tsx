@@ -7,6 +7,7 @@ import {
   Eraser,
   FileImage,
   Copy,
+  Columns3,
   Palette,
   FlipHorizontal2,
   FlipVertical2,
@@ -17,6 +18,7 @@ import {
   Pencil,
   MousePointer2,
   Redo2,
+  Rows3,
   RotateCcw,
   RotateCw,
   Save,
@@ -123,8 +125,16 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'ellipse', label: 'Ellipse', icon: Shapes, key: 'O' },
   { id: 'select', label: 'Select', icon: Crop, key: 'M' },
   { id: 'ellipse-select', label: 'Elliptical marquee', icon: Shapes, key: 'M' },
+  { id: 'row-select', label: 'Single Row marquee', icon: Rows3, key: 'M' },
+  { id: 'column-select', label: 'Single Column marquee', icon: Columns3, key: 'M' },
   { id: 'lasso', label: 'Lasso', icon: WandSparkles, key: 'L' },
   { id: 'magic-wand', label: 'Magic Wand', icon: Wand2, key: 'W' },
+];
+const MARQUEE_TOOLS: Tool[] = [
+  'select',
+  'ellipse-select',
+  'row-select',
+  'column-select',
 ];
 const FILTERS = [
   ['Original', 'none', '#315277', '#d59b6c'],
@@ -965,6 +975,25 @@ export default function Home() {
       }
       return;
     }
+    if (tool === 'row-select' || tool === 'column-select') {
+      // Photoshop's single-row and single-column marquees are one-pixel
+      // precision presets. A click is enough; using the pointer-down point
+      // also keeps the interaction reliable on touch and pen devices.
+      const x = Math.max(0, Math.min(f.w - 1, Math.floor(p.x))),
+        y = Math.max(0, Math.min(f.h - 1, Math.floor(p.y)));
+      const row = tool === 'row-select';
+      mergeSelection({
+        shape: 'rectangle',
+        x: row ? 0 : x,
+        y: row ? y : 0,
+        w: row ? f.w : 1,
+        h: row ? 1 : f.h,
+        feather: 0,
+        inverted: false,
+      });
+      setNotice(row ? 'Single row selection created' : 'Single column selection created');
+      return;
+    }
     if (tool === 'text') {
       const added = addLayer({
         ...commonLayer('Text ' + f.layers.length),
@@ -1398,6 +1427,12 @@ export default function Home() {
         return;
       }
       if (e.altKey) return;
+      if (e.key.toLowerCase() === 'm') {
+        e.preventDefault();
+        const index = MARQUEE_TOOLS.indexOf(tool);
+        setTool(MARQUEE_TOOLS[(index + 1) % MARQUEE_TOOLS.length]);
+        return;
+      }
       const match = TOOLS.find(
         (t) => t.key.toLowerCase() === e.key.toLowerCase(),
       );

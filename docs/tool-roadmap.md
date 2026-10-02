@@ -7,7 +7,7 @@ This matrix distills the two user-provided toolbar references into an implementa
 | Family | Reference capabilities | Pixel implementation stages | Required acceptance evidence |
 | --- | --- | --- | --- |
 | Navigation | Move (V), Hand (H), Zoom, Rotate View (R), toolbar layout | Move exists; Hand, Zoom are the next tools; add rotate-view viewport state and compact/expanded toolbar later | Keyboard shortcuts, pointer/touch gestures, no document-pixel mutation for viewport actions |
-| Marquee selection | Rectangular, Elliptical, Single Row, Single Column (M) | Rectangular and elliptical marquee tools; row/column remain planned presets | Selection bounds round-trip, add/subtract/intersect/invert and feather pixel tests |
+| Marquee selection | Rectangular, Elliptical, Single Row, Single Column (M) | Rectangular, elliptical, single-row and single-column marquee presets; row/column clicks create one-pixel-wide selections | Selection bounds round-trip, add/subtract/intersect/invert and feather pixel tests |
 | Free selection | Lasso, Polygonal Lasso, Magnetic Lasso (L) | Freehand lasso polygon is implemented; polygonal and magnetic variants remain planned | Closed-path hit testing, feather/invert, mask export and undo |
 | Automatic selection | Object Selection, Quick Selection, Magic Wand (W) | Contiguous Magic Wand color selection with a deterministic tolerance; object/quick selection after measured local or remote inference | Deterministic tolerance fixtures, disconnected regions, privacy disclosure for inference |
 | Sampling and measurement | Eyedropper, Color Sampler, Ruler, Note, Count (I) | Eyedropper is implemented next; add multi-sample color table, ruler overlays and private notes | Sampled RGB/alpha exactness, non-destructive overlays, export omission rules |
@@ -28,7 +28,7 @@ This matrix distills the two user-provided toolbar references into an implementa
 
 ## Current Pixel baseline
 
-Implemented in this branch (production deployment follows the protected merge): Move, Crop, Brush, Pencil, Color Replacement, Eraser, Text, Rectangle, Ellipse, layer properties, nondestructive per-layer adjustments, rotate/flip, local/cloud project persistence, optional Cheaply session and production CI/CD. The supplied Cheaply artwork is used in the brand lockup beside an original cyan Pixel monogram.
+Implemented in this branch (production deployment follows the protected merge): Move, Crop, Brush, Pencil, Color Replacement, Eraser, Text, Rectangle, Ellipse, single-row and single-column marquee presets, layer properties, nondestructive per-layer adjustments, rotate/flip, local/cloud project persistence, optional Cheaply session and production CI/CD. The supplied Cheaply artwork is used in the brand lockup beside an original cyan Pixel monogram.
 
 The active implementation increment adds Hand, Zoom, Eyedropper, Paint Bucket, Gradient, Clone, Healing, rectangular/elliptical/lasso and Magic Wand color selection, selection composition (replace/add/subtract/intersect), inversion, feather control and alpha-correct nondestructive masks. Each tool must have a dedicated desktop and mobile browser acceptance test before merge. Pixel does not claim Photoshop equivalence while the remaining families are incomplete.
 
@@ -49,7 +49,7 @@ Work proceeds in dependency-ordered increments. A phase is complete only when it
 | --- | --- | --- |
 | 0 — Foundation | Toolbar registry, shortcuts, responsive one/two-column layout, tool state, undo/redo, local draft recovery, test fixtures | Every registered tool has an accessible control; reload/bookmark recovery and CI smoke suite are green |
 | 1 — Core navigation and raster basics | Move, Hand, Zoom, Eyedropper, Paint Bucket, Gradient, Brush, Pencil, Eraser, Color Replacement | Representative pixel tests, keyboard/touch gestures, undo and draft round-trip for each tool |
-| 2 — Selection and crop | Rectangular/Elliptical/row/column marquee, Lasso family, Magic Wand, Quick/Object selection, Crop, Perspective Crop, Slice family, Quick Mask | Selection algebra and feathering are deterministic; masks and slices survive reload/export |
+| 2 — Selection and crop | Rectangular/Elliptical/row/column marquee, Lasso family, Magic Wand, Quick/Object selection, Crop, Perspective Crop, Slice family, Quick Mask | Selection algebra and feathering are deterministic; one-pixel row/column masks plus other selections and slices survive reload/export |
 | 3 — Retouch and paint depth | Clone/Pattern Stamp, Healing/Spot Healing/Remove, Patch, Content-Aware Move, Red Eye, Mixer Brush, History Brush, Art History, Blur/Sharpen/Smudge, Dodge/Burn/Sponge | Before/after fixtures, bounded memory, source preservation, explicit undo and mobile pressure fallback |
 | 4 — Vector and typography | Pen family, Path/Direct Selection, parametric shapes, line/custom shape, vertical type, type masks, alignment and spacing | Paths, anchors, shape parameters and text metrics round-trip; fill/stroke and mask pixels match fixtures |
 | 5 — Workspace and asset workflows | Foreground/background wells, color swap/defaults, screen modes, toolbar customization, device/drop intake, export presets | Preferences persist safely, Escape recovers fullscreen, accessibility checks pass, export is deterministic |
