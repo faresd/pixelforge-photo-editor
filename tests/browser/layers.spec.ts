@@ -34,10 +34,15 @@ async function project(page: Page) {
     ),
   };
 }
-const pixels = (page: Page) =>
-  page
+const pixels = async (page: Page) => {
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute(
+    'data-rendering',
+    'false',
+  );
+  return page
     .getByTestId('editor-canvas')
     .evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
+};
 test.beforeEach(async ({ page }) => {
   await page.route(
     'https://marketplace.cheaply.fr/marketplace/api/photoeditor**',
@@ -203,13 +208,11 @@ test('malformed layer assets are rejected before replacing the current draft', a
     original = await pixels(page),
     url = page.url();
   value.assets[id].w = 1;
-  await page
-    .getByTestId('project-input')
-    .setInputFiles({
-      name: 'invalid.pixelforge',
-      mimeType: 'application/json',
-      buffer: Buffer.from(JSON.stringify(value)),
-    });
+  await page.getByTestId('project-input').setInputFiles({
+    name: 'invalid.pixelforge',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(value)),
+  });
   await expect(
     page.getByText('Invalid project assets', { exact: true }),
   ).toBeVisible();
@@ -245,4 +248,91 @@ test('paint stays on its own raster layer and nondestructive filters retain sour
   await page.getByLabel('Visible', { exact: true }).uncheck();
   await saved(page);
   expect(await pixels(page)).toBe(before);
+});
+
+test('layer position, blending and visibility produce exact composite pixels', async ({
+  page,
+}) => {
+  const fixtures = await page.evaluate(() => {
+    const make = (color: string, w: number) => {
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = 1;
+      const x = c.getContext('2d')!;
+      x.fillStyle = color;
+      x.fillRect(0, 0, w, 1);
+      return c.toDataURL().split(',')[1];
+    };
+    return { blue: make('#0000ff', 2), red: make('#ff0000', 1) };
+  });
+  await page
+    .getByTestId('file-input')
+    .setInputFiles({
+      name: 'blue.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from(fixtures.blue, 'base64'),
+    });
+  await expect(page.getByLabel('Document name')).toHaveValue('blue');
+  await page
+    .getByTestId('layer-input')
+    .setInputFiles({
+      name: 'red.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from(fixtures.red, 'base64'),
+    });
+  await expect(page.getByLabel('Layer name', { exact: true })).toHaveValue(
+    'red.png',
+  );
+  await page.getByLabel('Layer X', { exact: true }).fill('1');
+  await page.getByLabel('Layer X', { exact: true }).press('Enter');
+  const read = () =>
+    page
+      .getByTestId('editor-canvas')
+      .evaluate((c: HTMLCanvasElement) =>
+        Array.from(c.getContext('2d')!.getImageData(0, 0, 2, 1).data),
+      );
+  await expect.poll(read).toEqual([0, 0, 255, 255, 255, 0, 0, 255]);
+  await page.getByLabel('Blend mode', { exact: true }).selectOption('multiply');
+  await expect.poll(read).toEqual([0, 0, 255, 255, 0, 0, 0, 255]);
+  await page.getByLabel('Visible', { exact: true }).uncheck();
+  await expect.poll(read).toEqual([0, 0, 255, 255, 0, 0, 255, 255]);
+  await page.getByRole('button', { name: 'Image', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Resize image…' }).click();
+  await page.getByLabel('Width (px)', { exact: true }).fill('1');
+  await page.getByRole('button', { name: 'Apply resize' }).click();
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '1');
+});
+
+test('vector shapes remain editable through move, crop, rotation and undo', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: 'Shape tool', exact: true }).click();
+  const canvas = page.getByTestId('editor-canvas');
+  await canvas.scrollIntoViewIfNeeded();
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.4, box.y + box.height * 0.4, {
+    steps: 5,
+  });
+  await page.mouse.up();
+  await expect(page.getByLabel('Shape width', { exact: true })).toBeVisible();
+  await page.getByLabel('Filled shape', { exact: true }).check();
+  await page.getByLabel('Shape width', { exact: true }).fill('300');
+  await page.getByLabel('Shape width', { exact: true }).press('Enter');
+  const first = await project(page),
+    original = first.value.history[first.value.index].layers[1];
+  expect(original.kind).toBe('rectangle');
+  expect(original.width).toBe(300);
+  expect(original.fill).toBe(true);
+  await page.getByRole('button', { name: 'Rotate right', exact: true }).click();
+  await expect(canvas).toHaveAttribute('width', '960');
+  const rotated = await project(page);
+  expect(rotated.value.history[rotated.value.index].layers[1].kind).toBe(
+    'rectangle',
+  );
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  const undone = await project(page);
+  expect(undone.value.history[undone.value.index].layers[1]).toEqual(original);
 });

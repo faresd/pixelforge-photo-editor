@@ -184,7 +184,7 @@ export function validateFrame(
     )
       return fail();
     const m = layer.matrix as Matrix;
-    if (Math.abs(m[0] * m[3] - m[1] * m[2]) < 0.000001) return fail();
+    if (Math.abs(m[0] * m[3] - m[1] * m[2]) < 0.000000000001) return fail();
     ids.add(layer.id);
     if (layer.kind === 'raster') {
       if (!validId(layer.asset) || !Object.hasOwn(assets, layer.asset))

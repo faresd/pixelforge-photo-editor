@@ -151,6 +151,7 @@ type Gesture = {
   layer?: Layer;
   buffer?: HTMLCanvasElement;
   pending?: Promise<void>;
+  queued?: { x: number; y: number }[];
   moved: boolean;
 };
 
@@ -237,21 +238,27 @@ export default function Home() {
       layer = f.layers.find((l) => l.id === f.active)!;
     if (layer.locked && !('locked' in patch) && !('visible' in patch)) {
       setNotice('Unlock this layer before editing');
-      return;
+      return false;
     }
+    const next =
+      patch.kind && patch.kind !== layer.kind
+        ? (patch as Layer)
+        : ({ ...layer, ...patch } as Layer);
+    if (JSON.stringify(next) === JSON.stringify(layer)) return true;
     if (
       commit({
         ...f,
-        layers: f.layers.map((l) =>
-          l.id === layer.id ? ({ ...l, ...patch } as Layer) : l,
-        ),
+        layers: f.layers.map((l) => (l.id === layer.id ? next : l)),
       })
-    )
+    ) {
       setNotice('Layer updated');
+      return true;
+    }
+    return false;
   };
   const adjust = (patch: Partial<Adjustments>) => {
     const layer = current().layers.find((l) => l.id === current().active)!;
-    editLayer({ adjustments: { ...layer.adjustments, ...patch } });
+    return editLayer({ adjustments: { ...layer.adjustments, ...patch } });
   };
   const resetAdjustments = () => adjust({ ...neutral });
   const setBrightness = (brightness: number) => adjust({ brightness }),
@@ -259,8 +266,8 @@ export default function Home() {
     setSaturation = (saturation: number) => adjust({ saturation }),
     setBlur = (blur: number) => adjust({ blur });
   const chooseFilter = (filter: string, label: string) => {
-    adjust({ filter });
-    setNotice(`${label} applied to selected layer; remains editable`);
+    if (adjust({ filter }))
+      setNotice(`${label} applied to selected layer; remains editable`);
   };
   const clearCloud = () => {
     setCloud(undefined);
@@ -273,7 +280,9 @@ export default function Home() {
       clearCloud();
       setName(title.slice(0, 160));
       setZoom(72);
+      return true;
     }
+    return false;
   };
   const newDocument = (transparent = false) => {
     const image = surface(1200, 800);
@@ -451,10 +460,13 @@ export default function Home() {
   };
   const importProject = async (selected?: File) => {
     if (!selected) return;
+    const expected = current();
     try {
       if (selected.size > 64 * 1024 * 1024)
         throw new Error('Project file exceeds 64 MB');
       const saved = validateDraft(JSON.parse(await selected.text()));
+      if (current() !== expected)
+        throw new Error('Document changed during import. Please try again.');
       await install(saved);
       setDraftId(createDraftId());
       clearCloud();
@@ -497,10 +509,13 @@ export default function Home() {
     const f = current();
     if (f.layers.length >= 32) {
       setNotice('32-layer limit reached');
-      return;
+      return false;
     }
-    if (commit({ ...f, layers: [...f.layers, layer], active: layer.id }))
+    if (commit({ ...f, layers: [...f.layers, layer], active: layer.id })) {
       setNotice('Layer added');
+      return true;
+    }
+    return false;
   };
   const addPaint = () => {
     const f = current();
@@ -601,16 +616,19 @@ export default function Home() {
         );
       const c = surface(image.width, image.height);
       c.getContext('2d')!.drawImage(image, 0, 0);
+      if (current() !== original)
+        throw new Error('Document changed during import. Please try again.');
       if (asLayer) {
-        if (current() !== original)
-          throw new Error('Document changed during import. Please try again.');
-        addLayer({
+        const added = addLayer({
           ...commonLayer(selected.name.slice(0, 160)),
           kind: 'raster',
           asset: addAsset(assets.current, c),
         });
-      } else
-        startRaster(c, selected.name.replace(/\.[^/.]+$/, '').slice(0, 160));
+        if (!added) return;
+      } else if (
+        !startRaster(c, selected.name.replace(/\.[^/.]+$/, '').slice(0, 160))
+      )
+        return;
       setNotice(asLayer ? 'Image layer added' : 'Photo opened');
     } catch (error) {
       setNotice(
@@ -670,6 +688,7 @@ export default function Home() {
       frame: f,
       layer,
       moved: false,
+      queued: [p],
     } as Gesture;
     gesture.current = g;
     if (tool === 'brush' || tool === 'eraser') {
@@ -698,6 +717,15 @@ export default function Home() {
           x.beginPath();
           x.arc(p.x, p.y, size / 2, 0, Math.PI * 2);
           x.fill();
+          x.strokeStyle = color;
+          x.lineWidth = size;
+          x.lineCap = 'round';
+          x.lineJoin = 'round';
+          x.beginPath();
+          x.moveTo(p.x, p.y);
+          for (const point of g.queued || []) x.lineTo(point.x, point.y);
+          x.stroke();
+          g.queued = undefined;
           void paint(f, { [layer.id]: buffer });
         } catch {
           gesture.current = null;
@@ -712,6 +740,8 @@ export default function Home() {
     if (!g) return;
     const p = point(e);
     g.moved = true;
+    if ((g.tool === 'brush' || g.tool === 'eraser') && !g.buffer)
+      g.queued?.push(p);
     if (g.tool === 'move' && g.layer) {
       const matrix = [...g.layer.matrix] as Matrix;
       matrix[4] += p.x - g.start.x;
@@ -794,6 +824,11 @@ export default function Home() {
       });
       setNotice('Layer moved');
     } else if (g.buffer && g.layer) {
+      const x = g.buffer.getContext('2d')!;
+      x.beginPath();
+      x.moveTo(g.last.x, g.last.y);
+      x.lineTo(p.x, p.y);
+      x.stroke();
       const asset = addAsset(assets.current, g.buffer);
       commit({
         ...f,
@@ -1156,6 +1191,7 @@ export default function Home() {
             <canvas
               ref={canvas}
               data-testid="editor-canvas"
+              data-rendering={doc.rendering ? 'true' : 'false'}
               onPointerDown={(e) => void pointerDown(e)}
               onPointerMove={pointerMove}
               onPointerUp={(e) => void pointerUp(e)}

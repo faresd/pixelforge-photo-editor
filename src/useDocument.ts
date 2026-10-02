@@ -92,10 +92,13 @@ export function useDocument(onError: (message: string) => void) {
     [publish, onError],
   );
   const install = useCallback(async (draft: Draft) => {
+    const expected = history.current[index.current];
     // Validate every history asset before switching, so undo never discovers a corrupt import.
     for (const asset of Object.values(draft.assets)) await decodeAsset(asset);
     // Decode and render before switching documents, preserving the current work on import failure.
     const image = await renderFrame(draft.history[draft.index], draft.assets);
+    if (history.current[index.current] !== expected)
+      throw new Error('Document changed during import. Please try again.');
     ++renderSequence.current;
     assets.current = draft.assets;
     history.current = draft.history;
