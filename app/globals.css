@@ -44,3 +44,8 @@
 .tool-move { cursor: move; }
 .draft-conflict { position:absolute; z-index:20; top:12px; left:12px; right:12px; padding:12px; border:1px solid #c57c43; border-radius:8px; background:#3b2a1df5; color:#ffdfac; font-size:13px; line-height:1.5; }
 @media(max-width:680px) { .docbar input { width:clamp(60px,22vw,120px); } }
+/* Cheaply + PixelForge co-brand lockup */
+.brand-lockup{display:flex;align-items:center;gap:9px;color:#f4f4f2;text-decoration:none;white-space:nowrap}
+.cheaply-lockup,.pixel-lockup{display:flex;align-items:center;gap:7px;font-size:17px;font-weight:780;letter-spacing:-.5px}
+.cheaply-word{font-size:15px;letter-spacing:-.7px}.cheaply-mark{width:29px;height:29px;display:grid;place-items:center;border-radius:10px;background:linear-gradient(145deg,#ff7552,#e43f29);color:#fff;font-size:17px;font-weight:900;font-style:italic;box-shadow:0 5px 16px #ff5c3538}.brand-plus{color:#636771;font-size:17px;font-weight:400}.pixel-mark{width:29px;height:29px;display:grid;grid-template-columns:repeat(2,6px);grid-template-rows:repeat(2,6px);gap:3px;place-content:center;border-radius:10px;background:#252a38;box-shadow:inset 0 0 0 1px #47516a}.pixel-mark i{display:block;border-radius:2px;background:#ff9a72}.pixel-mark i:nth-child(2),.pixel-mark i:nth-child(3){background:#83d6c3}.pixel-lockup b{color:var(--accent)}.brand-lockup em{font-size:8px;font-style:normal;letter-spacing:1px;padding:3px 5px;border:1px solid #653426;color:#ff9a80;border-radius:4px}
+@media(max-width:680px){.brand-lockup{gap:6px}.cheaply-lockup,.pixel-lockup{font-size:15px}.cheaply-word{font-size:13px}.cheaply-mark,.pixel-mark{width:27px;height:27px}.brand-plus{font-size:14px}}

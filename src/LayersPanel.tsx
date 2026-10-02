@@ -207,7 +207,7 @@ export default function LayersPanel({
           </label>
         </div>
       )}
-      {layer.kind === 'rectangle' && (
+      {(layer.kind === 'rectangle' || layer.kind === 'ellipse') && (
         <div className="layer-position">
           <NumberField
             key={layer.id + layer.width}

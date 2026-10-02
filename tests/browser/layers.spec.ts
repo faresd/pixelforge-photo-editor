@@ -334,6 +334,33 @@ test('vector shapes remain editable through property edits, rotation and undo', 
   expect(undone.value.history[undone.value.index].layers[1]).toEqual(original);
 });
 
+test('ellipse layers stay vector-editable through export and reload', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: 'Ellipse tool', exact: true }).click();
+  const canvas = page.getByTestId('editor-canvas');
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.25, box.y + box.height * 0.25);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.55, box.y + box.height * 0.45, {
+    steps: 5,
+  });
+  await page.mouse.up();
+  await expect(page.getByLabel('Shape width', { exact: true })).toBeVisible();
+  const exported = await project(page),
+    ellipse = exported.value.history[exported.value.index].layers[1];
+  expect(ellipse).toMatchObject({ kind: 'ellipse', fill: false });
+  expect(ellipse.width).toBeGreaterThan(1);
+  await page.getByLabel('Filled shape', { exact: true }).check();
+  await page.reload();
+  await expect(page.getByLabel('Shape width', { exact: true })).toBeVisible();
+  const reloaded = await project(page);
+  expect(reloaded.value.history[reloaded.value.index].layers[1]).toMatchObject({
+    kind: 'ellipse',
+    fill: true,
+  });
+});
+
 test('a stale tab cannot overwrite or discard newer work and can save its own local copy', async ({
   page,
   context,
