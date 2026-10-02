@@ -537,6 +537,42 @@ export default function Home() {
     setNotice('Foreground and background colors swapped');
   };
   const current = () => history.current[index.current];
+  const localSelectionMask = async (
+    selection: Selection,
+    frameWidth: number,
+    frameHeight: number,
+    layer: Layer,
+    width: number,
+    height: number,
+  ) => {
+    const frameMask = await renderSelection(selection, frameWidth, frameHeight, assets.current);
+    const [a, b, c, d, e, f] = layer.matrix;
+    if (
+      a === 1 &&
+      b === 0 &&
+      c === 0 &&
+      d === 1 &&
+      e === 0 &&
+      f === 0 &&
+      width === frameWidth &&
+      height === frameHeight
+    )
+      return frameMask;
+    const determinant = a * d - b * c;
+    if (Math.abs(determinant) < 0.000000000001) return frameMask;
+    const localMask = surface(width, height), context = localMask.getContext('2d')!;
+    context.setTransform(
+      d / determinant,
+      -b / determinant,
+      -c / determinant,
+      a / determinant,
+      (c * f - d * e) / determinant,
+      (b * e - a * f) / determinant,
+    );
+    context.drawImage(frameMask, 0, 0);
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    return localMask;
+  };
   const groupForLayer = (f: Frame, layer: Layer) =>
     layer.groupId ? f.groups?.find((group) => group.id === layer.groupId) : undefined;
   const layerIsLocked = (f: Frame, layer: Layer) =>
@@ -728,6 +764,7 @@ export default function Home() {
   const startRaster = (image: HTMLCanvasElement, title: string) => {
     const f = rasterFrame(image, assets.current);
     if (commit(f, true)) {
+      clearClipboard();
       setDraftId(createDraftId());
       clearCloud();
       setName(title.slice(0, 160));
@@ -944,6 +981,7 @@ export default function Home() {
       if (current() !== expected)
         throw new Error('Document changed during import. Please try again.');
       await install(saved);
+      clearClipboard();
       setDraftId(createDraftId());
       clearCloud();
       setName(saved.name);
@@ -1095,17 +1133,34 @@ export default function Home() {
     setNotice('Active layer copied');
     return true;
   };
+  const clearClipboard = () => {
+    clipboardLayer.current = null;
+    setHasClipboard(false);
+  };
   const pasteLayer = () => {
     const copied = clipboardLayer.current;
     if (!copied) {
       setNotice('Copy a layer before pasting');
       return;
     }
+    const f = current();
+    if (
+      (copied.kind === 'raster' &&
+        (!assets.current[copied.asset] || (copied.mask && !assets.current[copied.mask])))
+    ) {
+      clearClipboard();
+      setNotice('The copied layer is no longer available in this document');
+      return;
+    }
+    const copiedGroup = copied.groupId
+      ? f.groups?.find((group) => group.id === copied.groupId)
+      : undefined;
     const pasted = {
       ...structuredClone(copied),
       id: crypto.randomUUID(),
       name: `${copied.name} copy`.slice(0, 160),
       locked: false,
+      ...(copiedGroup && !copiedGroup.locked ? { groupId: copiedGroup.id } : { groupId: undefined }),
     } as Layer;
     addLayer(pasted);
     setNotice('Layer pasted');
@@ -1148,9 +1203,16 @@ export default function Home() {
       fillContext.fillStyle = color;
       fillContext.fillRect(0, 0, fill.width, fill.height);
       if (f.selection) {
-        const mask = await renderSelection(f.selection, f.w, f.h, assets.current);
+        const mask = await localSelectionMask(
+          f.selection,
+          f.w,
+          f.h,
+          layer,
+          output.width,
+          output.height,
+        );
         fillContext.globalCompositeOperation = 'destination-in';
-        fillContext.drawImage(mask, 0, 0, fill.width, fill.height);
+        fillContext.drawImage(mask, 0, 0);
       }
       context.drawImage(fill, 0, 0);
       const asset = addAsset(assets.current, output);
@@ -1172,9 +1234,16 @@ export default function Home() {
         context = output.getContext('2d')!;
       if (f.selection) {
         context.drawImage(image, 0, 0);
-        const mask = await renderSelection(f.selection, f.w, f.h, assets.current);
+        const mask = await localSelectionMask(
+          f.selection,
+          f.w,
+          f.h,
+          layer,
+          output.width,
+          output.height,
+        );
         context.globalCompositeOperation = 'destination-out';
-        context.drawImage(mask, 0, 0, output.width, output.height);
+        context.drawImage(mask, 0, 0);
       }
       const asset = addAsset(assets.current, output);
       if (

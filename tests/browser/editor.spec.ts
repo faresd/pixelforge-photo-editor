@@ -428,6 +428,85 @@ test('layer menu copy, paste, hide and flatten preserve an undoable project', as
   expect(project.history[project.index].layers.length).toBe(3);
 });
 
+test('layer clipboard shortcuts guard locked and last layers and survive undo/reload', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByRole('heading', { name: /Layers/ })).toContainText('1 /');
+  const canvas = page.getByTestId('editor-canvas');
+
+  const downloadProject = async () => {
+    const pending = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'File', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
+    const path = await (await pending).path();
+    return JSON.parse(await (await import('node:fs/promises')).readFile(path!, 'utf8')) as {
+      history: Array<{ layers: Array<{ id: string; name: string; kind: string }> }>;
+      index: number;
+    };
+  };
+
+  // A document's last layer is protected from destructive cut/delete actions.
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: /^Cut Layer/ })).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await canvas.click({ position: { x: 10, y: 10 } });
+  await page.keyboard.press('Control+x');
+  await expect(page.getByRole('heading', { name: /Layers/ })).toContainText('1 /');
+
+  // Adding a second layer gives us a safe target for lock and cut checks.
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'New Paint Layer', exact: true }).click();
+  await expect(page.getByRole('heading', { name: /Layers/ })).toContainText('2 /');
+  const lock = page.getByLabel('Lock layer', { exact: true });
+  await lock.check();
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: /^Cut Layer/ })).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await canvas.click({ position: { x: 10, y: 10 } });
+  await page.keyboard.press('Control+x');
+  await expect(page.getByRole('heading', { name: /Layers/ })).toContainText('2 /');
+  await lock.uncheck();
+  await canvas.click({ position: { x: 10, y: 10 } });
+
+  // Keyboard copy/paste creates a new editable layer, and undo removes only the paste.
+  await page.keyboard.press('Control+c');
+  await page.keyboard.press('Control+v');
+  await expect(page.getByRole('heading', { name: /Layers/ })).toContainText('3 /');
+  let project = await downloadProject();
+  let frame = project.history[project.index];
+  expect(frame.layers).toHaveLength(3);
+  expect(new Set(frame.layers.map((layer) => layer.id)).size).toBe(3);
+  expect(frame.layers.at(-1)?.name).toMatch(/copy$/);
+  await page.keyboard.press('Control+z');
+  await expect(page.getByRole('heading', { name: /Layers/ })).toContainText('2 /');
+
+  // Cut copies the active layer before removing it; undo and redo restore the exact count.
+  await page.keyboard.press('Control+x');
+  await expect(page.getByRole('heading', { name: /Layers/ })).toContainText('1 /');
+  await page.keyboard.press('Control+v');
+  await expect(page.getByRole('heading', { name: /Layers/ })).toContainText('2 /');
+  await page.keyboard.press('Control+z');
+  await expect(page.getByRole('heading', { name: /Layers/ })).toContainText('1 /');
+  await page.keyboard.press('Control+z');
+  await expect(page.getByRole('heading', { name: /Layers/ })).toContainText('2 /');
+  await page.keyboard.press('Control+Shift+z');
+  await expect(page.getByRole('heading', { name: /Layers/ })).toContainText('1 /');
+  project = await downloadProject();
+  frame = project.history[project.index];
+  expect(frame.layers).toHaveLength(1);
+
+  // Shortcut handling is disabled in text fields, so a document name remains intact.
+  const name = page.getByLabel('Document name', { exact: true });
+  await name.fill('Clipboard guard');
+  await name.press('Control+x');
+  await expect(name).toHaveValue('Clipboard guard');
+  await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Saved on this device');
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByRole('heading', { name: /Layers/ })).toContainText('1 /');
+  await expect(page.getByLabel('Document name', { exact: true })).toHaveValue('Clipboard guard');
+});
+
 test('Photoshop-style document shortcuts drive existing actions and ignore text fields', async ({ page }) => {
   await page.goto('/editor?new=1');
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
