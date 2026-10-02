@@ -3,10 +3,11 @@
 import { Brush, Crop, Download, Eraser, FileImage, FlipHorizontal2, FlipVertical2, ImagePlus, Layers3, MousePointer2, Palette, Redo2, RotateCcw, RotateCw, Save, Shapes, Sparkles, Type, Undo2, Upload, WandSparkles, ZoomIn, ZoomOut } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { createDraftId, discardDraft, initialDraftId, readDraft, saveDraft, type Tool, type Shot } from '../src/drafts';
+import { createDraftId, discardDraft, initialDraftId, readDraft, saveDraft, validateDraft, type Tool, type Shot } from '../src/drafts';
 import { useMember, saveCloudProject, SIGN_IN, type CloudLink } from '../src/cloud';
+import ResizeDialog from '../src/ResizeDialog';
 type MenuName = 'File' | 'Edit' | 'Image' | 'Filter' | 'View';
-type Command = 'new-white' | 'new-transparent' | 'open' | 'png' | 'jpg' | 'undo' | 'redo' | 'reset' | 'crop' | 'rotate-left' | 'rotate-right' | 'flip-h' | 'flip-v' | 'filter-original' | 'filter-vivid' | 'filter-mono' | 'filter-warm' | 'filter-cool' | 'apply' | 'zoom-in' | 'zoom-out' | 'fit' | 'actual';
+type Command = 'resize' | 'project-save' | 'project-open' | 'new-white' | 'new-transparent' | 'open' | 'png' | 'jpg' | 'undo' | 'redo' | 'reset' | 'crop' | 'rotate-left' | 'rotate-right' | 'flip-h' | 'flip-v' | 'filter-original' | 'filter-vivid' | 'filter-mono' | 'filter-warm' | 'filter-cool' | 'apply' | 'zoom-in' | 'zoom-out' | 'fit' | 'actual';
 type MenuItem = { label: string; shortcut?: string; command: Command };
 
 const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
@@ -20,15 +21,17 @@ const FILTERS = [
   ['Cool', 'hue-rotate(18deg) saturate(.9)', '#335d91', '#83bbc4'],
 ] as const;
 const MENU_DEFS: Record<MenuName, MenuItem[]> = {
-  File: [{ label: 'New white document', shortcut: 'Ctrl+N', command: 'new-white' }, { label: 'New transparent document', command: 'new-transparent' }, { label: 'Open image…', shortcut: 'Ctrl+O', command: 'open' }, { label: 'Export as PNG', shortcut: 'Ctrl+S', command: 'png' }, { label: 'Export as JPG', command: 'jpg' }],
+  File: [{ label: 'Open project…', command: 'project-open' }, { label: 'Download project file', command: 'project-save' }, { label: 'New white document', shortcut: 'Ctrl+N', command: 'new-white' }, { label: 'New transparent document', command: 'new-transparent' }, { label: 'Open image…', shortcut: 'Ctrl+O', command: 'open' }, { label: 'Export as PNG', shortcut: 'Ctrl+S', command: 'png' }, { label: 'Export as JPG', command: 'jpg' }],
   Edit: [{ label: 'Undo', shortcut: 'Ctrl+Z', command: 'undo' }, { label: 'Redo', shortcut: 'Ctrl+Y', command: 'redo' }, { label: 'Reset adjustments', command: 'reset' }, { label: 'Clear to transparent', command: 'new-transparent' }],
-  Image: [{ label: 'Crop', shortcut: 'C', command: 'crop' }, { label: 'Rotate left', command: 'rotate-left' }, { label: 'Rotate right', command: 'rotate-right' }, { label: 'Flip horizontal', command: 'flip-h' }, { label: 'Flip vertical', command: 'flip-v' }],
+  Image: [{ label: 'Resize image…', command: 'resize' }, { label: 'Crop', shortcut: 'C', command: 'crop' }, { label: 'Rotate left', command: 'rotate-left' }, { label: 'Rotate right', command: 'rotate-right' }, { label: 'Flip horizontal', command: 'flip-h' }, { label: 'Flip vertical', command: 'flip-v' }],
   Filter: [{ label: 'Original', command: 'filter-original' }, { label: 'Vivid', command: 'filter-vivid' }, { label: 'Mono', command: 'filter-mono' }, { label: 'Warm', command: 'filter-warm' }, { label: 'Cool', command: 'filter-cool' }, { label: 'Apply current filter', command: 'apply' }],
   View: [{ label: 'Zoom in', shortcut: '+', command: 'zoom-in' }, { label: 'Zoom out', shortcut: '−', command: 'zoom-out' }, { label: 'Fit to screen', shortcut: '0', command: 'fit' }, { label: 'Actual size', shortcut: '1', command: 'actual' }],
 };
 
 export default function Home() {
   const canvas = useRef<HTMLCanvasElement>(null), file = useRef<HTMLInputElement>(null), stage = useRef<HTMLElement>(null), menuArea = useRef<HTMLElement>(null);
+  const projectFile = useRef<HTMLInputElement>(null);
+  const [resizing, setResizing] = useState<{ width: number; height: number } | null>(null);
   const down = useRef(false), start = useRef({ x: 0, y: 0 }), panStart = useRef({ x: 0, y: 0, left: 0, top: 0 });
   const base = useRef<ImageData | null>(null), history = useRef<Shot[]>([]), index = useRef(-1);
   const [tool, setTool] = useState<Tool>('move'), [zoom, setZoom] = useState(72), [color, setColor] = useState('#ff5c35'), [size, setSize] = useState(18);
@@ -45,7 +48,7 @@ export default function Home() {
   const saveSequence = useRef(0), saving = useRef(false), discarding = useRef(false);
   const cssFilter = `${filter === 'none' ? '' : filter} brightness(${brightness}%) contrast(${contrast}%) saturate(${saturation}%) blur(${blur}px)`;
 
-  const snap = useCallback(() => { const c = canvas.current; if (!c) return; history.current = history.current.slice(0, index.current + 1); history.current.push({ url: c.toDataURL(), w: c.width, h: c.height }); if (history.current.length > 24) history.current.shift(); index.current = history.current.length - 1; setDimensions(`${c.width} × ${c.height} px`); setCanUndo(index.current > 0); setCanRedo(false); setRevision(value => value + 1); }, []);
+  const snap = useCallback(() => { const c = canvas.current; if (!c) return; history.current = history.current.slice(0, index.current + 1); history.current.push({ url: c.toDataURL(), w: c.width, h: c.height }); while (history.current.length > 1 && (history.current.length > 24 || history.current.reduce((total, shot) => total + shot.url.length, 0) > 32 * 1024 * 1024)) history.current.shift(); index.current = history.current.length - 1; setDimensions(`${c.width} × ${c.height} px`); setCanUndo(index.current > 0); setCanRedo(false); setRevision(value => value + 1); }, []);
   const resetAdjustments = useCallback(() => { setBrightness(100); setContrast(100); setSaturation(100); setBlur(0); setFilter('none'); }, []);
   const restore = useCallback((shot: Shot) => { const c = canvas.current; if (!c) return; const image = new Image(); image.onload = () => { c.width = shot.w; c.height = shot.h; c.getContext('2d')?.drawImage(image, 0, 0); setDimensions(`${shot.w} × ${shot.h} px`); setRevision(value => value + 1); }; image.src = shot.url; }, []);
   const newDocument = useCallback((transparent = false) => { const c = canvas.current; if (!c) return; setDraftId(createDraftId()); setCloud(undefined); setCloudMessage(''); c.width = 1200; c.height = 800; const x = c.getContext('2d')!; x.clearRect(0, 0, c.width, c.height); if (!transparent) { x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); } history.current = []; index.current = -1; setName(transparent ? 'untitled-transparent' : 'untitled'); setZoom(72); resetAdjustments(); snap(); setNotice(transparent ? 'New transparent document' : 'New document'); }, [resetAdjustments, snap]);
@@ -127,6 +130,35 @@ export default function Home() {
     } catch (error) { setCloudMessage(error instanceof Error ? error.message : 'Cloud save failed. Your local draft is safe.'); }
     finally { setCloudBusy(false); }
   };
+  const exportProject = () => {
+    const contents = JSON.stringify({ version: 1, history: history.current, index: index.current, name, settings: { tool, zoom, color, size, text, fontSize, brightness, contrast, saturation, blur, filter } });
+    const url = URL.createObjectURL(new Blob([contents], { type: 'application/json' }));
+    const link = document.createElement('a'); link.href = url; link.download = (name || 'untitled') + '.pixelforge'; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000); setNotice('Project file downloaded');
+  };
+  const importProject = async (selected?: File) => {
+    if (!selected) return;
+    try {
+      if (selected.size > 64 * 1024 * 1024) throw new Error('Project file exceeds 64 MB');
+      const saved = validateDraft(JSON.parse(await selected.text()));
+      const shot = saved.history[saved.index];
+      if (shot.w * shot.h > 16000000) throw new Error('Project exceeds 16 megapixels');
+      const image = new Image();
+      await new Promise<void>((resolve, reject) => { image.onload = () => resolve(); image.onerror = () => reject(new Error('Project image is invalid')); image.src = shot.url; });
+      if (image.width !== shot.w || image.height !== shot.h) throw new Error('Project image dimensions do not match');
+      const c = canvas.current!; c.width = shot.w; c.height = shot.h; c.getContext('2d')!.drawImage(image, 0, 0);
+      setDraftId(createDraftId()); setCloud(undefined); setCloudMessage(''); history.current = saved.history; index.current = saved.index;
+      setName(saved.name); setDimensions(`${shot.w} × ${shot.h} px`); setCanUndo(saved.index > 0); setCanRedo(saved.index < saved.history.length - 1);
+      const settings = saved.settings; setTool(settings.tool); setZoom(settings.zoom); setColor(settings.color); setSize(settings.size); setText(settings.text); setFontSize(settings.fontSize); setBrightness(settings.brightness); setContrast(settings.contrast); setSaturation(settings.saturation); setBlur(settings.blur); setFilter(settings.filter);
+      setRevision(value => value + 1); setNotice('Project opened with editing history');
+    } catch (error) { setNotice(error instanceof Error ? error.message : 'Project could not be opened'); }
+    finally { if (projectFile.current) projectFile.current.value = ''; }
+  };
+  const resizeImage = (width: number, height: number) => {
+    const c = canvas.current!, copy = document.createElement('canvas'); copy.width = c.width; copy.height = c.height; copy.getContext('2d')!.drawImage(c, 0, 0);
+    c.width = width; c.height = height; const context = c.getContext('2d')!; context.imageSmoothingEnabled = true; context.imageSmoothingQuality = 'high'; context.drawImage(copy, 0, 0, width, height);
+    snap(); setResizing(null); setNotice('Image resized');
+  };
   const discard = async () => {
     if (!window.confirm('Discard this saved draft? This cannot be undone. Download an image first if you want to keep a copy.')) return;
     discarding.current = true; saving.current = false; ++saveSequence.current;
@@ -134,13 +166,13 @@ export default function Home() {
     catch { discarding.current = false; setSaveStatus('Could not discard the draft. Please try again.'); }
   };
   const point = (e: React.PointerEvent<HTMLCanvasElement>) => { const c = canvas.current!, r = c.getBoundingClientRect(); return { x: (e.clientX - r.left) * c.width / r.width, y: (e.clientY - r.top) * c.height / r.height }; };
-  const load = useCallback((selected?: File) => { if (!selected?.type.startsWith('image/')) { setNotice('Choose an image file'); return; } const reader = new FileReader(); reader.onload = () => { if (typeof reader.result !== 'string') { setNotice('This file could not be read'); return; } const image = new Image(); image.onload = () => { setDraftId(createDraftId()); setCloud(undefined); setCloudMessage(''); const c = canvas.current!, scale = Math.min(1, 2200 / Math.max(image.width, image.height)); c.width = Math.round(image.width * scale); c.height = Math.round(image.height * scale); c.getContext('2d')?.drawImage(image, 0, 0, c.width, c.height); history.current = []; index.current = -1; setName(selected.name.replace(/\.[^/.]+$/, '')); setZoom(72); resetAdjustments(); snap(); setNotice('Photo opened'); if (file.current) file.current.value = ''; }; image.onerror = () => setNotice('This image could not be opened'); image.src = reader.result; }; reader.onerror = () => setNotice('This file could not be read'); reader.readAsDataURL(selected); }, [resetAdjustments, snap]);
+  const load = useCallback((selected?: File) => { if (!selected?.type.startsWith('image/')) { setNotice('Choose an image file'); return; } const reader = new FileReader(); reader.onload = () => { if (typeof reader.result !== 'string') { setNotice('This file could not be read'); return; } const image = new Image(); image.onload = () => { if (image.width * image.height > 16000000 || image.width > 16000 || image.height > 16000) { setNotice('Image exceeds 16 megapixels. Choose a smaller image; the current draft is unchanged.'); return; } setDraftId(createDraftId()); setCloud(undefined); setCloudMessage(''); const c = canvas.current!; c.width = image.width; c.height = image.height; c.getContext('2d')?.drawImage(image, 0, 0, c.width, c.height); history.current = []; index.current = -1; setName(selected.name.replace(/\.[^/.]+$/, '')); setZoom(72); resetAdjustments(); snap(); setNotice('Photo opened'); if (file.current) file.current.value = ''; }; image.onerror = () => setNotice('This image could not be opened'); image.src = reader.result; }; reader.onerror = () => setNotice('This file could not be read'); reader.readAsDataURL(selected); }, [resetAdjustments, snap]);
 
   const pointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => { const c = canvas.current!; if (tool === 'move') { const s = stage.current!; down.current = true; panStart.current = { x: e.clientX, y: e.clientY, left: s.scrollLeft, top: s.scrollTop }; c.setPointerCapture(e.pointerId); return; } const x = c.getContext('2d')!, p = point(e); start.current = p; down.current = true; c.setPointerCapture(e.pointerId); base.current = x.getImageData(0, 0, c.width, c.height); if (tool === 'text') { x.fillStyle = color; x.font = `700 ${fontSize}px Arial`; x.textBaseline = 'top'; x.fillText(text || 'Your text', p.x, p.y); down.current = false; snap(); setNotice('Text added'); } else if (tool === 'brush' || tool === 'eraser') { x.beginPath(); x.moveTo(p.x, p.y); x.lineCap = 'round'; x.lineJoin = 'round'; } };
   const pointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => { if (!down.current) return; if (tool === 'move') { const s = stage.current!; s.scrollLeft = panStart.current.left - (e.clientX - panStart.current.x); s.scrollTop = panStart.current.top - (e.clientY - panStart.current.y); return; } const c = canvas.current!, x = c.getContext('2d')!, p = point(e); if (tool === 'brush' || tool === 'eraser') { x.globalCompositeOperation = tool === 'eraser' ? 'destination-out' : 'source-over'; x.strokeStyle = color; x.lineWidth = size; x.lineTo(p.x, p.y); x.stroke(); x.globalCompositeOperation = 'source-over'; } else if (base.current) { x.putImageData(base.current, 0, 0); x.setLineDash(tool === 'crop' ? [18, 12] : []); x.lineWidth = Math.max(4, size / 3); x.strokeStyle = tool === 'crop' ? 'white' : color; x.strokeRect(start.current.x, start.current.y, p.x - start.current.x, p.y - start.current.y); x.setLineDash([]); } };
   const pointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => { if (!down.current) return; down.current = false; if (tool === 'move') { setNotice('Canvas moved'); return; } const c = canvas.current!, p = point(e); if (tool === 'crop' && base.current) { const x = c.getContext('2d')!; x.putImageData(base.current, 0, 0); const l = Math.max(0, Math.min(start.current.x, p.x)), t = Math.max(0, Math.min(start.current.y, p.y)), w = Math.min(c.width - l, Math.abs(p.x - start.current.x)), h = Math.min(c.height - t, Math.abs(p.y - start.current.y)); if (w > 20 && h > 20) { const cut = x.getImageData(l, t, w, h); c.width = Math.round(w); c.height = Math.round(h); c.getContext('2d')?.putImageData(cut, 0, 0); setNotice('Image cropped'); } } else setNotice(tool === 'rectangle' ? 'Shape added' : `${tool[0].toUpperCase() + tool.slice(1)} applied`); snap(); };
 
-  const transform = useCallback((a: 'left' | 'right' | 'h' | 'v') => { const c = canvas.current!, tmp = document.createElement('canvas'); tmp.width = c.width; tmp.height = c.height; tmp.getContext('2d')?.drawImage(c, 0, 0); if (a === 'left' || a === 'right') { c.width = tmp.height; c.height = tmp.width; } const x = c.getContext('2d')!; x.save(); if (a === 'right') { x.translate(c.width, 0); x.rotate(Math.PI / 2); } if (a === 'left') { x.translate(0, c.height); x.rotate(-Math.PI / 2); } if (a === 'h') { x.translate(c.width, 0); x.scale(-1, 1); } if (a === 'v') { x.translate(0, c.height); x.scale(1, -1); } x.drawImage(tmp, 0, 0); x.restore(); snap(); setNotice('Transform applied'); }, [snap]);
+  const transform = useCallback((a: 'left' | 'right' | 'h' | 'v') => { const c = canvas.current!, tmp = document.createElement('canvas'); tmp.width = c.width; tmp.height = c.height; tmp.getContext('2d')?.drawImage(c, 0, 0); if (a === 'left' || a === 'right') { c.width = tmp.height; c.height = tmp.width; } const x = c.getContext('2d')!; x.clearRect(0, 0, c.width, c.height); x.save(); if (a === 'right') { x.translate(c.width, 0); x.rotate(Math.PI / 2); } if (a === 'left') { x.translate(0, c.height); x.rotate(-Math.PI / 2); } if (a === 'h') { x.translate(c.width, 0); x.scale(-1, 1); } if (a === 'v') { x.translate(0, c.height); x.scale(1, -1); } x.drawImage(tmp, 0, 0); x.restore(); snap(); setNotice('Transform applied'); }, [snap]);
   const apply = useCallback(() => { const c = canvas.current!, tmp = document.createElement('canvas'); tmp.width = c.width; tmp.height = c.height; const x = tmp.getContext('2d')!; x.filter = cssFilter; x.drawImage(c, 0, 0); const dest = c.getContext('2d')!; dest.clearRect(0, 0, c.width, c.height); dest.drawImage(tmp, 0, 0); resetAdjustments(); snap(); setNotice('Adjustments applied'); }, [cssFilter, resetAdjustments, snap]);
   const undo = useCallback(() => { if (index.current <= 0) return; restore(history.current[--index.current]); setCanUndo(index.current > 0); setCanRedo(true); setNotice('Undone'); }, [restore]);
   const redo = useCallback(() => { if (index.current >= history.current.length - 1) return; restore(history.current[++index.current]); setCanUndo(true); setCanRedo(index.current < history.current.length - 1); setNotice('Redone'); }, [restore]);
@@ -150,10 +182,13 @@ export default function Home() {
   const openFile = useCallback(() => file.current?.click(), []);
 
   useEffect(() => { const close = (e: PointerEvent) => { if (!menuArea.current?.contains(e.target as Node)) setActiveMenu(null); }; window.addEventListener('pointerdown', close); return () => window.removeEventListener('pointerdown', close); }, []);
-  useEffect(() => { const key = (e: KeyboardEvent) => { const target = e.target as HTMLElement, typing = /INPUT|TEXTAREA|SELECT/.test(target.tagName) || target.isContentEditable, commandKey = e.ctrlKey || e.metaKey; if (e.key === 'Escape') { setActiveMenu(null); return; } if (commandKey && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; } if (commandKey && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; } if (commandKey && e.key.toLowerCase() === 's') { e.preventDefault(); download('png'); return; } if (commandKey && e.key.toLowerCase() === 'o') { e.preventDefault(); openFile(); return; } if (commandKey && e.key.toLowerCase() === 'n') { e.preventDefault(); newDocument(false); return; } if (!typing && !commandKey && !e.altKey) { if (e.key === '0') { fitToScreen(); return; } if (e.key === '1') { setZoom(100); setNotice('Actual size'); return; } if (e.key === '+' || e.key === '=') { setZoom(v => Math.min(140, v + 10)); return; } if (e.key === '-') { setZoom(v => Math.max(20, v - 10)); return; } const match = TOOLS.find(item => item.key.toLowerCase() === e.key.toLowerCase()); if (match) { setTool(match.id); setNotice(`${match.label} tool selected`); } } }; window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key); }, [download, fitToScreen, newDocument, openFile, redo, undo]);
+  useEffect(() => { const key = (e: KeyboardEvent) => { const target = e.target as HTMLElement, typing = /INPUT|TEXTAREA|SELECT/.test(target.tagName) || target.isContentEditable, commandKey = e.ctrlKey || e.metaKey; if (document.querySelector('dialog[open]') || (typing && commandKey && ['z', 'y'].includes(e.key.toLowerCase()))) return; if (e.key === 'Escape') { setActiveMenu(null); return; } if (commandKey && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; } if (commandKey && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; } if (commandKey && e.key.toLowerCase() === 's') { e.preventDefault(); download('png'); return; } if (commandKey && e.key.toLowerCase() === 'o') { e.preventDefault(); openFile(); return; } if (commandKey && e.key.toLowerCase() === 'n') { e.preventDefault(); newDocument(false); return; } if (!typing && !commandKey && !e.altKey) { if (e.key === '0') { fitToScreen(); return; } if (e.key === '1') { setZoom(100); setNotice('Actual size'); return; } if (e.key === '+' || e.key === '=') { setZoom(v => Math.min(140, v + 10)); return; } if (e.key === '-') { setZoom(v => Math.max(20, v - 10)); return; } const match = TOOLS.find(item => item.key.toLowerCase() === e.key.toLowerCase()); if (match) { setTool(match.id); setNotice(`${match.label} tool selected`); } } }; window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key); }, [download, fitToScreen, newDocument, openFile, redo, undo]);
 
   const runCommand = (command: Command) => {
-    if (command === 'new-white') newDocument(false);
+    if (command === 'resize') setResizing({ width: canvas.current!.width, height: canvas.current!.height });
+    else if (command === 'project-save') exportProject();
+    else if (command === 'project-open') projectFile.current?.click();
+    else if (command === 'new-white') newDocument(false);
     else if (command === 'new-transparent') newDocument(true);
     else if (command === 'open') openFile();
     else if (command === 'png') download('png');
@@ -176,6 +211,8 @@ export default function Home() {
 
   // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
   return <main className="editor-shell" role="application" aria-label="PixelForge photo editor" aria-busy={!ready} inert={!ready || cloudBusy} tabIndex={-1} onDragOver={e => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={e => { e.preventDefault(); setDrag(false); load(e.dataTransfer.files[0]); }}>
+    <input ref={projectFile} data-testid="project-input" className="hidden" type="file" accept=".pixelforge,application/json" onChange={event => void importProject(event.target.files?.[0])} />
+    {resizing && <ResizeDialog width={resizing.width} height={resizing.height} close={() => setResizing(null)} apply={resizeImage} />}
     <input ref={file} data-testid="file-input" className="hidden" type="file" accept="image/*" onChange={e => load(e.target.files?.[0])} />
     <header className="topbar"><div className="brand"><span className="brand-mark"><Palette /></span><span>Pixel<b>Forge</b></span><em>FREE</em></div>
       <nav ref={menuArea} aria-label="Editor menus">{(Object.keys(MENU_DEFS) as MenuName[]).map(menuName => <div className="menu" key={menuName}><button className={activeMenu === menuName ? 'menu-active' : ''} aria-haspopup="menu" aria-expanded={activeMenu === menuName} onClick={() => setActiveMenu(current => current === menuName ? null : menuName)}>{menuName}</button>{activeMenu === menuName && <div className="menu-popup" role="menu" aria-label={`${menuName} menu`}>{MENU_DEFS[menuName].map(item => <button key={item.label} role="menuitem" disabled={(item.command === 'undo' && !canUndo) || (item.command === 'redo' && !canRedo)} onClick={() => { setActiveMenu(null); runCommand(item.command); }}><span>{item.label}</span>{item.shortcut && <kbd>{item.shortcut}</kbd>}</button>)}</div>}</div>)}</nav>

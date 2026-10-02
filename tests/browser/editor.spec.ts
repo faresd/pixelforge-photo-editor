@@ -119,3 +119,42 @@ test('signed-in users save, revisit and continue cloud projects without automati
   await expect(page.getByText('Cloud copy saved.', { exact: false })).toBeVisible();
   expect(saves).toBe(2);
 });
+
+test('exact resizing and project file round-trip retain pixels, dimensions and undo', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByLabel('Document name').fill('Portable project');
+  await page.getByRole('button', { name: 'Image', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Resize image…' }).click();
+  await page.getByLabel('Width (px)', { exact: true }).fill('720');
+  await expect(page.getByLabel('Height (px)', { exact: true })).toHaveValue('480');
+  await page.getByRole('button', { name: 'Apply resize' }).click();
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '720');
+  const pixels = await page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  const downloaded = page.waitForEvent('download');
+  await page.getByRole('menuitem', { name: 'Download project file' }).click();
+  const download = await downloaded;
+  expect(download.suggestedFilename()).toBe('Portable project.pixelforge');
+  const path = await download.path();
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
+  await page.getByTestId('project-input').setInputFiles(path!);
+  await expect(page.getByLabel('Document name')).toHaveValue('Portable project');
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '720');
+  expect(await page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())).toBe(pixels);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '1440');
+});
+
+test('flipping transparent artwork does not leave duplicate opaque pixels', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  const fixture = await page.evaluate(() => { const canvas = document.createElement('canvas'); canvas.width = 2; canvas.height = 1; const context = canvas.getContext('2d')!; context.fillStyle = '#ff0000'; context.fillRect(0, 0, 1, 1); return canvas.toDataURL().split(',')[1]; });
+  await page.getByTestId('file-input').setInputFiles({ name: 'transparent.png', mimeType: 'image/png', buffer: Buffer.from(fixture, 'base64') });
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '2');
+  await page.getByRole('button', { name: 'Flip horizontal', exact: true }).click();
+  const pixels = await page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) => Array.from(canvas.getContext('2d')!.getImageData(0, 0, 2, 1).data));
+  expect(pixels).toEqual([0, 0, 0, 0, 255, 0, 0, 255]);
+});

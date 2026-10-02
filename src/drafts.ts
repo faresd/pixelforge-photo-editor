@@ -16,6 +16,13 @@ function validSettings(settings: Draft['settings']) {
   const ranges = [[settings.zoom, 20, 140], [settings.size, 2, 100], [settings.fontSize, 16, 160], [settings.brightness, 0, 200], [settings.contrast, 0, 200], [settings.saturation, 0, 200], [settings.blur, 0, 20]];
   return ranges.every(([value, min, max]) => Number.isFinite(value) && value >= min && value <= max) && ['none', 'saturate(1.45) contrast(1.08)', 'grayscale(1) contrast(1.12)', 'sepia(.35) saturate(1.2)', 'hue-rotate(18deg) saturate(.9)'].includes(settings.filter);
 }
+
+export function validateDraft(input: unknown): Draft {
+  if (!input || typeof input !== 'object') throw new Error('Invalid project file');
+  const value = input as Draft;
+  if (value.version !== 1 || !Array.isArray(value.history) || !value.history.length || value.history.length > 24 || !Number.isInteger(value.index) || value.index < 0 || value.index >= value.history.length || !validSettings(value.settings) || typeof value.name !== 'string' || value.name.length > 160 || value.history.some(shot => !shot || typeof shot.url !== 'string' || !shot.url.startsWith('data:image/png;base64,') || !Number.isInteger(shot.w) || !Number.isInteger(shot.h) || shot.w < 1 || shot.h < 1 || shot.w > 20000 || shot.h > 20000)) throw new Error('Saved document is not supported');
+  return value;
+}
 function openDatabase() {
   database ??= new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open('pixelforge-documents', 1);
@@ -66,10 +73,7 @@ export async function readDraft(id: string): Promise<Draft | undefined> {
     request.onsuccess = () => {
       const value = request.result as Draft | undefined;
       if (value === undefined) { resolve(undefined); return; }
-      if (value.version !== 1 || !Array.isArray(value.history) || !value.history.length || value.history.length > 24 || !Number.isInteger(value.index) || value.index < 0 || value.index >= value.history.length || !validSettings(value.settings) || typeof value.name !== 'string' || value.history.some(shot => !shot || typeof shot.url !== 'string' || !shot.url.startsWith('data:image/png;base64,') || !Number.isInteger(shot.w) || !Number.isInteger(shot.h) || shot.w < 1 || shot.h < 1 || shot.w > 20000 || shot.h > 20000)) {
-        reject(new Error('Saved document is not supported')); return;
-      }
-      resolve(value);
+      try { resolve(validateDraft(value)); } catch (error) { reject(error); }
     };
   });
 }
