@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 export function BrandLockup({ home = false }: { home?: boolean }) {
   return (
     <a href="/" className="brand-lockup" aria-label="Pixel by Cheaply">
-      <span className="cheaply-lockup"><span className="cheaply-mark" aria-hidden="true">C</span><span className="cheaply-word">cheaply</span></span>
+      <span className="cheaply-lockup"><img src="/cheaply-logo-source.png" alt="Cheaply" /></span>
       <span className="brand-plus" aria-hidden="true">×</span>
       <span className="pixel-lockup"><span className="pixel-mark" aria-hidden="true"><i /><i /><i /><i /></span><span>Pixel</span></span>
       {!home && <em>FREE</em>}

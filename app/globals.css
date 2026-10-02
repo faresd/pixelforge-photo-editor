@@ -50,3 +50,10 @@
 .cheaply-word{font-size:15px;letter-spacing:-.7px}.cheaply-mark{width:29px;height:29px;display:grid;place-items:center;border-radius:10px;background:linear-gradient(145deg,#ff7552,#e43f29);color:#fff;font-size:17px;font-weight:900;font-style:italic;box-shadow:0 5px 16px #ff5c3538}.brand-plus{color:#636771;font-size:17px;font-weight:400}.pixel-mark{width:29px;height:29px;display:grid;grid-template-columns:repeat(2,6px);grid-template-rows:repeat(2,6px);gap:3px;place-content:center;border-radius:10px;background:#252a38;box-shadow:inset 0 0 0 1px #47516a}.pixel-mark i{display:block;border-radius:2px;background:#ff9a72}.pixel-mark i:nth-child(2),.pixel-mark i:nth-child(3){background:#83d6c3}.pixel-lockup b{color:var(--accent)}.brand-lockup em{font-size:8px;font-style:normal;letter-spacing:1px;padding:3px 5px;border:1px solid #653426;color:#ff9a80;border-radius:4px}
 @media(max-width:680px){.brand-lockup{gap:6px}.cheaply-lockup,.pixel-lockup{font-size:15px}.cheaply-word{font-size:13px}.cheaply-mark,.pixel-mark{width:27px;height:27px}.brand-plus{font-size:14px}}
 .tool-select{cursor:crosshair}.mask-status{margin:5px 0;color:#82d7b1;font-size:10px}
+/* Official Cheaply artwork and the companion Pixel app mark */
+.cheaply-lockup{width:42px;height:34px;display:grid;place-items:center;overflow:hidden}
+.cheaply-lockup img{width:42px;height:42px;object-fit:contain;display:block;mix-blend-mode:screen}
+.pixel-mark{position:relative;transform:rotate(45deg);background:linear-gradient(135deg,#ff8d68 0%,#ff5c35 46%,#3b7180 47%,#83d6c3 100%);box-shadow:0 5px 18px #ff5c3550,inset 0 0 0 1px #ffffff50}
+.pixel-mark i{transform:rotate(-45deg);background:#fff7ed!important;box-shadow:0 0 5px #fff8}
+.pixel-mark i:nth-child(2),.pixel-mark i:nth-child(3){background:#173c4c!important}
+@media(max-width:680px){.cheaply-lockup{width:34px;height:30px}.cheaply-lockup img{width:38px;height:38px}}
