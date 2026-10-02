@@ -59,3 +59,4 @@
 
 .cheaply-lockup{width:74px;height:46px}.cheaply-lockup img{width:74px;height:74px}.pixel-symbol{width:36px;height:36px;filter:drop-shadow(0 3px 8px #00a6c030)}.pixel-lockup{font-size:19px;letter-spacing:-.7px}.topbar>.brand-lockup{grid-row:1;grid-column:1}@media(max-width:680px){.cheaply-lockup{width:64px;height:40px}.cheaply-lockup img{width:64px;height:64px}.pixel-symbol{width:30px;height:30px}.brand-lockup em{display:none}}
 .tool-hand{cursor:grab}.tool-hand:active{cursor:grabbing}.tool-eyedropper,.tool-fill,.tool-zoom{cursor:crosshair}
+.tool-select{cursor:crosshair}.mask-status{margin:5px 0;color:#82d7b1;font-size:10px}

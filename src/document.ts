@@ -40,6 +40,8 @@ type Common = {
   blend: (typeof BLENDS)[number];
   matrix: Matrix;
   adjustments: Adjustments;
+  /** Optional canvas-space alpha mask asset. Source pixels remain untouched. */
+  mask?: string;
 };
 export type Layer = Common &
   (
@@ -69,7 +71,21 @@ export type Layer = Common &
         fill: boolean;
       }
   );
-export type Frame = { w: number; h: number; layers: Layer[]; active: string };
+export type Selection = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  feather: number;
+  inverted: boolean;
+};
+export type Frame = {
+  w: number;
+  h: number;
+  layers: Layer[];
+  active: string;
+  selection?: Selection;
+};
 export type Asset = { url: string; w: number; h: number };
 export type Assets = Record<string, Asset>;
 export const identity = (): Matrix => [1, 0, 0, 1, 0, 0];
@@ -102,6 +118,7 @@ export const transformFrame = (
   ...frame,
   w,
   h,
+  selection: undefined,
   layers: frame.layers.map((layer) => ({
     ...layer,
     matrix: multiply(matrix, layer.matrix),
@@ -197,6 +214,14 @@ export function validateFrame(
     if (layer.kind === 'raster') {
       if (!validId(layer.asset) || !Object.hasOwn(assets, layer.asset))
         return fail();
+      if (
+        layer.mask !== undefined &&
+        (!validId(layer.mask) ||
+          !Object.hasOwn(assets, layer.mask) ||
+          assets[layer.mask].w !== value.w ||
+          assets[layer.mask].h !== value.h)
+      )
+        return fail();
       pixels += assets[layer.asset].w * assets[layer.asset].h;
     } else if (layer.kind === 'text') {
       if (
@@ -218,6 +243,24 @@ export function validateFrame(
         return fail();
     } else return fail();
   }
+  const selection = value.selection;
+  if (selection !== undefined) {
+    if (!record(selection)) return fail();
+    const s = selection as Record<string, unknown>,
+      frameWidth = Number(value.w),
+      frameHeight = Number(value.h);
+    if (
+      !number(s.x, 0, frameWidth) ||
+      !number(s.y, 0, frameHeight) ||
+      !number(s.w, 1, frameWidth) ||
+      !number(s.h, 1, frameHeight) ||
+      Number(s.x) + Number(s.w) > frameWidth ||
+      Number(s.y) + Number(s.h) > frameHeight ||
+      !number(s.feather, 0, 1000) ||
+      typeof s.inverted !== 'boolean'
+    )
+      return fail();
+  }
   if (pixels > 64000000 || !validId(value.active) || !ids.has(value.active))
     return fail();
 }
@@ -225,7 +268,10 @@ export function referencedAssets(history: Frame[], assets: Assets): Assets {
   const used: Assets = {};
   for (const frame of history)
     for (const layer of frame.layers)
-      if (layer.kind === 'raster') used[layer.asset] = assets[layer.asset];
+      if (layer.kind === 'raster') {
+        used[layer.asset] = assets[layer.asset];
+        if (layer.mask) used[layer.mask] = assets[layer.mask];
+      }
   return used;
 }
 export function addAsset(assets: Assets, canvas: HTMLCanvasElement): string {
@@ -349,6 +395,29 @@ export async function renderFrame(
       layer.kind === 'raster' && !override
         ? await decodeAsset(assets[layer.asset])
         : undefined;
+    if (layer.kind === 'raster' && layer.mask && image) {
+      const masked = surface(frame.w, frame.h),
+        maskContext = masked.getContext('2d')!;
+      maskContext.save();
+      maskContext.setTransform(...layer.matrix);
+      maskContext.globalAlpha = 1;
+      maskContext.globalCompositeOperation = 'source-over';
+      maskContext.filter = filterCSS(layer.adjustments);
+      maskContext.drawImage(image, 0, 0);
+      maskContext.restore();
+      const maskImage = await decodeAsset(assets[layer.mask]);
+      maskContext.save();
+      maskContext.globalCompositeOperation = 'destination-in';
+      maskContext.setTransform(1, 0, 0, 1, 0, 0);
+      maskContext.drawImage(maskImage, 0, 0);
+      maskContext.restore();
+      context.save();
+      context.globalAlpha = layer.opacity;
+      context.globalCompositeOperation = layer.blend;
+      context.drawImage(masked, 0, 0);
+      context.restore();
+      continue;
+    }
     context.save();
     context.setTransform(...layer.matrix);
     context.globalAlpha = layer.opacity;
