@@ -210,6 +210,8 @@ export default function Home() {
     [zoom, setZoom] = useState(72),
     [color, setColor] = useState('#ff5c35'),
     [size, setSize] = useState(18),
+    [brushOpacity, setBrushOpacity] = useState(100),
+    [hardness, setHardness] = useState(100),
     [text, setText] = useState('Your text'),
     [fontSize, setFontSize] = useState(56);
   const [cloneSource, setCloneSource] = useState<{ x: number; y: number } | null>(null);
@@ -243,6 +245,8 @@ export default function Home() {
     zoom,
     color,
     size,
+    brushOpacity,
+    hardness,
     text,
     fontSize,
     ...neutral,
@@ -260,6 +264,8 @@ export default function Home() {
     setZoom(s.zoom);
     setColor(s.color);
     setSize(s.size);
+    setBrushOpacity(s.brushOpacity ?? 100);
+    setHardness(s.hardness ?? 100);
     setText(s.text);
     setFontSize(s.fontSize);
   };
@@ -492,7 +498,7 @@ export default function Home() {
       assets: { ...assets.current },
       index: index.current,
       name,
-      settings: { tool, zoom, color, size, text, fontSize, ...neutral },
+      settings: { tool, zoom, color, size, brushOpacity, hardness, text, fontSize, ...neutral },
     };
     saveQueue.current = saveQueue.current
       .then(async () => {
@@ -530,6 +536,8 @@ export default function Home() {
     zoom,
     color,
     size,
+    brushOpacity,
+    hardness,
     text,
     fontSize,
     history,
@@ -784,6 +792,10 @@ export default function Home() {
       y: ((e.clientY - r.top) * c.height) / r.height,
     };
   };
+  const pressure = (e: React.PointerEvent<HTMLCanvasElement>) =>
+    (e.pointerType === 'pen' || e.pointerType === 'touch') && e.pressure > 0 && e.pressure <= 1
+      ? e.pressure
+      : 1;
   const pointerDown = async (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (gesture.current || doc.rendering || !frame) return;
     const f = current(),
@@ -942,11 +954,16 @@ export default function Home() {
           x.fillStyle = color;
           x.globalCompositeOperation =
             tool === 'eraser' ? 'destination-out' : 'source-over';
+          const pointPressure = pressure(e),
+            radius = Math.max(1, (size * pointPressure) / 2),
+            softness = Math.max(0, Math.min(1, (100 - hardness) / 100));
+          x.globalAlpha = (brushOpacity / 100) * pointPressure;
+          x.filter = softness ? `blur(${Math.max(0.1, radius * softness)}px)` : 'none';
           x.beginPath();
-          x.arc(p.x, p.y, size / 2, 0, Math.PI * 2);
+          x.arc(p.x, p.y, radius, 0, Math.PI * 2);
           x.fill();
           x.strokeStyle = color;
-          x.lineWidth = size;
+          x.lineWidth = radius * 2;
           x.lineCap = 'round';
           x.lineJoin = 'round';
           x.beginPath();
@@ -979,11 +996,11 @@ export default function Home() {
     if ((g.tool === 'brush' || g.tool === 'eraser') && !g.buffer)
       g.queued?.push(p);
     if ((g.tool === 'clone' || g.tool === 'heal') && g.buffer && g.source && cloneSource) {
-      const x = g.buffer.getContext('2d')!, radius = Math.max(4, size / 2);
+      const x = g.buffer.getContext('2d')!, radius = Math.max(4, (size * pressure(e)) / 2);
       const dx = p.x - g.start.x, dy = p.y - g.start.y;
       x.save();
-      x.globalAlpha = g.tool === 'heal' ? 0.65 : 1;
-      x.filter = g.tool === 'heal' ? 'blur(1px)' : 'none';
+      x.globalAlpha = (g.tool === 'heal' ? 0.65 : 1) * (brushOpacity / 100) * pressure(e);
+      x.filter = g.tool === 'heal' || hardness < 100 ? `blur(${g.tool === 'heal' ? 1 : Math.max(0.1, radius * (100 - hardness) / 100)}px)` : 'none';
       x.beginPath();
       x.arc(p.x, p.y, radius, 0, Math.PI * 2);
       x.clip();
@@ -1006,7 +1023,9 @@ export default function Home() {
     } else if ((g.tool === 'brush' || g.tool === 'eraser') && g.buffer && g.layer) {
       const x = g.buffer.getContext('2d')!;
       x.strokeStyle = color;
-      x.lineWidth = size;
+      x.globalAlpha = (brushOpacity / 100) * pressure(e);
+      x.filter = hardness < 100 ? `blur(${Math.max(0.1, (size / 2) * (100 - hardness) / 100)}px)` : 'none';
+      x.lineWidth = size * pressure(e);
       x.lineCap = 'round';
       x.lineJoin = 'round';
       x.beginPath();
@@ -1109,6 +1128,8 @@ export default function Home() {
       if (changed) setNotice('Layer moved');
     } else if ((g.tool === 'brush' || g.tool === 'eraser') && g.buffer && g.layer) {
       const x = g.buffer.getContext('2d')!;
+      x.globalAlpha = (brushOpacity / 100) * pressure(e);
+      x.filter = hardness < 100 ? `blur(${Math.max(0.1, (size / 2) * (100 - hardness) / 100)}px)` : 'none';
       x.beginPath();
       x.moveTo(g.last.x, g.last.y);
       x.lineTo(p.x, p.y);
@@ -1640,7 +1661,7 @@ export default function Home() {
               </button>
             </div>
           </section>
-          {(tool === 'brush' || tool === 'eraser' || tool === 'rectangle' || tool === 'ellipse') && (
+          {(tool === 'brush' || tool === 'eraser' || tool === 'clone' || tool === 'heal' || tool === 'rectangle' || tool === 'ellipse') && (
             <section className="panel">
               <Title icon={Brush} text="Tool options" />
               <Slider
@@ -1651,6 +1672,26 @@ export default function Home() {
                 set={setSize}
                 suffix="px"
               />
+              {(tool === 'brush' || tool === 'eraser' || tool === 'clone' || tool === 'heal') && (
+                <>
+                  <Slider
+                    label="Hardness"
+                    value={hardness}
+                    min={1}
+                    max={100}
+                    set={setHardness}
+                    suffix="%"
+                  />
+                  <Slider
+                    label="Opacity"
+                    value={brushOpacity}
+                    min={1}
+                    max={100}
+                    set={setBrushOpacity}
+                    suffix="%"
+                  />
+                </>
+              )}
             </section>
           )}
           {tool === 'text' && (

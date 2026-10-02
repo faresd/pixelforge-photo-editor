@@ -7,18 +7,18 @@ immutable PNG asset and remains undoable.
 
 ## Current implementation audit
 
-The editor currently exposes `size` for Brush, Eraser, Rectangle and Ellipse.
-Brush and Eraser create a full-canvas raster buffer and draw an antialiased
-Canvas 2D circle/line with a hard edge. Eraser uses `destination-out` and
-Clone/Healing clip a hard circle from an explicit source point; Healing adds a
-fixed `0.65` alpha and one-pixel blur. Pointer coordinates are sampled from
-React pointer events, but pressure and pointer type are discarded. A pointer
-move publishes a preview and pointer-up commits one PNG asset to the selected
-raster layer.
+The editor exposes `size`, `hardness` and `brushOpacity` for Brush, Eraser,
+Clone and Healing. Each stroke uses a full-canvas raster buffer; mouse events
+use a pressure fallback of `1`, while pen and touch pressure currently scale
+both the stamp diameter and opacity. Brush and Eraser use Canvas 2D blur to
+approximate a soft edge, and Clone/Healing retain the explicit source point.
+Healing adds a fixed `0.65` blend and one-pixel blur. A pointer move publishes
+a preview and pointer-up commits one PNG asset to the selected raster layer.
 
-This behavior is useful baseline coverage, but it does not yet satisfy the
-roadmap requirement for configurable hardness, opacity, or pressure-aware
-touch/pen behavior.
+This satisfies persistence, mouse/pen/touch fallback and basic configurable
+opacity/hardness coverage. The blur-based softness and always-on pressure
+mapping remain intentionally bounded approximations until the shared radial
+stamp primitive and opt-in pressure controls are implemented.
 
 ## Persisted tool state
 
@@ -37,8 +37,8 @@ fallback of `1`, so a normal mouse stroke is not unexpectedly faint. Pressure
 values are transient input events and must never be serialized into a project
 file.
 
-The current validation draft uses a minimum hardness of `1`; change that to
-`0` before exposing a fully soft brush. Keep the existing size limits until a
+The current validation uses a minimum hardness of `1`; change that to `0`
+before exposing a fully soft brush. Keep the existing size limits until a
 bounded large-image budget is measured; increasing the maximum size is a
 separate performance change.
 

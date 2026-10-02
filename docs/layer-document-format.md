@@ -8,7 +8,7 @@ Version 1 files migrate to background raster layers with the old snapshot histor
 
 Limits: 32 layers, 16 megapixels per canvas or image asset, 64 megapixels of raster layers in any frame, at most 24 undo frames. History trims from the oldest frame when referenced PNG data exceeds 32 MiB; the current frame can retain up to 64 MiB. Decoded image cache is limited to 64 megapixels. Portable files are limited to 64 MiB; private cloud documents retain the existing 16 MiB request limit. These are browser-safety limits, not an industrial-scale performance claim.
 
-The renderer uses Canvas 2D; tested browser coverage is Chromium desktop and mobile. System font metrics may differ across platforms. PSD, CMYK, RAW, groups, color selections, polygonal/magnetic lasso variants, pressure curves, tiled workers, color-managed export and batch processing remain outstanding. This milestone does not claim Photoshop compatibility or professional parity.
+The renderer uses Canvas 2D; tested browser coverage is Chromium desktop and mobile. System font metrics may differ across platforms. PSD, CMYK, RAW, groups, non-contiguous color selections, polygonal/magnetic lasso variants, pressure curves, tiled workers, color-managed export and batch processing remain outstanding. This milestone does not claim Photoshop compatibility or professional parity.
 
 Next gates: structured selections/masks and groups, command coalescing and durable blob storage, explicit large-image performance budgets, cross-browser pixel/format tests, then advanced tools. No lossy PSD import should be presented as a faithful round trip.
 

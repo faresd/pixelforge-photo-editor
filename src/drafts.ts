@@ -17,6 +17,8 @@ export type Settings = {
   zoom: number;
   color: string;
   size: number;
+  brushOpacity?: number;
+  hardness?: number;
   text: string;
   fontSize: number;
   brightness: number;
@@ -53,11 +55,20 @@ function validSettings(settings: Settings) {
     [settings.size, 2, 100],
     [settings.fontSize, 16, 160],
   ];
+  const brushRanges = [
+    [settings.brushOpacity ?? 100, 1, 100],
+    [settings.hardness ?? 100, 1, 100],
+  ];
   return (
     ranges.every(
       ([value, min, max]) =>
         Number.isFinite(value) && value >= min && value <= max,
-    ) && validAdjustments(settings)
+    ) &&
+    brushRanges.every(
+      ([value, min, max]) =>
+        Number.isFinite(value) && value >= min && value <= max,
+    ) &&
+    validAdjustments(settings)
   );
 }
 export function validateDraft(input: unknown): Draft {

@@ -251,6 +251,26 @@ test('paint stays on its own raster layer and nondestructive filters retain sour
   expect(await pixels(page)).toBe(before);
 });
 
+test('brush hardness and opacity persist across a raster stroke', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
+  await page.getByLabel('Hardness', { exact: true }).fill('35');
+  await page.getByLabel('Opacity', { exact: true }).fill('55');
+  const canvas = page.getByTestId('editor-canvas'), box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.25, box.y + box.height * 0.5);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.75, box.y + box.height * 0.5, { steps: 5 });
+  await page.mouse.up();
+  await saved(page);
+  const exported = await project(page);
+  expect(exported.value.settings.brushOpacity).toBe(55);
+  expect(exported.value.settings.hardness).toBe(35);
+  await page.reload();
+  await expect(page.getByLabel('Hardness', { exact: true })).toHaveValue('35');
+  await expect(page.getByLabel('Opacity', { exact: true })).toHaveValue('55');
+});
+
 test('layer position, blending and visibility produce exact composite pixels', async ({
   page,
 }) => {
