@@ -1,0 +1,24 @@
+{
+  "name": "PixelForge — Free Online Photo Editor",
+  "short_name": "PixelForge",
+  "description": "A fast, private and free photo editor that keeps your work in your browser.",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#17181d",
+  "theme_color": "#17181d",
+  "icons": [
+    {
+      "src": "/icons/pixelforge-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/pixelforge-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
