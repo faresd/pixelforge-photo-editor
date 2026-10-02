@@ -36,3 +36,10 @@ next-env.d.ts
 /.wrangler/
 /outputs/
 /work/
+
+.firebase/
+firebase-debug.log*
+playwright-report/
+test-results/
+*.tsbuildinfo
+gha-creds-*.json
