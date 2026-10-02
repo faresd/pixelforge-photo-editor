@@ -89,11 +89,13 @@ test('signed-in users save, revisit and continue cloud projects without automati
   const member = { id: 'a6135ab2-0c9f-4f07-a78d-86648d6fb10a', name: 'Test member' };
   let saved: { id: string; generation: string; document: unknown } | undefined;
   let saves = 0;
+  let rejectUpdate = false;
   await page.route('https://marketplace.cheaply.fr/marketplace/api/photoeditor**', async route => {
     const request = route.request(), url = new URL(request.url());
     if (url.searchParams.get('action') === 'session') return route.fulfill({ json: { authenticated: true, user: member } });
     if (request.method() === 'POST') {
       const body = JSON.parse(request.postData()!);
+      if (rejectUpdate && body.generation !== '0') return route.fulfill({ status: 409, json: { error: 'This project changed elsewhere. Save a separate copy.' } });
       saves++;
       saved = { id: body.id, generation: String(saves), document: body.document };
       return route.fulfill({ json: { id: saved.id, generation: saved.generation } });
@@ -118,6 +120,15 @@ test('signed-in users save, revisit and continue cloud projects without automati
   await page.getByRole('button', { name: 'Update cloud project' }).click();
   await expect(page.getByText('Cloud copy saved.', { exact: false })).toBeVisible();
   expect(saves).toBe(2);
+  const oldId = saved!.id;
+  rejectUpdate = true;
+  await page.getByRole('button', { name: 'Update cloud project' }).click();
+  await expect(page.getByText('This project changed elsewhere. Save a separate copy.', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Document name')).toHaveValue('My private art continued');
+  await page.getByRole('button', { name: 'Save as new cloud project' }).click();
+  await expect(page.getByText('Cloud copy saved.', { exact: false })).toBeVisible();
+  expect(saves).toBe(3);
+  expect(saved!.id).not.toBe(oldId);
 });
 
 test('exact resizing and project file round-trip retain pixels, dimensions and undo', async ({ page }) => {
