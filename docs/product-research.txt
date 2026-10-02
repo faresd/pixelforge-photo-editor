@@ -1,0 +1,118 @@
+PIXELFORGE: EVIDENCE-BASED PRODUCT PRIORITIES
+Research completed 2 October 2026
+
+Conclusion
+The best-supported direction is a fast, private utility for finishing everyday image tasks: resize, compress, cut out a background, annotate, and export reliably. More filters and generative effects are weaker initial investments. This is a researched recommendation, not a measured worldwide ranking. Public discussions are self-selected; no PixelForge analytics, representative survey, keyword-volume dataset, or conversion experiment was available.
+
+Method and evidence limits
+I inspected the authenticated Sites app in Brave, reviewed the local source and verified the current GitHub repository, then compared direct requests in photo-editing/software communities, an official project issue tracker, and official competitor documentation. Direct user requests carry more weight than vendor feature lists. Founder promotions and SEO listicles were not treated as independent demand. Old discussions show persistent problems, not current prevalence. A complaint about a competitor does not establish that its latest version still has that defect. Thread counts and votes were not converted into invented market-share or demand scores.
+
+PixelForge baseline
+Live Sites URL: https://pixelforge-photo-editor.cheaply-2235.chatgpt.site/
+Verified GitHub: https://github.com/faresd/pixelforge-photo-editor
+GitHub main examined: 5f0372e (before the deployment work in this chat).
+The live interface shows crop, brush, eraser, text, shapes, basic brightness/contrast/saturation/blur, rotate/flip, five filters and JPG/PNG export controls. File and Image menu clicks produced no visible menu during inspection. The live page displays a Layers panel, whereas GitHub main explicitly describes a single editable canvas and includes functional menu fixes. This version difference makes current-source deployment and regression tests a priority.
+GitHub source silently scales imported images to a maximum 2200px edge, flattens text into canvas pixels, and stores undo snapshots in memory. It displays “Autosaved in this tab” without durable project persistence in the examined editor. These are confirmed source observations, not claims that each behavior was independently tested against the older Sites deployment.
+
+Recommended top 10
+Rank balances usefulness, direct evidence, fit and implementation cost. It is product priority, not a claim about exact request frequency. Effort is relative, with no delivery-date promise.
+
+1. Precise resize, aspect-ratio crop and output presets
+Confidence: high for the need; effort: medium.
+Add exact pixel dimensions, aspect lock, free/1:1/4:5/16:9 cropping, fit/contain/pad choices, and reusable custom sizes. Explain when an action crops rather than stretches. Export at the requested dimensions.
+Evidence: product sellers explicitly request canvas sizing in bulk [1]; Photopea users ask for exact layer dimensions [2]. iLoveIMG documents exact pixel/percentage resizing and crop ratios [3], establishing expected functionality rather than proving popularity.
+Acceptance: a 4032x3024 image can become 1200x1200 by crop or padding without distortion; undo restores it; dimensions match the downloaded file.
+
+2. Smart export and compression with original-quality control
+Confidence: high; effort: medium.
+Preserve original pixel dimensions by default, subject to explicit device limits; allow JPEG, PNG and WebP, quality preview, actual resulting file size and a target such as “under 2 MB.” Explain transparency loss in JPEG. Separate pixel size, compression and print DPI.
+Evidence: requests for free automatic compression [4], a specific 2MB upload ceiling [5], and web export optimization [6]. Users explicitly ask to retain high-resolution output without signup [7]. A DPI complaint [8] is evidence of confusing UX, not proof of lost pixels.
+Acceptance: no silent 2200px reduction; a supported file meets the target size or the UI clearly says it cannot; compare export at 100% zoom and preserve transparency in supported formats.
+
+3. Background removal and replacement with manual refinement
+Confidence: high, especially sellers and creators; effort: large.
+Offer transparent/white/color backgrounds, an erase/restore mask brush and edge refinement. Provide a simple color-select tool for logos. Keep model-assisted processing optional and accurately disclose whether images leave the device.
+Evidence: explicit seller workflows [1], free high-resolution batch requests [7], simple white-background logo removal [9], and requests for non-AI removal [10]. The last source argues against making all background removal depend on generative AI.
+Acceptance: test hair, transparent objects, dark edges and low-contrast subjects; allow manual repair; export PNG alpha at chosen dimensions; measure runtime on ordinary phones.
+
+4. Reliable autosave, crash recovery and downloadable projects
+Confidence: high for reliability value, moderate for relative request frequency; effort: medium/large.
+Persist the current document locally, display truthful saving/saved/error states, recover after reload, and offer an editable project download. Explain that browser storage can be cleared and is not a permanent backup.
+Evidence: Photopea's historical autosave request describes loss on logout/restart/update [11]; an Adobe Express discussion reports disappearing saved work [12]. Neither establishes those products remain defective today. PixelForge's misleading autosave text independently makes this a trust priority.
+Acceptance: reload and browser restart recover edits; storage failure is visible; project export/import round-trips document content; undo/redo remains consistent.
+
+5. Fast, usable mobile editing
+Confidence: high that usability matters; moderate on PixelForge audience size; effort: medium/large.
+Use reachable tool controls, touch-sized crop/text handles, pinch-to-zoom, a clear Apply/Cancel pattern and easy download/share. Test real mobile browsers and keyboard/screen-reader access. Keep the image usable while panels are open.
+Evidence: mobile users report broken workflows and inability to duplicate/reposition layers [13,14]; an iOS user asks for easy text movement/resizing and arrows [15]. PixelForge has responsive CSS, but this alone does not prove successful touch editing.
+Acceptance: a new user imports, crops, annotates and exports on a narrow phone screen without hidden controls or keyboard dependence; no horizontal page overflow.
+
+6. Batch resize, compress and convert with reusable recipes
+Confidence: high for sellers/content operators; moderate for the general audience; effort: medium/large.
+Start with deterministic operations and ZIP download, per-file progress/errors, cancellation and memory limits. Add batch background removal only after the single-image version is reliable.
+Evidence: [1,7] and multiple Pixlr users seeking alternatives after batch editing disappeared [16]. An anonymous reply says usage was too low; it is unverified, but cautions against assuming every user needs batch. Official Photoroom documentation confirms the workflow category [17].
+Acceptance: a mixed batch reports failures individually, keeps the page responsive and exports only successful files with clear names; individual previews show exactly what the recipe does.
+
+7. Editable text, arrows, shapes and logo/watermark placement
+Confidence: high for quick annotations; effort: medium.
+Keep text editable after placement; enable drag/resize/rotate, font size/color, outline and alignment. Include arrows, rectangles and reusable logo placement without flattening until export.
+Evidence: direct iOS requests for quick text and arrows [15], Photopea text-selection problems [18], and users seeking a lightweight editor with shapes/layers instead of more color effects [19].
+Acceptance: reselect and edit text, reposition it on mobile, undo changes and reopen the saved project with text still editable.
+
+8. HEIC import and dependable format conversion
+Confidence: moderate/high for iPhone users; effort: medium.
+Support HEIC where a tested decoder can do so, correct orientation, JPEG/PNG/WebP import/export and helpful unsupported-format errors. Avoid promising every RAW format. Keep conversion inside the browser where feasible.
+Evidence: a Pixlr HEIC-import thread attracted corroborating reports across multiple years [20]; iLoveIMG documents HEIC conversion [3]. This is a compatibility blocker for an identifiable audience, not a universal feature preference.
+Acceptance: test current iPhone HEIC variants, portrait orientation, alpha, large dimensions and malformed files; unsupported files explain how to proceed.
+
+9. Simple real layers and multi-image composition
+Confidence: moderate/high for creators, lower for one-step utilities; effort: large.
+Add image/text/shape objects, reorder, hide/lock, duplicate, opacity and alignment. Keep the UI small; do not start by reproducing every Photoshop tool. Build this foundation before editable text/project formats if it is the chosen architecture.
+Evidence: a user explicitly seeks lightweight layers, selections and shapes for composites [19]. Photopea's saving documentation explains why editable project data matters [21]. PixelForge's single canvas cannot satisfy those editing expectations.
+Acceptance: combine two photos with text and a logo; edit objects independently; saved projects preserve order, position and editable content.
+
+10. Object cleanup and localized retouching
+Confidence: moderate; effort: large for automated quality, medium for clone/heal basics.
+Offer a clone/healing brush with adjustable radius and before/after comparison; consider optional object removal after quality and running costs are understood. Preserve the original and allow local corrections to be undone.
+Evidence: users seek apps to remove unwanted people/objects [22]. This evidence is weaker and more variable than the resizing/export/background workflow evidence, so it belongs later.
+Acceptance: test repeat textures, edges, faces and complex backgrounds; provide a manual fallback and do not promise flawless reconstruction.
+
+Implementation order and dependencies
+First release: production reliability, real CI/CD, truthful save messaging, working menus, import/export checks and deployment identity. These are prerequisites rather than additional ranked features.
+Next: precise sizing + export controls; begin durable document storage.
+Then: mobile workflow + editable text with a minimal object/layer model; background removal with refinement.
+Then: batch recipes + HEIC conversion, ordering these earlier if audience testing shows sellers or iPhone users dominate.
+Later: broader layer editing and object cleanup. A minimal layer foundation may ship earlier as a dependency without exposing a complex panel.
+Defer large template marketplaces, collaborative cloud workspaces, generative backgrounds, face beautification, professional RAW development and many extra filters until PixelForge users demonstrate demand. AI enthusiasm is not evidence that mandatory AI improves this app; Photopea has a request to disable generative features [23].
+
+Community proposition
+“Open a photo, make the required change, download a usable result.” Keep basic export usable without an account or surprise watermark. Make privacy claims match actual network behavior. Present the starting tasks as Resize, Compress, Remove background and Annotate, with an editor available for deeper work. This positioning is an inference from the evidence, not a measured market fact.
+
+How to validate demand for this particular app
+Interview a small mixed group of sellers, casual mobile users and creators about their last real image task, then observe them attempting it in PixelForge. Record task completion, time to successful export, output defects, and repeated use. A useful initial usability sample is 12–20 people, but it is not statistically representative.
+Offer optional in-app task/feature feedback. If privacy-respecting analytics are introduced, record tool selection and export success without image contents, filenames or personal metadata. Segment mobile/desktop and seller/casual tasks. Compare actual completion and return use before expanding expensive features. Re-rank after several weeks or sufficient traffic; do not report percentages from tiny samples as population demand.
+
+Sources (direct requests except where marked official documentation)
+[1] https://www.reddit.com/r/productphotography/comments/16pbuch/how_do_you_edit_product_photos_in_bulk/
+[2] https://www.reddit.com/r/photopea/comments/18yrfk7
+[3] Official: https://www.iloveimg.com/help/documentation
+[4] https://www.reddit.com/r/software/comments/18uglvu
+[5] https://www.reddit.com/r/pixlr/comments/yr0ynw
+[6] https://www.reddit.com/r/pixlr/comments/grf9ri
+[7] https://www.reddit.com/r/software/comments/1qme1j1/need_help_with_finding_a_free_bulk_image/
+[8] https://www.reddit.com/r/pixlr/comments/18i9yps
+[9] https://www.reddit.com/r/software/comments/ynxqom
+[10] https://www.reddit.com/r/software/comments/1n02eh0/is_there_any_free_background_remover_that_doesnt/
+[11] Official issue tracker: https://github.com/photopea/photopea/issues/760
+[12] https://community.adobe.com/questions-719/photoshop-express-deleting-images-when-auto-saved-1211342
+[13] https://www.reddit.com/r/photopea/comments/vj0qpk
+[14] https://www.reddit.com/r/photopea/comments/14cp8y3
+[15] https://www.reddit.com/r/ios/comments/1n2r9a3/any_goodeasyfast_way_to_add_text_to_photos/
+[16] https://www.reddit.com/r/pixlr/comments/1tncgjb/did_batch_editor_just_got_removed/
+[17] Official: https://help.photoroom.com/en/articles/11784338-what-is-the-batch-feature
+[18] https://www.reddit.com/r/photopea/comments/118e2po
+[19] https://www.reddit.com/r/software/comments/1agadoz
+[20] https://www.reddit.com/r/pixlr/comments/t4m32g/photo_not_uploading/
+[21] Official: https://www.photopea.com/learn/opening-saving
+[22] https://www.reddit.com/r/iphone/comments/116oyvz/best_app_to_remove_people_objects_in_background/
+[23] Official issue tracker: https://github.com/photopea/photopea/issues/8291
