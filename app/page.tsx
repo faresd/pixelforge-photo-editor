@@ -114,6 +114,7 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'ellipse', label: 'Ellipse', icon: Shapes, key: 'O' },
   { id: 'select', label: 'Select', icon: Crop, key: 'M' },
   { id: 'ellipse-select', label: 'Elliptical marquee', icon: Shapes, key: 'M' },
+  { id: 'lasso', label: 'Lasso', icon: WandSparkles, key: 'L' },
 ];
 const FILTERS = [
   ['Original', 'none', '#315277', '#d59b6c'],
@@ -171,6 +172,7 @@ type Gesture = {
   source?: HTMLCanvasElement;
   pending?: Promise<void>;
   queued?: { x: number; y: number }[];
+  points?: { x: number; y: number }[];
   moved: boolean;
 };
 
@@ -314,6 +316,12 @@ export default function Home() {
         0,
         Math.PI * 2,
       );
+      context.fill();
+    } else if (f.selection.shape === 'polygon' && f.selection.points) {
+      context.beginPath();
+      context.moveTo(f.selection.points[0].x, f.selection.points[0].y);
+      for (const point of f.selection.points.slice(1)) context.lineTo(point.x, point.y);
+      context.closePath();
       context.fill();
     } else context.fillRect(f.selection.x, f.selection.y, f.selection.w, f.selection.h);
     if (f.selection.feather > 0) {
@@ -845,8 +853,8 @@ export default function Home() {
       if (added) setNotice('Editable text layer added');
       return;
     }
-    if (tool === 'select' || tool === 'ellipse-select') {
-      gesture.current = { tool, start: p, last: p, frame: f, moved: false };
+    if (tool === 'select' || tool === 'ellipse-select' || tool === 'lasso') {
+      gesture.current = { tool, start: p, last: p, frame: f, moved: false, points: [p] };
       return;
     }
     if (tool === 'rectangle' || tool === 'ellipse' || tool === 'crop') {
@@ -1004,6 +1012,22 @@ export default function Home() {
         } else x.strokeRect(left, top, width, height);
         x.restore();
       });
+    } else if (g.tool === 'lasso') {
+      const points = g.points || (g.points = [g.start]);
+      if (Math.hypot(p.x - g.last.x, p.y - g.last.y) >= 2) points.push(p);
+      void paint(g.frame).then(() => {
+        if (gesture.current !== g) return;
+        const x = canvas.current!.getContext('2d')!;
+        x.save();
+        x.strokeStyle = '#fff';
+        x.lineWidth = 2;
+        x.setLineDash([8, 5]);
+        x.beginPath();
+        x.moveTo(points[0].x, points[0].y);
+        for (const point of points.slice(1)) x.lineTo(point.x, point.y);
+        x.stroke();
+        x.restore();
+      });
     } else if (g.tool === 'crop') {
       const c = canvas.current!,
         x = c.getContext('2d')!;
@@ -1085,6 +1109,15 @@ export default function Home() {
       if (w > 0 && h > 0)
         setSelection({ shape: g.tool === 'ellipse-select' ? 'ellipse' : 'rectangle', x, y, w, h, feather: 0, inverted: false });
       else void paint(f);
+    } else if (g.tool === 'lasso' && g.moved) {
+      const points = g.points || [];
+      if (points.length >= 3) {
+        const x = Math.max(0, Math.min(...points.map((point) => point.x))),
+          y = Math.max(0, Math.min(...points.map((point) => point.y))),
+          right = Math.min(f.w, Math.max(...points.map((point) => point.x))),
+          bottom = Math.min(f.h, Math.max(...points.map((point) => point.y)));
+        setSelection({ shape: 'polygon', x, y, w: right - x, h: bottom - y, points, feather: 0, inverted: false });
+      } else void paint(f);
     } else if (g.tool === 'crop' && g.moved) {
       const left = Math.max(0, Math.floor(Math.min(p.x, g.start.x))),
         top = Math.max(0, Math.floor(Math.min(p.y, g.start.y))),

@@ -490,6 +490,33 @@ test('elliptical marquee persists its geometry and can be inverted', async ({
   expect(frame.selection.h).toBeGreaterThan(1);
 });
 
+test('lasso selection stores polygon points and survives project round-trip', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: 'Lasso tool', exact: true }).click();
+  const canvas = page.getByTestId('editor-canvas');
+  const box = (await canvas.boundingBox())!;
+  const points = [
+    [0.2, 0.2],
+    [0.7, 0.25],
+    [0.6, 0.7],
+    [0.25, 0.65],
+  ];
+  await page.mouse.move(box.x + box.width * points[0][0], box.y + box.height * points[0][1]);
+  await page.mouse.down();
+  for (const [x, y] of points.slice(1))
+    await page.mouse.move(box.x + box.width * x, box.y + box.height * y, { steps: 3 });
+  await page.mouse.up();
+  const exported = await project(page),
+    frame = exported.value.history[exported.value.index];
+  expect(frame.selection.shape).toBe('polygon');
+  expect(frame.selection.points.length).toBeGreaterThanOrEqual(3);
+  expect(frame.selection.w).toBeGreaterThan(1);
+  await page.reload();
+  const reloaded = await project(page);
+  expect(reloaded.value.history[reloaded.value.index].selection.shape).toBe('polygon');
+});
+
 test('a stale tab cannot overwrite or discard newer work and can save its own local copy', async ({
   page,
   context,

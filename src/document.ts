@@ -72,13 +72,14 @@ export type Layer = Common &
       }
   );
 export type Selection = {
-  shape: 'rectangle' | 'ellipse';
+  shape: 'rectangle' | 'ellipse' | 'polygon';
   x: number;
   y: number;
   w: number;
   h: number;
   feather: number;
   inverted: boolean;
+  points?: { x: number; y: number }[];
 };
 export type Frame = {
   w: number;
@@ -251,7 +252,7 @@ export function validateFrame(
       frameWidth = Number(value.w),
       frameHeight = Number(value.h);
     if (
-      !['rectangle', 'ellipse'].includes(String(s.shape)) ||
+      !['rectangle', 'ellipse', 'polygon'].includes(String(s.shape)) ||
       !number(s.x, 0, frameWidth) ||
       !number(s.y, 0, frameHeight) ||
       !number(s.w, 1, frameWidth) ||
@@ -259,7 +260,17 @@ export function validateFrame(
       Number(s.x) + Number(s.w) > frameWidth ||
       Number(s.y) + Number(s.h) > frameHeight ||
       !number(s.feather, 0, 1000) ||
-      typeof s.inverted !== 'boolean'
+      typeof s.inverted !== 'boolean' ||
+      (s.shape === 'polygon' &&
+        (!Array.isArray(s.points) ||
+          s.points.length < 3 ||
+          s.points.length > 10000 ||
+          s.points.some(
+            (point) =>
+              !record(point) ||
+              !number(point.x, 0, frameWidth) ||
+              !number(point.y, 0, frameHeight),
+          )))
     )
       return fail();
   }
