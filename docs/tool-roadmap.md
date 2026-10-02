@@ -41,6 +41,22 @@ The active implementation increment adds Hand, Zoom, Eyedropper, Paint Bucket, G
 5. CI must run the desktop/mobile browser suite before production promotion; live deployment evidence must identify the tested commit.
 6. AI, cloud asset sources and large-image processing remain opt-in and require an explicit privacy, quota and performance contract.
 
+## Implementation schedule
+
+Work proceeds in dependency-ordered increments. A phase is complete only when its tools, persistence, desktop/mobile acceptance tests and live revision evidence satisfy the delivery gates above.
+
+| Phase | Scope | Exit criteria |
+| --- | --- | --- |
+| 0 — Foundation | Toolbar registry, shortcuts, responsive one/two-column layout, tool state, undo/redo, local draft recovery, test fixtures | Every registered tool has an accessible control; reload/bookmark recovery and CI smoke suite are green |
+| 1 — Core navigation and raster basics | Move, Hand, Zoom, Eyedropper, Paint Bucket, Gradient, Brush, Pencil, Eraser, Color Replacement | Representative pixel tests, keyboard/touch gestures, undo and draft round-trip for each tool |
+| 2 — Selection and crop | Rectangular/Elliptical/row/column marquee, Lasso family, Magic Wand, Quick/Object selection, Crop, Perspective Crop, Slice family, Quick Mask | Selection algebra and feathering are deterministic; masks and slices survive reload/export |
+| 3 — Retouch and paint depth | Clone/Pattern Stamp, Healing/Spot Healing/Remove, Patch, Content-Aware Move, Red Eye, Mixer Brush, History Brush, Art History, Blur/Sharpen/Smudge, Dodge/Burn/Sponge | Before/after fixtures, bounded memory, source preservation, explicit undo and mobile pressure fallback |
+| 4 — Vector and typography | Pen family, Path/Direct Selection, parametric shapes, line/custom shape, vertical type, type masks, alignment and spacing | Paths, anchors, shape parameters and text metrics round-trip; fill/stroke and mask pixels match fixtures |
+| 5 — Workspace and asset workflows | Foreground/background wells, color swap/defaults, screen modes, toolbar customization, device/drop intake, export presets | Preferences persist safely, Escape recovers fullscreen, accessibility checks pass, export is deterministic |
+| 6 — Intelligent and scale features | Opt-in object/quick inference, remote asset providers, generation, large-image tiling, performance instrumentation | Privacy/quota disclosure, offline fallback, performance budgets and provider failure tests are documented |
+
+The current increment is Phase 1 navigation/sampling/fill/retouch groundwork. Phase 2 starts only after the Phase 1 browser suite and live deployment evidence are green. Phases 3–6 are intentionally sequenced after the selection, mask, path and persistence contracts they depend on; this keeps the editor extensible without presenting unfinished Photoshop-equivalent controls as complete.
+
 ## Reference extraction notes
 
 The first reference groups tools into Move and Selection, Crop and Slice, Measurement, Retouching and Painting, Drawing and Type, Navigation, toolbar editing, colors, Quick Mask, screen modes and image generation. The second reference names the individual tools and shortcuts listed above. Tool names are recorded for planning and compatibility vocabulary; Pixel's UI remains free, anonymous by default and locally private.
