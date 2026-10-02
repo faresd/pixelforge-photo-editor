@@ -26,7 +26,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Browser tests cover desktop and mobile menus, image import, transformations, undo, text controls, and PNG downloads. Lint/type checking cover the active application, build configuration and tests; unused generated UI components are outside the application entry graph.
+Browser tests cover desktop and mobile menus, image import, transformations, undo, text controls, PNG downloads, precision resizing, project-file round trips, draft recovery and private cloud library flows. Lint/type checking cover the active application, build configuration and tests; unused generated UI components are outside the application entry graph.
 
 ## Deployment
 
@@ -35,5 +35,7 @@ See [deployment operations](docs/deployment.md). Pull requests run checks. A tes
 Draft pixels, settings and undo history autosave in IndexedDB. Document bookmarks restore work in the same browser; clearing browser data can remove local work. The home page promotes available tools and lets users continue their last draft. Discard draft removes the current local document and returns home.
 
 Optional sign-in reuses the existing Marketplace session. The private project library supports explicit cloud save/update, reopen and removal; anonymous images never upload automatically. Cloud storage starts at 30 projects, 16 MB per project and 256 MB per account. New edits autosave locally; use Update cloud project to sync them across devices.
+
+Image > Resize image supports exact dimensions and locked proportions. File > Download project file saves pixels, settings and undo history in a portable .pixelforge file; Open project restores it as a separate draft. Image imports preserve their resolution up to 16 megapixels (larger images are rejected explicitly), and history is bounded to 24 snapshots or approximately 32 MB of encoded images.
 
 Professional layers, masks, selections, HEIC and batch editing remain future stages described in [product scope](docs/product-scope.md).
