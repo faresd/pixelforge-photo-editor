@@ -14,6 +14,7 @@ import {
   Hand,
   Pipette,
   PaintBucket,
+  Pencil,
   MousePointer2,
   Redo2,
   RotateCcw,
@@ -113,6 +114,7 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'heal', label: 'Healing', icon: WandSparkles, key: 'J' },
   { id: 'crop', label: 'Crop', icon: Crop, key: 'C' },
   { id: 'brush', label: 'Brush', icon: Brush, key: 'B' },
+  { id: 'pencil', label: 'Pencil', icon: Pencil, key: 'P' },
   { id: 'eraser', label: 'Eraser', icon: Eraser, key: 'E' },
   { id: 'text', label: 'Text', icon: Type, key: 'T' },
   { id: 'rectangle', label: 'Shape', icon: Shapes, key: 'R' },
@@ -917,7 +919,7 @@ export default function Home() {
       setNotice('Select a visible, unlocked layer');
       return;
     }
-    if ((tool === 'brush' || tool === 'eraser') && layer.kind !== 'raster') {
+    if ((tool === 'brush' || tool === 'pencil' || tool === 'eraser') && layer.kind !== 'raster') {
       setNotice('Add a paint layer, or rasterize this layer before painting');
       return;
     }
@@ -931,7 +933,7 @@ export default function Home() {
       queued: [p],
     } as Gesture;
     gesture.current = g;
-    if (tool === 'brush' || tool === 'eraser') {
+    if (tool === 'brush' || tool === 'pencil' || tool === 'eraser') {
       g.pending = (async () => {
         try {
           const buffer = await renderFrame(
@@ -956,7 +958,7 @@ export default function Home() {
             tool === 'eraser' ? 'destination-out' : 'source-over';
           const pointPressure = pressure(e),
             radius = Math.max(1, (size * pointPressure) / 2),
-            softness = Math.max(0, Math.min(1, (100 - hardness) / 100));
+            softness = tool === 'pencil' ? 0 : Math.max(0, Math.min(1, (100 - hardness) / 100));
           x.globalAlpha = (brushOpacity / 100) * pointPressure;
           x.filter = softness ? `blur(${Math.max(0.1, radius * softness)}px)` : 'none';
           x.beginPath();
@@ -993,7 +995,7 @@ export default function Home() {
       g.last = p;
       return;
     }
-    if ((g.tool === 'brush' || g.tool === 'eraser') && !g.buffer)
+    if ((g.tool === 'brush' || g.tool === 'pencil' || g.tool === 'eraser') && !g.buffer)
       g.queued?.push(p);
     if ((g.tool === 'clone' || g.tool === 'heal') && g.buffer && g.source && cloneSource) {
       const x = g.buffer.getContext('2d')!, radius = Math.max(4, (size * pressure(e)) / 2);
@@ -1020,12 +1022,12 @@ export default function Home() {
           l.id === g.layer!.id ? { ...l, matrix } : l,
         ),
       });
-    } else if ((g.tool === 'brush' || g.tool === 'eraser') && g.buffer && g.layer) {
+    } else if ((g.tool === 'brush' || g.tool === 'pencil' || g.tool === 'eraser') && g.buffer && g.layer) {
       const x = g.buffer.getContext('2d')!;
       x.strokeStyle = color;
       x.globalAlpha = (brushOpacity / 100) * pressure(e);
-      x.filter = hardness < 100 ? `blur(${Math.max(0.1, (size / 2) * (100 - hardness) / 100)}px)` : 'none';
-      x.lineWidth = size * pressure(e);
+      x.filter = g.tool === 'pencil' || hardness >= 100 ? 'none' : `blur(${Math.max(0.1, (size / 2) * (100 - hardness) / 100)}px)`;
+      x.lineWidth = g.tool === 'pencil' ? Math.max(1, Math.round(size * pressure(e))) : size * pressure(e);
       x.lineCap = 'round';
       x.lineJoin = 'round';
       x.beginPath();
@@ -1126,10 +1128,10 @@ export default function Home() {
         ),
       });
       if (changed) setNotice('Layer moved');
-    } else if ((g.tool === 'brush' || g.tool === 'eraser') && g.buffer && g.layer) {
+    } else if ((g.tool === 'brush' || g.tool === 'pencil' || g.tool === 'eraser') && g.buffer && g.layer) {
       const x = g.buffer.getContext('2d')!;
       x.globalAlpha = (brushOpacity / 100) * pressure(e);
-      x.filter = hardness < 100 ? `blur(${Math.max(0.1, (size / 2) * (100 - hardness) / 100)}px)` : 'none';
+      x.filter = g.tool === 'pencil' || hardness >= 100 ? 'none' : `blur(${Math.max(0.1, (size / 2) * (100 - hardness) / 100)}px)`;
       x.beginPath();
       x.moveTo(g.last.x, g.last.y);
       x.lineTo(p.x, p.y);
@@ -1661,7 +1663,7 @@ export default function Home() {
               </button>
             </div>
           </section>
-          {(tool === 'brush' || tool === 'eraser' || tool === 'clone' || tool === 'heal' || tool === 'rectangle' || tool === 'ellipse') && (
+          {(tool === 'brush' || tool === 'pencil' || tool === 'eraser' || tool === 'clone' || tool === 'heal' || tool === 'rectangle' || tool === 'ellipse') && (
             <section className="panel">
               <Title icon={Brush} text="Tool options" />
               <Slider
@@ -1672,16 +1674,18 @@ export default function Home() {
                 set={setSize}
                 suffix="px"
               />
-              {(tool === 'brush' || tool === 'eraser' || tool === 'clone' || tool === 'heal') && (
+              {(tool === 'brush' || tool === 'pencil' || tool === 'eraser' || tool === 'clone' || tool === 'heal') && (
                 <>
-                  <Slider
-                    label="Hardness"
-                    value={hardness}
-                    min={1}
-                    max={100}
-                    set={setHardness}
-                    suffix="%"
-                  />
+                  {tool !== 'pencil' && (
+                    <Slider
+                      label="Hardness"
+                      value={hardness}
+                      min={1}
+                      max={100}
+                      set={setHardness}
+                      suffix="%"
+                    />
+                  )}
                   <Slider
                     label="Opacity"
                     value={brushOpacity}

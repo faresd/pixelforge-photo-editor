@@ -13,7 +13,7 @@ This matrix distills the two user-provided toolbar references into an implementa
 | Sampling and measurement | Eyedropper, Color Sampler, Ruler, Note, Count (I) | Eyedropper is implemented next; add multi-sample color table, ruler overlays and private notes | Sampled RGB/alpha exactness, non-destructive overlays, export omission rules |
 | Crop and slicing | Crop, Perspective Crop, Slice, Slice Select (C) | Crop exists; add perspective transform and export slices as separate assets | Corner transform pixel comparison, non-overwrite export, undo and mobile controls |
 | Retouching | Spot Healing, Remove, Healing Brush, Patch, Content-Aware Move, Red Eye (J) | Add clone/heal brush primitives, then patch and constrained content-aware operations | Before/after fixtures, source preservation, bounded memory, explicit undo |
-| Painting | Brush, Pencil, Color Replacement, Mixer Brush (B); History Brush and Art History Brush (Y) | Brush/eraser exist; add hardness/opacity, pencil and color replacement; history variants require command snapshots | Brush-size/hardness/opacity tests, pointer-pressure fallback, source asset retention |
+| Painting | Brush, Pencil, Color Replacement, Mixer Brush (B); History Brush and Art History Brush (Y) | Brush/eraser/pencil exist with persisted size/opacity; add color replacement; history variants require command snapshots | Brush/pencil-size/hardness/opacity tests, pointer-pressure fallback, source asset retention |
 | Stamping | Clone Stamp, Pattern Stamp (S) | Add clone stamp with explicit source point; pattern stamp after reusable tile assets | Source-offset determinism, edge clipping, undo and project reload |
 | Fill and gradients | Gradient, Paint Bucket (G) | Add linear/radial gradients and contiguous fill with tolerance | Exact representative pixels, alpha/transparency, tolerance boundaries, undo |
 | Blur and tonal retouch | Blur, Sharpen, Smudge; Dodge, Burn, Sponge; Adjustment Brush | Existing nondestructive blur; add sharpen/noise and brush-local tonal commands | Nondestructive adjustment serialization, bounded radius, before/after pixel fixtures |
@@ -28,7 +28,7 @@ This matrix distills the two user-provided toolbar references into an implementa
 
 ## Current Pixel baseline
 
-Implemented and deployed: Move, Crop, Brush, Eraser, Text, Rectangle, Ellipse, layer properties, nondestructive per-layer adjustments, rotate/flip, local/cloud project persistence, optional Cheaply session and production CI/CD. The supplied Cheaply artwork is used in the brand lockup beside an original cyan Pixel monogram.
+Implemented and deployed: Move, Crop, Brush, Pencil, Eraser, Text, Rectangle, Ellipse, layer properties, nondestructive per-layer adjustments, rotate/flip, local/cloud project persistence, optional Cheaply session and production CI/CD. The supplied Cheaply artwork is used in the brand lockup beside an original cyan Pixel monogram.
 
 The active implementation increment adds Hand, Zoom, Eyedropper, Paint Bucket, Gradient, Clone, Healing, rectangular/elliptical/lasso and Magic Wand color selection, selection composition (replace/add/subtract/intersect), inversion, feather control and alpha-correct nondestructive masks. Each tool must have a dedicated desktop and mobile browser acceptance test before merge. Pixel does not claim Photoshop equivalence while the remaining families are incomplete.
 

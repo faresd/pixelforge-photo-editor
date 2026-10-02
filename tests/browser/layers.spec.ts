@@ -277,6 +277,55 @@ test('brush hardness and opacity persist across a raster stroke', async ({
   await expect(page.getByLabel('Opacity', { exact: true })).toHaveValue('55');
 });
 
+test('pencil paints a hard raster stroke and persists its tool state', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
+  await page.getByRole('button', { name: 'Pencil tool', exact: true }).click();
+  await page.getByLabel('Size', { exact: true }).fill('8');
+  await page.getByLabel('Opacity', { exact: true }).fill('70');
+  const initial = await project(page),
+    initialFrame = initial.value.history[initial.value.index],
+    initialLayer = initialFrame.layers[initialFrame.layers.length - 1],
+    canvas = page.getByTestId('editor-canvas'),
+    box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.25, box.y + box.height * 0.5);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.75, box.y + box.height * 0.5, { steps: 5 });
+  await page.mouse.up();
+  await saved(page);
+  const exported = await project(page),
+    frame = exported.value.history[exported.value.index],
+    painted = frame.layers[frame.layers.length - 1];
+  expect(exported.value.settings).toMatchObject({ tool: 'pencil', size: 8, brushOpacity: 70 });
+  expect(painted.kind).toBe('raster');
+  expect(painted.asset).not.toBe(initialLayer.kind === 'raster' ? initialLayer.asset : undefined);
+  const [centerAlpha, outsideAlpha] = await page.evaluate(
+    async ({ url, w, h }) => {
+      const image = new Image();
+      image.src = url;
+      await image.decode();
+      const sample = document.createElement('canvas');
+      sample.width = w;
+      sample.height = h;
+      const context = sample.getContext('2d')!;
+      context.drawImage(image, 0, 0);
+      return [
+        context.getImageData(Math.floor(w / 2), Math.floor(h / 2), 1, 1).data[3],
+        context.getImageData(Math.floor(w / 2), Math.floor(h / 2) + 20, 1, 1).data[3],
+      ];
+    },
+    { url: exported.value.assets[painted.asset].url, w: exported.value.assets[painted.asset].w, h: exported.value.assets[painted.asset].h },
+  );
+  expect(centerAlpha).toBeGreaterThan(0);
+  expect(outsideAlpha).toBe(0);
+  expect(exported.value.assets[painted.asset]).toBeTruthy();
+  await page.reload();
+  await expect(page.getByLabel('Opacity', { exact: true })).toHaveValue('70');
+  const roundTripped = await project(page);
+  expect(roundTripped.value.settings.tool).toBe('pencil');
+});
+
 test('layer position, blending and visibility produce exact composite pixels', async ({
   page,
 }) => {

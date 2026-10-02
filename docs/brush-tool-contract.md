@@ -7,7 +7,7 @@ immutable PNG asset and remains undoable.
 
 ## Current implementation audit
 
-The editor exposes `size`, `hardness` and `brushOpacity` for Brush, Eraser,
+The editor exposes `size`, `hardness` and `brushOpacity` for Brush, Pencil, Eraser,
 Clone and Healing. Each stroke uses a full-canvas raster buffer; mouse events
 use a pressure fallback of `1`, while pen and touch pressure currently scale
 both the stamp diameter and opacity. Brush and Eraser use Canvas 2D blur to
@@ -15,7 +15,8 @@ approximate a soft edge, and Clone/Healing retain the explicit source point.
 Healing adds a fixed `0.65` blend and one-pixel blur. A pointer move publishes
 a preview and pointer-up commits one PNG asset to the selected raster layer.
 
-This satisfies persistence, mouse/pen/touch fallback and basic configurable
+Pencil uses an integer hard edge and hides the softness control while sharing
+the same undoable raster path. This satisfies persistence, mouse/pen/touch fallback and basic configurable
 opacity/hardness coverage. The blur-based softness and always-on pressure
 mapping remain intentionally bounded approximations until the shared radial
 stamp primitive and opt-in pressure controls are implemented.
