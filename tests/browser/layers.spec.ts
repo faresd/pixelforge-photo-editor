@@ -346,6 +346,8 @@ test('color replacement changes sampled pixels and persists tolerance', async ({
     buffer: Buffer.from(fixture, 'base64'),
   });
   await expect(page.getByLabel('Document name')).toHaveValue('color-replace-fixture');
+  await page.getByLabel('Layer X', { exact: true }).fill('4');
+  await page.getByLabel('Layer X', { exact: true }).press('Enter');
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
   await page.getByRole('button', { name: 'Color Replace tool', exact: true }).click();
   await page.getByLabel('Drawing color', { exact: true }).fill('#00ff4c');
@@ -360,6 +362,10 @@ test('color replacement changes sampled pixels and persists tolerance', async ({
   await page.mouse.move(box.x + box.width * 0.4, box.y + box.height * 0.5, { steps: 4 });
   await page.mouse.up();
   await expect(page.getByText('Color replacement applied; undo restores the original pixels', { exact: true })).toBeVisible();
+  const visibleSample = await page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) =>
+    Array.from(canvas.getContext('2d')!.getImageData(10, 10, 1, 1).data),
+  );
+  expect(visibleSample[1]).toBeGreaterThan(220);
   await saved(page);
   const exported = await project(page),
     frame = exported.value.history[exported.value.index],

@@ -20,12 +20,64 @@ test('menus, transformations, undo and PNG export work', async ({ page }) => {
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Undo/ }).click();
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '1200');
-  const downloaded = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Export', exact: true }).click();
+  const downloaded = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download image', exact: true }).click();
   const download = await downloaded;
   expect(download.suggestedFilename()).toBe('untitled-transparent.png');
   expect(await download.failure()).toBeNull();
   expect(errors).toEqual([]);
+});
+
+test('PNG JPEG and WebP exports report bytes, quality and persist preferences', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Saved on this device');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
+  const readSignature = async (format: 'png' | 'jpeg' | 'webp') => {
+    await page.getByRole('button', { name: 'Export', exact: true }).click();
+    await page.getByLabel('Export format').selectOption(format);
+    if (format === 'jpeg') await expect(page.getByText('Transparent areas become white.', { exact: false })).toBeVisible();
+    const bytes = page.getByLabel('Encoded file size');
+    await expect(bytes).toHaveAttribute('data-bytes', /\d+/);
+    const pending = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Download image', exact: true }).click();
+    const path = await (await pending).path();
+    const buffer = await (await import('node:fs/promises')).readFile(path!);
+    const encodedBytes = Number(await bytes.getAttribute('data-bytes'));
+    await page.getByRole('button', { name: 'Close', exact: true }).click();
+    return { buffer, bytes: encodedBytes };
+  };
+  const png = await readSignature('png');
+  expect(png.buffer.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');
+  const jpeg = await readSignature('jpeg');
+  expect(jpeg.buffer.subarray(0, 2).toString('hex')).toBe('ffd8');
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  await page.getByLabel('Export format').selectOption('webp');
+  await page.getByLabel('Export quality').fill('20');
+  const webpBytes = page.getByLabel('Encoded file size');
+  await expect(webpBytes).toHaveAttribute('data-bytes', /\d+/);
+  const low = Number(await webpBytes.getAttribute('data-bytes'));
+  await page.getByLabel('Export quality').fill('95');
+  await expect(webpBytes).toHaveAttribute('data-bytes', /\d+/);
+  const high = Number(await webpBytes.getAttribute('data-bytes'));
+  expect(high).not.toBe(low);
+  await expect(page.getByText('WebP uses lossy color compression and preserves transparency.', { exact: false })).toBeVisible();
+  const pending = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download image', exact: true }).click();
+  const webpPath = await (await pending).path();
+  const webp = await (await import('node:fs/promises')).readFile(webpPath!);
+  expect(webp.subarray(0, 4).toString()).toBe('RIFF');
+  expect(webp.subarray(8, 12).toString()).toBe('WEBP');
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Saved on this device');
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  await expect(page.getByLabel('Export format')).toHaveValue('webp');
+  await expect(page.getByLabel('Export quality')).toHaveValue('95');
+  await expect(page.getByLabel('Encoded file size')).toHaveAttribute('data-bytes', /\d+/);
 });
 
 test('imports a local image and exposes text controls', async ({ page }) => {

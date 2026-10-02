@@ -57,13 +57,14 @@ import {
   colorSelectMask,
   commonLayer,
   decodeAsset,
-  identity,
+  inversePoint,
+  localSize,
   neutral,
   rasterFrame,
   replaceColorStroke,
   renderFrame,
   surface,
-  transformFrame,
+  transformFrameWithMasks,
   floodFill,
   type Adjustments,
   type Layer,
@@ -76,6 +77,9 @@ import {
 import { useDocument } from '../src/useDocument';
 import LayersPanel from '../src/LayersPanel';
 import ResizeDialog from '../src/ResizeDialog';
+import ExportDialog from '../src/ExportDialog';
+import { type ExportFormat } from '../src/export';
+import { renderSelection } from '../src/selections';
 import { BrandLockup } from '../src/Brand';
 type MenuName = 'File' | 'Edit' | 'Image' | 'Filter' | 'View';
 type Command =
@@ -87,6 +91,7 @@ type Command =
   | 'open'
   | 'png'
   | 'jpg'
+  | 'webp'
   | 'undo'
   | 'redo'
   | 'reset'
@@ -151,7 +156,8 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'New transparent document', command: 'new-transparent' },
     { label: 'Open image…', shortcut: 'Ctrl+O', command: 'open' },
     { label: 'Export as PNG', shortcut: 'Ctrl+S', command: 'png' },
-    { label: 'Export as JPG', command: 'jpg' },
+    { label: 'Export as JPEG', command: 'jpg' },
+    { label: 'Export as WebP', command: 'webp' },
   ],
   Edit: [
     { label: 'Undo', shortcut: 'Ctrl+Z', command: 'undo' },
@@ -228,10 +234,13 @@ export default function Home() {
     [brushOpacity, setBrushOpacity] = useState(100),
     [hardness, setHardness] = useState(100),
     [colorTolerance, setColorTolerance] = useState(24),
+    [exportFormat, setExportFormat] = useState<ExportFormat>('png'),
+    [exportQuality, setExportQuality] = useState(92),
     [text, setText] = useState('Your text'),
     [fontSize, setFontSize] = useState(56);
   const [cloneSource, setCloneSource] = useState<{ x: number; y: number } | null>(null);
   const [activeMenu, setActiveMenu] = useState<MenuName | null>(null),
+    [exporting, setExporting] = useState<{ frame: Frame; assets: typeof assets.current; name: string } | null>(null),
     [drag, setDrag] = useState(false),
     [resizing, setResizing] = useState<{
       width: number;
@@ -264,6 +273,8 @@ export default function Home() {
     brushOpacity,
     hardness,
     colorTolerance,
+    exportFormat,
+    exportQuality,
     text,
     fontSize,
     ...neutral,
@@ -284,6 +295,8 @@ export default function Home() {
     setBrushOpacity(s.brushOpacity ?? 100);
     setHardness(s.hardness ?? 100);
     setColorTolerance(s.colorTolerance ?? 24);
+    setExportFormat(s.exportFormat ?? 'png');
+    setExportQuality(s.exportQuality ?? 92);
     setText(s.text);
     setFontSize(s.fontSize);
   };
@@ -356,35 +369,7 @@ export default function Home() {
       setNotice('Unlock this layer before editing its mask');
       return;
     }
-    const mask = surface(f.w, f.h), context = mask.getContext('2d')!;
-    if (f.selection.mask) {
-      context.drawImage(await decodeAsset(assets.current[f.selection.mask]), 0, 0);
-    }
-    const parts = f.selection.mask ? [] : (f.selection.parts?.length ? f.selection.parts : [selectionPart(f.selection)]);
-    if (!f.selection.mask) context.clearRect(0, 0, f.w, f.h);
-    for (const part of parts) {
-      const shape = surface(f.w, f.h), shapeContext = shape.getContext('2d')!;
-      shapeContext.fillStyle = '#fff';
-      if (f.selection.feather > 0) shapeContext.filter = `blur(${f.selection.feather}px)`;
-      if (part.shape === 'ellipse') {
-        shapeContext.beginPath();
-        shapeContext.ellipse(part.x + part.w / 2, part.y + part.h / 2, part.w / 2, part.h / 2, 0, 0, Math.PI * 2);
-        shapeContext.fill();
-      } else if (part.shape === 'polygon' && part.points) {
-        shapeContext.beginPath();
-        shapeContext.moveTo(part.points[0].x, part.points[0].y);
-        for (const point of part.points.slice(1)) shapeContext.lineTo(point.x, point.y);
-        shapeContext.closePath();
-        shapeContext.fill();
-      } else shapeContext.fillRect(part.x, part.y, part.w, part.h);
-      context.globalCompositeOperation = part.operation === 'subtract' ? 'destination-out' : part.operation === 'intersect' ? 'destination-in' : 'source-over';
-      context.drawImage(shape, 0, 0);
-    }
-    if (f.selection.inverted) {
-      const pixels = context.getImageData(0, 0, f.w, f.h);
-      for (let i = 3; i < pixels.data.length; i += 4) pixels.data[i] = 255 - pixels.data[i];
-      context.putImageData(pixels, 0, 0);
-    }
+    const mask = await renderSelection(f.selection, f.w, f.h, assets.current);
     const maskId = addAsset(assets.current, mask);
     if (editLayer({ mask: maskId })) setNotice('Nondestructive layer mask created');
   };
@@ -516,7 +501,7 @@ export default function Home() {
       assets: { ...assets.current },
       index: index.current,
       name,
-      settings: { tool, zoom, color, size, brushOpacity, hardness, colorTolerance, text, fontSize, ...neutral },
+      settings: { tool, zoom, color, size, brushOpacity, hardness, colorTolerance, exportFormat, exportQuality, text, fontSize, ...neutral },
     };
     saveQueue.current = saveQueue.current
       .then(async () => {
@@ -557,6 +542,8 @@ export default function Home() {
     brushOpacity,
     hardness,
     colorTolerance,
+    exportFormat,
+    exportQuality,
     text,
     fontSize,
     history,
@@ -638,9 +625,16 @@ export default function Home() {
       if (projectFile.current) projectFile.current.value = '';
     }
   };
-  const resizeImage = (w: number, h: number) => {
+  const resizeImage = async (w: number, h: number) => {
     const f = current();
-    if (!commit(transformFrame(f, [w / f.w, 0, 0, h / f.h, 0, 0], w, h)))
+    const next = await transformFrameWithMasks(
+      f,
+      [w / f.w, 0, 0, h / f.h, 0, 0],
+      assets.current,
+      w,
+      h,
+    );
+    if (!commit(next))
       return;
     setResizing(null);
     setNotice('Image resized; layers remain editable');
@@ -820,6 +814,8 @@ export default function Home() {
     const f = current(),
       layer = f.layers.find((l) => l.id === f.active)!,
       p = point(e);
+    const local =
+      layer.kind === 'raster' ? inversePoint(layer.matrix, p) || p : p;
     canvas.current!.setPointerCapture(e.pointerId);
     if (tool === 'zoom') {
       setZoom((value) => Math.min(140, value + 10));
@@ -842,13 +838,15 @@ export default function Home() {
         return;
       }
       try {
-        const buffer = await renderFrame({ ...f, layers: [layer] }, assets.current);
-        if (!floodFill(buffer, p.x, p.y, color)) {
+        const image = await decodeAsset(assets.current[layer.asset]),
+          buffer = surface(image.naturalWidth, image.naturalHeight);
+        buffer.getContext('2d')!.drawImage(image, 0, 0);
+        if (!floodFill(buffer, local.x, local.y, color)) {
           setNotice('No contiguous pixels matched at that point');
           return;
         }
         const asset = addAsset(assets.current, buffer);
-        if (commit({ ...f, layers: f.layers.map((item) => item.id === layer.id ? { ...item, asset, mask: undefined } : item) }))
+        if (commit({ ...f, layers: f.layers.map((item) => item.id === layer.id ? { ...item, asset } : item) }))
           setNotice('Area filled; undo restores the original pixels');
       } catch {
         setNotice('Could not fill this layer');
@@ -861,24 +859,26 @@ export default function Home() {
         return;
       }
       if (!cloneSource) {
-        setCloneSource(p);
+        setCloneSource(local);
         setNotice('Clone source set; drag on the image to paint it');
         return;
       }
       const g = {
         tool,
-        start: p,
-        last: p,
+        start: local,
+        last: local,
         frame: f,
         layer,
         moved: false,
       } as Gesture;
       gesture.current = g;
       g.pending = (async () => {
-        const source = await renderFrame({ ...f, layers: [layer] }, assets.current);
+        const sourceImage = await decodeAsset(assets.current[layer.asset]),
+          source = surface(sourceImage.naturalWidth, sourceImage.naturalHeight);
+        source.getContext('2d')!.drawImage(sourceImage, 0, 0);
         if (gesture.current !== g) return;
         g.source = source;
-        g.buffer = surface(f.w, f.h);
+        g.buffer = surface(source.width, source.height);
         g.buffer.getContext('2d')!.drawImage(source, 0, 0);
       })();
       await g.pending;
@@ -891,8 +891,8 @@ export default function Home() {
       }
       const g = {
         tool,
-        start: p,
-        last: p,
+        start: local,
+        last: local,
         frame: f,
         layer,
         moved: false,
@@ -900,41 +900,30 @@ export default function Home() {
       gesture.current = g;
       g.pending = (async () => {
         try {
-          const source = await renderFrame(
-            {
-              ...f,
-              layers: [
-                {
-                  ...layer,
-                  opacity: 1,
-                  blend: 'source-over',
-                  adjustments: { ...neutral },
-                },
-              ],
-            },
-            assets.current,
-          );
+          const sourceImage = await decodeAsset(assets.current[layer.asset]),
+            source = surface(sourceImage.naturalWidth, sourceImage.naturalHeight);
+          source.getContext('2d')!.drawImage(sourceImage, 0, 0);
           if (gesture.current !== g) return;
           const sample = source
             .getContext('2d')!
             .getImageData(
-              Math.max(0, Math.min(f.w - 1, Math.floor(p.x))),
-              Math.max(0, Math.min(f.h - 1, Math.floor(p.y))),
+              Math.max(0, Math.min(source.width - 1, Math.floor(local.x))),
+              Math.max(0, Math.min(source.height - 1, Math.floor(local.y))),
               1,
               1,
             ).data;
           g.source = source;
           g.replaceTarget = [sample[0], sample[1], sample[2], sample[3]];
-          g.buffer = surface(f.w, f.h);
+          g.buffer = surface(source.width, source.height);
           g.buffer.getContext('2d')!.drawImage(source, 0, 0);
           replaceColorStroke(
             source,
             g.buffer,
             g.replaceTarget,
-            p.x,
-            p.y,
-            p.x,
-            p.y,
+            local.x,
+            local.y,
+            local.x,
+            local.y,
             color,
             size,
             colorTolerance,
@@ -954,7 +943,7 @@ export default function Home() {
         setNotice('Select a visible, unlocked raster layer before applying a gradient');
         return;
       }
-      gesture.current = { tool, start: p, last: p, frame: f, layer, moved: false };
+      gesture.current = { tool, start: local, last: local, frame: f, layer, moved: false };
       return;
     }
     if (tool === 'magic-wand') {
@@ -1024,33 +1013,23 @@ export default function Home() {
       setNotice('Add a paint layer, or rasterize this layer before painting');
       return;
     }
+    const rasterAsset = layer.kind === 'raster' ? layer.asset : null;
     const g = {
       tool,
-      start: p,
-      last: p,
+      start: tool === 'move' ? p : local,
+      last: tool === 'move' ? p : local,
       frame: f,
       layer,
       moved: false,
-      queued: [p],
+      queued: [local],
     } as Gesture;
     gesture.current = g;
     if (tool === 'brush' || tool === 'pencil' || tool === 'eraser') {
       g.pending = (async () => {
         try {
-          const buffer = await renderFrame(
-            {
-              ...f,
-              layers: [
-                {
-                  ...layer,
-                  opacity: 1,
-                  blend: 'source-over',
-                  adjustments: { ...neutral },
-                },
-              ],
-            },
-            assets.current,
-          );
+          const image = await decodeAsset(assets.current[rasterAsset!]),
+            buffer = surface(image.naturalWidth, image.naturalHeight);
+          buffer.getContext('2d')!.drawImage(image, 0, 0);
           if (gesture.current !== g) return;
           g.buffer = buffer;
           const x = buffer.getContext('2d')!;
@@ -1058,19 +1037,19 @@ export default function Home() {
           x.globalCompositeOperation =
             tool === 'eraser' ? 'destination-out' : 'source-over';
           const pointPressure = pressure(e),
-            radius = Math.max(1, (size * pointPressure) / 2),
+            radius = Math.max(0.5, (localSize(layer.matrix, size) * pointPressure) / 2),
             softness = tool === 'pencil' ? 0 : Math.max(0, Math.min(1, (100 - hardness) / 100));
           x.globalAlpha = (brushOpacity / 100) * pointPressure;
           x.filter = softness ? `blur(${Math.max(0.1, radius * softness)}px)` : 'none';
           x.beginPath();
-          x.arc(p.x, p.y, radius, 0, Math.PI * 2);
+          x.arc(local.x, local.y, radius, 0, Math.PI * 2);
           x.fill();
           x.strokeStyle = color;
           x.lineWidth = radius * 2;
           x.lineCap = 'round';
           x.lineJoin = 'round';
           x.beginPath();
-          x.moveTo(p.x, p.y);
+          x.moveTo(local.x, local.y);
           for (const point of g.queued || []) x.lineTo(point.x, point.y);
           x.stroke();
           g.queued = undefined;
@@ -1087,6 +1066,8 @@ export default function Home() {
     const g = gesture.current;
     if (!g) return;
     const p = point(e);
+    const local =
+      g.layer?.kind === 'raster' ? inversePoint(g.layer.matrix, p) || p : p;
     g.moved = true;
     if (g.tool === 'hand') {
       if (stage.current) {
@@ -1097,20 +1078,20 @@ export default function Home() {
       return;
     }
     if ((g.tool === 'brush' || g.tool === 'pencil' || g.tool === 'eraser') && !g.buffer)
-      g.queued?.push(p);
+      g.queued?.push(local);
     if ((g.tool === 'clone' || g.tool === 'heal') && g.buffer && g.source && cloneSource) {
-      const x = g.buffer.getContext('2d')!, radius = Math.max(4, (size * pressure(e)) / 2);
-      const dx = p.x - g.start.x, dy = p.y - g.start.y;
+      const x = g.buffer.getContext('2d')!, radius = Math.max(0.5, (localSize(g.layer!.matrix, size) * pressure(e)) / 2);
+      const dx = local.x - g.start.x, dy = local.y - g.start.y;
       x.save();
       x.globalAlpha = (g.tool === 'heal' ? 0.65 : 1) * (brushOpacity / 100) * pressure(e);
       x.filter = g.tool === 'heal' || hardness < 100 ? `blur(${g.tool === 'heal' ? 1 : Math.max(0.1, radius * (100 - hardness) / 100)}px)` : 'none';
       x.beginPath();
-      x.arc(p.x, p.y, radius, 0, Math.PI * 2);
+      x.arc(local.x, local.y, radius, 0, Math.PI * 2);
       x.clip();
-      x.drawImage(g.source, cloneSource.x + dx - radius, cloneSource.y + dy - radius, radius * 2, radius * 2, p.x - radius, p.y - radius, radius * 2, radius * 2);
+      x.drawImage(g.source, cloneSource.x + dx - radius, cloneSource.y + dy - radius, radius * 2, radius * 2, local.x - radius, local.y - radius, radius * 2, radius * 2);
       x.restore();
       void paint(g.frame, { [g.layer!.id]: g.buffer });
-      g.last = p;
+      g.last = local;
       return;
     }
     if (g.tool === 'color-replace' && g.buffer && g.source && g.replaceTarget && g.layer) {
@@ -1120,15 +1101,15 @@ export default function Home() {
         g.replaceTarget,
         g.last.x,
         g.last.y,
-        p.x,
-        p.y,
+        local.x,
+        local.y,
         color,
         size,
         colorTolerance,
         (brushOpacity / 100) * pressure(e),
       );
       void paint(g.frame, { [g.layer.id]: g.buffer });
-      g.last = p;
+      g.last = local;
       return;
     }
     if (g.tool === 'move' && g.layer) {
@@ -1145,13 +1126,14 @@ export default function Home() {
       const x = g.buffer.getContext('2d')!;
       x.strokeStyle = color;
       x.globalAlpha = (brushOpacity / 100) * pressure(e);
-      x.filter = g.tool === 'pencil' || hardness >= 100 ? 'none' : `blur(${Math.max(0.1, (size / 2) * (100 - hardness) / 100)}px)`;
-      x.lineWidth = g.tool === 'pencil' ? Math.max(1, Math.round(size * pressure(e))) : size * pressure(e);
+      const diameter = localSize(g.layer.matrix, size) * pressure(e);
+      x.filter = g.tool === 'pencil' || hardness >= 100 ? 'none' : `blur(${Math.max(0.1, (diameter / 2) * (100 - hardness) / 100)}px)`;
+      x.lineWidth = g.tool === 'pencil' ? Math.max(1, Math.round(diameter)) : diameter;
       x.lineCap = 'round';
       x.lineJoin = 'round';
       x.beginPath();
       x.moveTo(g.last.x, g.last.y);
-      x.lineTo(p.x, p.y);
+      x.lineTo(local.x, local.y);
       x.stroke();
       void paint(g.frame, { [g.layer.id]: g.buffer });
     } else if (g.tool === 'rectangle' || g.tool === 'ellipse') {
@@ -1221,13 +1203,15 @@ export default function Home() {
         x.restore();
       });
     }
-    g.last = p;
+    g.last = g.layer?.kind === 'raster' ? local : p;
   };
   const pointerUp = async (e: React.PointerEvent<HTMLCanvasElement>) => {
     const g = gesture.current;
     if (!g) return;
     const p = point(e),
       f = g.frame;
+    const local =
+      g.layer?.kind === 'raster' ? inversePoint(g.layer.matrix, p) || p : p;
     await g.pending;
     if (gesture.current !== g) return;
     gesture.current = null;
@@ -1250,17 +1234,18 @@ export default function Home() {
     } else if ((g.tool === 'brush' || g.tool === 'pencil' || g.tool === 'eraser') && g.buffer && g.layer) {
       const x = g.buffer.getContext('2d')!;
       x.globalAlpha = (brushOpacity / 100) * pressure(e);
-      x.filter = g.tool === 'pencil' || hardness >= 100 ? 'none' : `blur(${Math.max(0.1, (size / 2) * (100 - hardness) / 100)}px)`;
+      const diameter = localSize(g.layer.matrix, size) * pressure(e);
+      x.filter = g.tool === 'pencil' || hardness >= 100 ? 'none' : `blur(${Math.max(0.1, (diameter / 2) * (100 - hardness) / 100)}px)`;
       x.beginPath();
       x.moveTo(g.last.x, g.last.y);
-      x.lineTo(p.x, p.y);
+      x.lineTo(local.x, local.y);
       x.stroke();
       const asset = addAsset(assets.current, g.buffer);
       const changed = commit({
         ...f,
         layers: f.layers.map((l) =>
           l.id === g.layer!.id
-            ? ({ ...l, kind: 'raster', asset, matrix: identity() } as Layer)
+            ? ({ ...l, kind: 'raster', asset } as Layer)
             : l,
         ),
       });
@@ -1306,35 +1291,38 @@ export default function Home() {
         w = Math.floor(Math.min(f.w - left, Math.abs(p.x - g.start.x))),
         h = Math.floor(Math.min(f.h - top, Math.abs(p.y - g.start.y)));
       if (w > 0 && h > 0) {
-        if (commit(transformFrame(f, [1, 0, 0, 1, -left, -top], w, h)))
+        if (commit(await transformFrameWithMasks(f, [1, 0, 0, 1, -left, -top], assets.current, w, h)))
           setNotice('Canvas cropped; layer pixels retained');
       } else void paint(f);
     } else if (g.tool === 'gradient' && g.moved && g.layer) {
       try {
-        const buffer = await renderFrame({ ...f, layers: [g.layer] }, assets.current),
-          context = buffer.getContext('2d')!,
-          gradient = context.createLinearGradient(g.start.x, g.start.y, p.x, p.y);
+        if (g.layer.kind !== 'raster') return;
+        const image = await decodeAsset(assets.current[g.layer.asset]),
+          buffer = surface(image.naturalWidth, image.naturalHeight);
+        buffer.getContext('2d')!.drawImage(image, 0, 0);
+        const context = buffer.getContext('2d')!,
+          gradient = context.createLinearGradient(g.start.x, g.start.y, local.x, local.y);
         gradient.addColorStop(0, color);
         gradient.addColorStop(1, '#ffffff00');
         context.fillStyle = gradient;
-        context.fillRect(0, 0, f.w, f.h);
+        context.fillRect(0, 0, buffer.width, buffer.height);
         const asset = addAsset(assets.current, buffer);
-        if (commit({ ...f, layers: f.layers.map((item) => item.id === g.layer!.id ? { ...item, asset, mask: undefined } : item) }))
+        if (commit({ ...f, layers: f.layers.map((item) => item.id === g.layer!.id ? { ...item, asset } : item) }))
           setNotice('Gradient applied; undo restores the original pixels');
       } catch {
         setNotice('Could not apply gradient');
       }
     } else if ((g.tool === 'clone' || g.tool === 'heal') && g.buffer && g.layer) {
       const asset = addAsset(assets.current, g.buffer);
-      if (commit({ ...f, layers: f.layers.map((item) => item.id === g.layer!.id ? { ...item, asset, mask: undefined } : item) }))
+      if (commit({ ...f, layers: f.layers.map((item) => item.id === g.layer!.id ? { ...item, asset } : item) }))
         setNotice(g.tool === 'heal' ? 'Healing stroke applied' : 'Clone stroke applied');
     } else if (g.tool === 'color-replace' && g.buffer && g.layer) {
       const asset = addAsset(assets.current, g.buffer);
-      if (commit({ ...f, layers: f.layers.map((item) => item.id === g.layer!.id ? { ...item, asset, mask: undefined } : item) }))
+      if (commit({ ...f, layers: f.layers.map((item) => item.id === g.layer!.id ? { ...item, asset } : item) }))
         setNotice('Color replacement applied; undo restores the original pixels');
     } else void paint(f);
   };
-  const transform = (a: 'left' | 'right' | 'h' | 'v') => {
+  const transform = async (a: 'left' | 'right' | 'h' | 'v') => {
     const f = current();
     const matrix: Matrix =
       a === 'left'
@@ -1345,9 +1333,10 @@ export default function Home() {
             ? [-1, 0, 0, 1, f.w, 0]
             : [1, 0, 0, -1, 0, f.h];
     const changed = commit(
-      transformFrame(
+      await transformFrameWithMasks(
         f,
         matrix,
+        assets.current,
         a === 'left' || a === 'right' ? f.h : f.w,
         a === 'left' || a === 'right' ? f.w : f.h,
       ),
@@ -1362,24 +1351,9 @@ export default function Home() {
       travel(1);
       setNotice('Redone');
     };
-  const download = async (type: 'png' | 'jpeg' = 'png') => {
-    try {
-      const image = await renderFrame(current(), assets.current),
-        out = surface(image.width, image.height),
-        x = out.getContext('2d')!;
-      if (type === 'jpeg') {
-        x.fillStyle = '#fff';
-        x.fillRect(0, 0, out.width, out.height);
-      }
-      x.drawImage(image, 0, 0);
-      const a = document.createElement('a');
-      a.download = `${name || 'pixelforge-edit'}.${type === 'jpeg' ? 'jpg' : type}`;
-      a.href = out.toDataURL(`image/${type}`, 0.92);
-      a.click();
-      setNotice(`${type === 'jpeg' ? 'JPG' : 'PNG'} export downloaded`);
-    } catch {
-      setNotice('Export failed. Your editable draft is kept.');
-    }
+  const download = (format?: ExportFormat) => {
+    if (format) setExportFormat(format);
+    setExporting({ frame: current(), assets: { ...assets.current }, name });
   };
   const fitToScreen = () => {
       setZoom(72);
@@ -1421,7 +1395,7 @@ export default function Home() {
           else undo();
         }
         if (k === 'y') redo();
-        if (k === 's') void download();
+        if (k === 's') download();
         if (k === 'o') openFile();
         if (k === 'n') newDocument(false);
         return;
@@ -1453,18 +1427,19 @@ export default function Home() {
     else if (command === 'new-white') newDocument(false);
     else if (command === 'new-transparent') newDocument(true);
     else if (command === 'open') openFile();
-    else if (command === 'png') void download();
-    else if (command === 'jpg') void download('jpeg');
+    else if (command === 'png') download('png');
+    else if (command === 'jpg') download('jpeg');
+    else if (command === 'webp') download('webp');
     else if (command === 'undo') undo();
     else if (command === 'redo') redo();
     else if (command === 'reset') resetAdjustments();
     else if (command === 'crop') {
       setTool('crop');
       setNotice('Drag on the image to crop');
-    } else if (command === 'rotate-left') transform('left');
-    else if (command === 'rotate-right') transform('right');
-    else if (command === 'flip-h') transform('h');
-    else if (command === 'flip-v') transform('v');
+    } else if (command === 'rotate-left') void transform('left');
+    else if (command === 'rotate-right') void transform('right');
+    else if (command === 'flip-h') void transform('h');
+    else if (command === 'flip-v') void transform('v');
     else if (command.startsWith('filter-')) {
       const match = FILTERS.find(
         (f) => f[0].toLowerCase() === command.slice(7),
@@ -1519,6 +1494,7 @@ export default function Home() {
           apply={resizeImage}
         />
       )}
+      {exporting && <ExportDialog {...exporting} format={exportFormat} quality={exportQuality} setFormat={setExportFormat} setQuality={setExportQuality} close={() => setExporting(null)} downloaded={setNotice} />}
       <input
         ref={file}
         data-testid="file-input"
@@ -1931,7 +1907,7 @@ export default function Home() {
           {saveStatus}
         </output>
         <button onClick={() => download('jpeg')}>
-          <Save /> Save JPG
+          <Save /> Save JPEG
         </button>
       </footer>
     </main>

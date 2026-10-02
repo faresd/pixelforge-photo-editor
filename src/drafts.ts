@@ -1,4 +1,5 @@
 import type { CloudLink } from './cloud';
+import { EXPORT_FORMATS, validExportQuality, type ExportFormat } from './export';
 import {
   validAsset,
   validateFrame,
@@ -20,6 +21,8 @@ export type Settings = {
   brushOpacity?: number;
   hardness?: number;
   colorTolerance?: number;
+  exportFormat?: ExportFormat;
+  exportQuality?: number;
   text: string;
   fontSize: number;
   brightness: number;
@@ -48,6 +51,8 @@ function validSettings(settings: Settings) {
     ) ||
     typeof settings.text !== 'string' ||
     settings.text.length > 10000 ||
+    (settings.exportFormat !== undefined && !EXPORT_FORMATS.includes(settings.exportFormat)) ||
+    (settings.exportQuality !== undefined && !validExportQuality(settings.exportQuality)) ||
     !/^#[a-f\d]{6}$/i.test(settings.color)
   )
     return false;

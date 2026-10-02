@@ -55,7 +55,7 @@ Work proceeds in dependency-ordered increments. A phase is complete only when it
 | 5 — Workspace and asset workflows | Foreground/background wells, color swap/defaults, screen modes, toolbar customization, device/drop intake, export presets | Preferences persist safely, Escape recovers fullscreen, accessibility checks pass, export is deterministic |
 | 6 — Intelligent and scale features | Opt-in object/quick inference, remote asset providers, generation, large-image tiling, performance instrumentation | Privacy/quota disclosure, offline fallback, performance budgets and provider failure tests are documented |
 
-The current increment is Phase 1 navigation/sampling/fill/retouch groundwork. Phase 2 starts only after the Phase 1 browser suite and live deployment evidence are green. Phases 3–6 are intentionally sequenced after the selection, mask, path and persistence contracts they depend on; this keeps the editor extensible without presenting unfinished Photoshop-equivalent controls as complete.
+The current increment covers Phase 1 navigation/sampling/fill/retouch groundwork and the first Phase 5 export-presets slice: local PNG, JPEG and WebP export with explicit quality, byte-size preview, JPEG transparency disclosure and persisted preferences. Phase 2 starts only after the Phase 1 browser suite and live deployment evidence are green. Phases 3–6 are intentionally sequenced after the selection, mask, path and persistence contracts they depend on; this keeps the editor extensible without presenting unfinished Photoshop-equivalent controls as complete.
 
 ## Reference extraction notes
 
