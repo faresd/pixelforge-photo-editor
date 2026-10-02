@@ -221,3 +221,126 @@ test('flipping transparent artwork does not leave duplicate opaque pixels', asyn
   const pixels = await page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) => Array.from(canvas.getContext('2d')!.getImageData(0, 0, 2, 1).data));
   expect(pixels).toEqual([0, 0, 0, 0, 255, 0, 0, 255]);
 });
+
+test('Photoshop-style tool, color and selection shortcuts are implemented', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+
+  const active = (label: string) => page.getByRole('button', { name: `${label} tool`, exact: true });
+  await page.keyboard.press('g');
+  await expect(active('Gradient')).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.press('g');
+  await expect(active('Fill')).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.press('b');
+  await expect(active('Brush')).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.press('b');
+  await expect(active('Pencil')).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.press('b');
+  await expect(active('Color Replace')).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.press('u');
+  await expect(active('Shape')).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.press('u');
+  await expect(active('Ellipse')).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.press('m');
+  await expect(active('Select')).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.press('m');
+  await expect(active('Elliptical marquee')).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.press('m');
+  await expect(active('Single Row marquee')).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.press('m');
+  await expect(active('Single Column marquee')).toHaveAttribute('aria-pressed', 'true');
+  const zoom = page.getByLabel('Zoom', { exact: true });
+  await expect(zoom).toHaveValue('72');
+  await page.keyboard.press('+');
+  await expect(zoom).toHaveValue('82');
+  await page.keyboard.press('1');
+  await expect(zoom).toHaveValue('100');
+  await page.keyboard.press('0');
+  await expect(zoom).toHaveValue('72');
+
+  const setColorInput = async (label: string, value: string) =>
+    page.getByLabel(label).evaluate((input, next) => {
+      const element = input as HTMLInputElement;
+      // oxlint-disable-next-line typescript/unbound-method
+      Reflect.apply(Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!, element, [next]);
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+      element.dispatchEvent(new Event('change', { bubbles: true }));
+    }, value);
+  await setColorInput('Drawing color', '#123456');
+  await setColorInput('Background color', '#abcdef');
+  await expect(page.getByLabel('Drawing color')).toHaveValue('#123456');
+  await page.keyboard.press('x');
+  await expect(page.getByLabel('Drawing color')).toHaveValue('#abcdef');
+  await expect(page.getByLabel('Background color')).toHaveValue('#123456');
+  await page.keyboard.press('d');
+  await expect(page.getByLabel('Drawing color')).toHaveValue('#000000');
+  await expect(page.getByLabel('Background color')).toHaveValue('#ffffff');
+
+  await expect(page.getByRole('button', { name: 'Clear selection', exact: true })).toBeDisabled();
+  await page.keyboard.press('Control+a');
+  await expect(page.getByRole('button', { name: 'Clear selection', exact: true })).toBeEnabled();
+  await page.keyboard.press('Control+i');
+  const selectionProject = page.waitForEvent('download');
+  await page.keyboard.press('Control+Shift+s');
+  const selectionPath = await (await selectionProject).path();
+  const selectionDraft = JSON.parse(await (await import('node:fs/promises')).readFile(selectionPath!, 'utf8')) as {
+    history: Array<{ selection?: { inverted?: boolean } }>;
+    index: number;
+  };
+  expect(selectionDraft.history[selectionDraft.index].selection?.inverted).toBe(true);
+  await page.keyboard.press('Control+Shift+i');
+  const shiftedSelectionProject = page.waitForEvent('download');
+  await page.keyboard.press('Control+Shift+s');
+  const shiftedSelectionPath = await (await shiftedSelectionProject).path();
+  const shiftedSelectionDraft = JSON.parse(await (await import('node:fs/promises')).readFile(shiftedSelectionPath!, 'utf8')) as {
+    history: Array<{ selection?: { inverted?: boolean } }>;
+    index: number;
+  };
+  expect(shiftedSelectionDraft.history[shiftedSelectionDraft.index].selection?.inverted).toBe(false);
+  await page.keyboard.press('Control+d');
+  await expect(page.getByRole('button', { name: 'Clear selection', exact: true })).toBeDisabled();
+  await page.keyboard.press('Control+Shift+a');
+  await expect(page.getByRole('button', { name: 'Clear selection', exact: true })).toBeDisabled();
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Drawing color')).toHaveValue('#000000');
+  await expect(page.getByLabel('Background color')).toHaveValue('#ffffff');
+});
+
+test('Photoshop-style document shortcuts drive existing actions and ignore text fields', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.keyboard.press('Control+g');
+  await expect(page.getByRole('button', { name: /Collapse group Group 1/ })).toBeVisible();
+  await page.keyboard.press('Control+j');
+  await expect(page.getByText('Layers 2 / 32', { exact: true })).toBeVisible();
+  await page.keyboard.press('Control+Shift+g');
+  await expect(page.getByRole('button', { name: /Collapse group Group 1/ })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Image', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Rotate right', exact: true }).click();
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '960');
+  await page.keyboard.press('Control+Alt+z');
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '1440');
+  await page.keyboard.press('Control+Shift+z');
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '960');
+
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await expect(page.getByRole('menu', { name: 'File menu' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu', { name: 'File menu' })).toBeHidden();
+
+  await page.keyboard.press('Control+Alt+i');
+  await expect(page.getByRole('heading', { name: 'Resize image', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  const projectDownload = page.waitForEvent('download');
+  await page.keyboard.press('Control+Shift+s');
+  const download = await projectDownload;
+  expect(download.suggestedFilename()).toMatch(/\.pixelforge$/);
+
+  await page.keyboard.press('b');
+  await expect(page.getByRole('button', { name: 'Brush tool', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByLabel('Document name').fill('Typing guard');
+  await page.getByLabel('Document name').press('g');
+  await expect(page.getByRole('button', { name: 'Brush tool', exact: true })).toHaveAttribute('aria-pressed', 'true');
+});

@@ -118,17 +118,17 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'zoom', label: 'Zoom', icon: ZoomIn, key: 'Z' },
   { id: 'eyedropper', label: 'Eyedropper', icon: Pipette, key: 'I' },
   { id: 'fill', label: 'Fill', icon: PaintBucket, key: 'G' },
-  { id: 'gradient', label: 'Gradient', icon: Palette, key: 'D' },
+  { id: 'gradient', label: 'Gradient', icon: Palette, key: 'G' },
   { id: 'clone', label: 'Clone', icon: Copy, key: 'S' },
   { id: 'heal', label: 'Healing', icon: WandSparkles, key: 'J' },
   { id: 'crop', label: 'Crop', icon: Crop, key: 'C' },
   { id: 'brush', label: 'Brush', icon: Brush, key: 'B' },
-  { id: 'pencil', label: 'Pencil', icon: Pencil, key: 'P' },
-  { id: 'color-replace', label: 'Color Replace', icon: Palette, key: 'A' },
+  { id: 'pencil', label: 'Pencil', icon: Pencil, key: 'B' },
+  { id: 'color-replace', label: 'Color Replace', icon: Palette, key: 'B' },
   { id: 'eraser', label: 'Eraser', icon: Eraser, key: 'E' },
   { id: 'text', label: 'Text', icon: Type, key: 'T' },
-  { id: 'rectangle', label: 'Shape', icon: Shapes, key: 'R' },
-  { id: 'ellipse', label: 'Ellipse', icon: Shapes, key: 'O' },
+  { id: 'rectangle', label: 'Shape', icon: Shapes, key: 'U' },
+  { id: 'ellipse', label: 'Ellipse', icon: Shapes, key: 'U' },
   { id: 'select', label: 'Select', icon: Crop, key: 'M' },
   { id: 'ellipse-select', label: 'Elliptical marquee', icon: Shapes, key: 'M' },
   { id: 'row-select', label: 'Single Row marquee', icon: Rows3, key: 'M' },
@@ -142,6 +142,20 @@ const MARQUEE_TOOLS: Tool[] = [
   'row-select',
   'column-select',
 ];
+/** Photoshop's repeated-key tool groups, limited to tools PixelForge actually implements. */
+const TOOL_GROUPS: Record<string, Tool[]> = {
+  g: ['gradient', 'fill'],
+  b: ['brush', 'pencil', 'color-replace'],
+  u: ['rectangle', 'ellipse'],
+  m: MARQUEE_TOOLS,
+};
+/** Existing PixelForge aliases retained while the primary keys follow Photoshop. */
+const TOOL_ALIASES: Record<string, Tool> = {
+  a: 'color-replace',
+  o: 'ellipse',
+  p: 'pencil',
+  r: 'rectangle',
+};
 const FILTERS = [
   ['Original', 'none', '#315277', '#d59b6c'],
   ['Vivid', 'saturate(1.45) contrast(1.08)', '#244d96', '#ef854a'],
@@ -231,6 +245,7 @@ export default function Home() {
     [selectionOperation, setSelectionOperation] = useState<SelectionOperation>('replace'),
     [zoom, setZoom] = useState(72),
     [color, setColor] = useState('#ff5c35'),
+    [backgroundColor, setBackgroundColor] = useState('#ffffff'),
     [size, setSize] = useState(18),
     [brushOpacity, setBrushOpacity] = useState(100),
     [hardness, setHardness] = useState(100),
@@ -270,6 +285,7 @@ export default function Home() {
     tool,
     zoom,
     color,
+    backgroundColor,
     size,
     brushOpacity,
     hardness,
@@ -292,6 +308,7 @@ export default function Home() {
     setTool(s.tool);
     setZoom(s.zoom);
     setColor(s.color);
+    setBackgroundColor(s.backgroundColor || '#ffffff');
     setSize(s.size);
     setBrushOpacity(s.brushOpacity ?? 100);
     setHardness(s.hardness ?? 100);
@@ -300,6 +317,16 @@ export default function Home() {
     setExportQuality(s.exportQuality ?? 92);
     setText(s.text);
     setFontSize(s.fontSize);
+  };
+  const resetColors = () => {
+    setColor('#000000');
+    setBackgroundColor('#ffffff');
+    setNotice('Foreground and background colors reset');
+  };
+  const swapColors = () => {
+    setColor(backgroundColor);
+    setBackgroundColor(color);
+    setNotice('Foreground and background colors swapped');
   };
   const current = () => history.current[index.current];
   const groupForLayer = (f: Frame, layer: Layer) =>
@@ -362,6 +389,29 @@ export default function Home() {
     if (commit({ ...f, selection }))
       setNotice(selection ? `${selection.shape === 'ellipse' ? 'Elliptical' : 'Rectangular'} selection created` : 'Selection cleared');
   };
+  const selectAll = () => {
+    const f = current();
+    setSelection({
+      shape: 'rectangle',
+      x: 0,
+      y: 0,
+      w: f.w,
+      h: f.h,
+      feather: 0,
+      inverted: false,
+      parts: [
+        {
+          shape: 'rectangle',
+          x: 0,
+          y: 0,
+          w: f.w,
+          h: f.h,
+          operation: 'replace',
+        },
+      ],
+    });
+    setNotice('Entire canvas selected');
+  };
   const selectionPart = (selection: Selection): SelectionPart => ({
     shape: selection.shape,
     x: selection.x,
@@ -383,7 +433,10 @@ export default function Home() {
   };
   const invertSelection = () => {
     const f = current();
-    if (!f.selection) return;
+    if (!f.selection) {
+      setNotice('Select an area before inverting it');
+      return;
+    }
     setSelection({ ...f.selection, inverted: !f.selection.inverted });
   };
   const setSelectionFeather = (feather: number) => {
@@ -533,7 +586,7 @@ export default function Home() {
       assets: { ...assets.current },
       index: index.current,
       name,
-      settings: { tool, zoom, color, size, brushOpacity, hardness, colorTolerance, exportFormat, exportQuality, text, fontSize, ...neutral },
+      settings: { tool, zoom, color, backgroundColor, size, brushOpacity, hardness, colorTolerance, exportFormat, exportQuality, text, fontSize, ...neutral },
     };
     saveQueue.current = saveQueue.current
       .then(async () => {
@@ -570,6 +623,7 @@ export default function Home() {
     tool,
     zoom,
     color,
+    backgroundColor,
     size,
     brushOpacity,
     hardness,
@@ -1483,32 +1537,88 @@ export default function Home() {
       if (typing) return;
       if (command) {
         const k = e.key.toLowerCase();
-        if (['z', 'y', 's', 'o', 'n'].includes(k)) e.preventDefault();
+        if (
+          ['z', 'y', 's', 'o', 'n', 'a', 'd', 'g', 'j', 'i'].includes(k) ||
+          (k === 'w' && !e.altKey)
+        )
+          e.preventDefault();
         if (k === 'z') {
           if (e.shiftKey) redo();
           else undo();
         }
         if (k === 'y') redo();
-        if (k === 's') download();
+        if (k === 's') {
+          if (e.shiftKey) exportProject();
+          else download();
+        }
         if (k === 'o') openFile();
         if (k === 'n') newDocument(false);
+        if (k === 'a') {
+          if (e.shiftKey) setSelection(undefined);
+          else selectAll();
+        }
+        if (k === 'd') setSelection(undefined);
+        if (k === 'i') {
+          if (e.altKey) setResizing({ width: current().w, height: current().h });
+          else invertSelection();
+        }
+        if (k === 'g' && !e.altKey) {
+          if (e.shiftKey) ungroupActiveLayer();
+          else groupActiveLayer();
+        }
+        if (k === 'j' && !e.shiftKey) duplicate();
+        return;
+      }
+      if (e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        resetColors();
+        return;
+      }
+      if (e.key.toLowerCase() === 'x') {
+        e.preventDefault();
+        swapColors();
+        return;
+      }
+      if (e.key === '[' || e.key === ']') {
+        e.preventDefault();
+        setSize((value) => Math.max(2, Math.min(100, value + (e.key === ']' ? 2 : -2))));
         return;
       }
       if (e.altKey) return;
-      if (e.key.toLowerCase() === 'm') {
+      const lower = e.key.toLowerCase();
+      const group = TOOL_GROUPS[lower];
+      if (group) {
         e.preventDefault();
-        const index = MARQUEE_TOOLS.indexOf(tool);
-        setTool(MARQUEE_TOOLS[(index + 1) % MARQUEE_TOOLS.length]);
+        const index = group.indexOf(tool);
+        const direction = e.shiftKey ? -1 : 1;
+        const next = group[(index < 0 ? 0 : index + direction + group.length) % group.length];
+        setTool(next);
+        setNotice(`${TOOLS.find((item) => item.id === next)?.label || next} tool selected`);
         return;
       }
-      const match = TOOLS.find(
-        (t) => t.key.toLowerCase() === e.key.toLowerCase(),
-      );
-      if (match) setTool(match.id);
-      if (e.key === '0') fitToScreen();
-      if (e.key === '1') setZoom(100);
-      if (e.key === '+' || e.key === '=') setZoom((v) => Math.min(140, v + 10));
-      if (e.key === '-') setZoom((v) => Math.max(20, v - 10));
+      const alias = TOOL_ALIASES[lower];
+      if (alias) {
+        e.preventDefault();
+        setTool(alias);
+        setNotice(`${TOOLS.find((item) => item.id === alias)?.label || alias} tool selected`);
+        return;
+      }
+      if (e.key === '0') {
+        e.preventDefault();
+        fitToScreen();
+      }
+      if (e.key === '1') {
+        e.preventDefault();
+        setZoom(100);
+      }
+      if (e.key === '+' || e.key === '=') {
+        e.preventDefault();
+        setZoom((v) => Math.min(140, v + 10));
+      }
+      if (e.key === '-') {
+        e.preventDefault();
+        setZoom((v) => Math.max(20, v - 10));
+      }
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
@@ -1704,6 +1814,7 @@ export default function Home() {
                 setNotice(`${label} tool selected`);
               }}
               aria-label={`${label} tool`}
+              aria-pressed={tool === id}
               title={`${label} (${key})`}
             >
               <Icon />
@@ -1721,6 +1832,16 @@ export default function Home() {
             />
             <i style={{ background: color }} />
             <small>Color</small>
+          </label>
+          <label className="color">
+            <input
+              aria-label="Background color"
+              type="color"
+              value={backgroundColor}
+              onChange={(e) => setBackgroundColor(e.target.value)}
+            />
+            <i style={{ background: backgroundColor }} />
+            <small>Background</small>
           </label>
         </aside>
         <section ref={stage} className={`stage ${drag ? 'dragging' : ''}`}>
