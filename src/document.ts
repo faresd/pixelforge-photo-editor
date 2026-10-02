@@ -60,6 +60,14 @@ export type Layer = Common &
         stroke: number;
         fill: boolean;
       }
+    | {
+        kind: 'ellipse';
+        width: number;
+        height: number;
+        color: string;
+        stroke: number;
+        fill: boolean;
+      }
   );
 export type Frame = { w: number; h: number; layers: Layer[]; active: string };
 export type Asset = { url: string; w: number; h: number };
@@ -199,7 +207,7 @@ export function validateFrame(
         typeof layer.bold !== 'boolean'
       )
         return fail();
-    } else if (layer.kind === 'rectangle') {
+    } else if (layer.kind === 'rectangle' || layer.kind === 'ellipse') {
       if (
         !number(layer.width, 1, 16000) ||
         !number(layer.height, 1, 16000) ||
@@ -324,6 +332,15 @@ export async function renderFrame(
       context.lineWidth = layer.stroke;
       if (layer.fill) context.fillRect(0, 0, layer.width, layer.height);
       else context.strokeRect(0, 0, layer.width, layer.height);
+    }
+    if (layer.kind === 'ellipse') {
+      context.fillStyle = layer.color;
+      context.strokeStyle = layer.color;
+      context.lineWidth = layer.stroke;
+      context.beginPath();
+      context.ellipse(layer.width / 2, layer.height / 2, layer.width / 2, layer.height / 2, 0, 0, Math.PI * 2);
+      if (layer.fill) context.fill();
+      else context.stroke();
     }
     context.restore();
   }

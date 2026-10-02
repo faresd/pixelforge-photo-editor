@@ -97,6 +97,7 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'eraser', label: 'Eraser', icon: Eraser, key: 'E' },
   { id: 'text', label: 'Text', icon: Type, key: 'T' },
   { id: 'rectangle', label: 'Shape', icon: Shapes, key: 'R' },
+  { id: 'ellipse', label: 'Ellipse', icon: Shapes, key: 'O' },
 ];
 const FILTERS = [
   ['Original', 'none', '#315277', '#d59b6c'],
@@ -695,7 +696,7 @@ export default function Home() {
       if (added) setNotice('Editable text layer added');
       return;
     }
-    if (tool === 'rectangle' || tool === 'crop') {
+    if (tool === 'rectangle' || tool === 'ellipse' || tool === 'crop') {
       gesture.current = { tool, start: p, last: p, frame: f, moved: false };
       return;
     }
@@ -789,12 +790,12 @@ export default function Home() {
       x.lineTo(p.x, p.y);
       x.stroke();
       void paint(g.frame, { [g.layer.id]: g.buffer });
-    } else if (g.tool === 'rectangle') {
+    } else if (g.tool === 'rectangle' || g.tool === 'ellipse') {
       const width = Math.abs(p.x - g.start.x),
         height = Math.abs(p.y - g.start.y);
       const layer: Layer = {
         ...commonLayer('Shape'),
-        kind: 'rectangle',
+        kind: g.tool === 'ellipse' ? 'ellipse' : 'rectangle',
         width: Math.max(1, width),
         height: Math.max(1, height),
         stroke: Math.max(1, size / 3),
@@ -865,10 +866,10 @@ export default function Home() {
         ),
       });
       if (changed) setNotice('Paint layer updated');
-    } else if (g.tool === 'rectangle' && g.moved) {
+    } else if ((g.tool === 'rectangle' || g.tool === 'ellipse') && g.moved) {
       addLayer({
         ...commonLayer('Shape ' + f.layers.length),
-        kind: 'rectangle',
+        kind: g.tool === 'ellipse' ? 'ellipse' : 'rectangle',
         width: Math.max(1, Math.round(Math.abs(p.x - g.start.x))),
         height: Math.max(1, Math.round(Math.abs(p.y - g.start.y))),
         stroke: Math.max(1, size / 3),
@@ -1346,7 +1347,7 @@ export default function Home() {
               </button>
             </div>
           </section>
-          {(tool === 'brush' || tool === 'eraser' || tool === 'rectangle') && (
+          {(tool === 'brush' || tool === 'eraser' || tool === 'rectangle' || tool === 'ellipse') && (
             <section className="panel">
               <Title icon={Brush} text="Tool options" />
               <Slider
