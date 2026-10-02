@@ -10,7 +10,6 @@ import {
   FlipVertical2,
   ImagePlus,
   MousePointer2,
-  Palette,
   Redo2,
   RotateCcw,
   RotateCw,
@@ -61,6 +60,7 @@ import {
 import { useDocument } from '../src/useDocument';
 import LayersPanel from '../src/LayersPanel';
 import ResizeDialog from '../src/ResizeDialog';
+import { BrandLockup } from '../src/Brand';
 type MenuName = 'File' | 'Edit' | 'Image' | 'Filter' | 'View';
 type Command =
   | 'resize'
@@ -1083,15 +1083,7 @@ export default function Home() {
         onChange={(e) => load(e.target.files?.[0])}
       />
       <header className="topbar">
-        <div className="brand">
-          <span className="brand-mark">
-            <Palette />
-          </span>
-          <span>
-            Pixel<b>Forge</b>
-          </span>
-          <em>FREE</em>
-        </div>
+        <BrandLockup />
         <nav ref={menuArea} aria-label="Editor menus">
           {(Object.keys(MENU_DEFS) as MenuName[]).map((menuName) => (
             <div className="menu" key={menuName}>

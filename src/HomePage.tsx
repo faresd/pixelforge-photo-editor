@@ -3,6 +3,7 @@ import { ArrowRight, Crop, Download, Palette, RotateCw, ShieldCheck, Type } from
 import './home.css';
 import { useMember, SIGN_IN } from './cloud';
 import ProjectLibrary from './ProjectLibrary';
+import { BrandLockup } from './Brand';
 
 const features = [
   { icon: Crop, title: 'Make the cut', text: 'Crop, rotate and flip your images to get the composition right.' },
@@ -17,7 +18,7 @@ export default function HomePage() {
   const { member, checking } = useMember();
   const [draft] = useState(() => { try { const id = localStorage.getItem('pixelforge:last-draft'); return id && /^[a-f0-9-]{36}$/.test(id) ? id : null; } catch { return null; } });
   return <main className="home-page">
-    <header className="home-header"><a href="/" className="brand"><span className="brand-mark"><Palette /></span><span>Pixel<b>Forge</b></span></a><div className="home-account">{member ? <a href="#projects-heading">{member.name} · My projects</a> : <a href={SIGN_IN}>{checking ? "Checking account…" : "Sign in with Cheaply"}</a>}<a className="home-small-link" href="/editor?new=1">Open editor <ArrowRight size={16} /></a></div></header>
+    <header className="home-header"><BrandLockup home /><div className="home-account">{member ? <a href="#projects-heading">{member.name} · My projects</a> : <a href={SIGN_IN}>{checking ? "Checking account…" : "Sign in with Cheaply"}</a>}<a className="home-small-link" href="/editor?new=1">Open editor <ArrowRight size={16} /></a></div></header>
     <section className="home-hero">
       <div className="hero-copy"><span className="home-eyebrow">FREE TO CREATE. YOURS TO KEEP.</span><h1>A little edit.<br /><em>A big difference.</em></h1><p>Create with editable layers, text and shapes. Refine your photos, keep every element adjustable, and return to your work whenever you like.</p><div className="home-actions"><a className="home-primary" href="/editor?new=1">Start editing <ArrowRight size={18} /></a>{draft && <a className="home-secondary" href={'/editor#draft=' + draft}>Continue saved draft</a>}</div><span className="home-promise">100% free · No account needed · Cloud saving is optional</span></div>
       <div className="hero-art" aria-hidden="true"><div className="art-bar"><i /><i /><i /><span>Make it your own</span></div><div className="art-landscape"><div className="art-sun" /><div className="art-mountain" /><div className="art-water" /><span className="art-label">a fresh perspective</span></div><div className="art-tools"><span>Crop</span><span>Adjust</span><span>Text</span><span>Export ↗</span></div></div>
