@@ -72,6 +72,7 @@ export type Layer = Common &
       }
   );
 export type Selection = {
+  shape: 'rectangle' | 'ellipse';
   x: number;
   y: number;
   w: number;
@@ -250,6 +251,7 @@ export function validateFrame(
       frameWidth = Number(value.w),
       frameHeight = Number(value.h);
     if (
+      !['rectangle', 'ellipse'].includes(String(s.shape)) ||
       !number(s.x, 0, frameWidth) ||
       !number(s.y, 0, frameHeight) ||
       !number(s.w, 1, frameWidth) ||

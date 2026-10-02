@@ -439,6 +439,7 @@ test('clone and healing tools use an explicit source point and commit raster edi
   await page.getByRole('button', { name: 'Healing tool', exact: true }).click();
   await canvas.click({ position: { x: box.width * 0.2, y: box.height * 0.2 } });
   await expect(page.getByText('Clone source set; drag on the image to paint it', { exact: true })).toBeVisible();
+});
 
 test('rectangular selection creates a nondestructive raster mask and survives reload', async ({
   page,
@@ -468,6 +469,25 @@ test('rectangular selection creates a nondestructive raster mask and survives re
   await expect(page.getByText('Nondestructive mask active', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Remove mask', exact: true }).click();
   await expect(page.getByText('Nondestructive mask active', { exact: true })).toHaveCount(0);
+});
+
+test('elliptical marquee persists its geometry and can be inverted', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: 'Elliptical marquee tool', exact: true }).click();
+  const canvas = page.getByTestId('editor-canvas');
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.25);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.75, { steps: 5 });
+  await page.mouse.up();
+  await expect(page.getByText('Elliptical selection created', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Invert selection', exact: true }).click();
+  const exported = await project(page),
+    frame = exported.value.history[exported.value.index];
+  expect(frame.selection).toMatchObject({ shape: 'ellipse', inverted: true });
+  expect(frame.selection.w).toBeGreaterThan(1);
+  expect(frame.selection.h).toBeGreaterThan(1);
 });
 
 test('a stale tab cannot overwrite or discard newer work and can save its own local copy', async ({

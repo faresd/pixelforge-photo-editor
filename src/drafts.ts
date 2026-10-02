@@ -10,7 +10,7 @@ import {
   type Assets,
   type Frame,
 } from './document';
-export type Tool = 'move' | 'hand' | 'zoom' | 'eyedropper' | 'fill' | 'gradient' | 'clone' | 'heal' | 'crop' | 'brush' | 'eraser' | 'text' | 'rectangle' | 'ellipse' | 'select';
+export type Tool = 'move' | 'hand' | 'zoom' | 'eyedropper' | 'fill' | 'gradient' | 'clone' | 'heal' | 'crop' | 'brush' | 'eraser' | 'text' | 'rectangle' | 'ellipse' | 'select' | 'ellipse-select';
 export type Shot = { url: string; w: number; h: number };
 export type Settings = {
   tool: Tool;
@@ -40,7 +40,7 @@ let database: Promise<IDBDatabase> | undefined;
 function validSettings(settings: Settings) {
   if (
     !settings ||
-    !['move', 'hand', 'zoom', 'eyedropper', 'fill', 'gradient', 'clone', 'heal', 'crop', 'brush', 'eraser', 'text', 'rectangle', 'ellipse', 'select'].includes(
+    !['move', 'hand', 'zoom', 'eyedropper', 'fill', 'gradient', 'clone', 'heal', 'crop', 'brush', 'eraser', 'text', 'rectangle', 'ellipse', 'select', 'ellipse-select'].includes(
       settings.tool,
     ) ||
     typeof settings.text !== 'string' ||

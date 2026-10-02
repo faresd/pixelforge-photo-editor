@@ -113,6 +113,7 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'rectangle', label: 'Shape', icon: Shapes, key: 'R' },
   { id: 'ellipse', label: 'Ellipse', icon: Shapes, key: 'O' },
   { id: 'select', label: 'Select', icon: Crop, key: 'M' },
+  { id: 'ellipse-select', label: 'Elliptical marquee', icon: Shapes, key: 'M' },
 ];
 const FILTERS = [
   ['Original', 'none', '#315277', '#d59b6c'],
@@ -281,7 +282,7 @@ export default function Home() {
     const f = current();
     if (JSON.stringify(f.selection) === JSON.stringify(selection)) return;
     if (commit({ ...f, selection }))
-      setNotice(selection ? 'Rectangular selection created' : 'Selection cleared');
+      setNotice(selection ? `${selection.shape === 'ellipse' ? 'Elliptical' : 'Rectangular'} selection created` : 'Selection cleared');
   };
   const invertSelection = () => {
     const f = current();
@@ -302,7 +303,19 @@ export default function Home() {
     context.fillStyle = f.selection.inverted ? '#000' : '#fff';
     context.fillRect(0, 0, f.w, f.h);
     context.fillStyle = f.selection.inverted ? '#fff' : '#000';
-    context.fillRect(f.selection.x, f.selection.y, f.selection.w, f.selection.h);
+    if (f.selection.shape === 'ellipse') {
+      context.beginPath();
+      context.ellipse(
+        f.selection.x + f.selection.w / 2,
+        f.selection.y + f.selection.h / 2,
+        f.selection.w / 2,
+        f.selection.h / 2,
+        0,
+        0,
+        Math.PI * 2,
+      );
+      context.fill();
+    } else context.fillRect(f.selection.x, f.selection.y, f.selection.w, f.selection.h);
     if (f.selection.feather > 0) {
       context.globalCompositeOperation = 'destination-in';
       const gradient = context.createRadialGradient(
@@ -832,7 +845,7 @@ export default function Home() {
       if (added) setNotice('Editable text layer added');
       return;
     }
-    if (tool === 'select') {
+    if (tool === 'select' || tool === 'ellipse-select') {
       gesture.current = { tool, start: p, last: p, frame: f, moved: false };
       return;
     }
@@ -974,7 +987,7 @@ export default function Home() {
         ],
       };
       void paint({ ...g.frame, layers: [...g.frame.layers, layer] });
-    } else if (g.tool === 'select') {
+    } else if (g.tool === 'select' || g.tool === 'ellipse-select') {
       void paint(g.frame).then(() => {
         if (gesture.current !== g) return;
         const c = canvas.current!, x = c.getContext('2d')!;
@@ -982,12 +995,13 @@ export default function Home() {
         x.strokeStyle = '#fff';
         x.lineWidth = 2;
         x.setLineDash([8, 5]);
-        x.strokeRect(
-          Math.min(g.start.x, p.x),
-          Math.min(g.start.y, p.y),
-          Math.abs(p.x - g.start.x),
-          Math.abs(p.y - g.start.y),
-        );
+        const left = Math.min(g.start.x, p.x), top = Math.min(g.start.y, p.y),
+          width = Math.abs(p.x - g.start.x), height = Math.abs(p.y - g.start.y);
+        if (g.tool === 'ellipse-select') {
+          x.beginPath();
+          x.ellipse(left + width / 2, top + height / 2, width / 2, height / 2, 0, 0, Math.PI * 2);
+          x.stroke();
+        } else x.strokeRect(left, top, width, height);
         x.restore();
       });
     } else if (g.tool === 'crop') {
@@ -1063,13 +1077,13 @@ export default function Home() {
           Math.min(p.y, g.start.y),
         ],
       });
-    } else if (g.tool === 'select' && g.moved) {
+    } else if ((g.tool === 'select' || g.tool === 'ellipse-select') && g.moved) {
       const x = Math.max(0, Math.min(g.start.x, p.x)),
         y = Math.max(0, Math.min(g.start.y, p.y)),
         w = Math.min(f.w - x, Math.abs(p.x - g.start.x)),
         h = Math.min(f.h - y, Math.abs(p.y - g.start.y));
       if (w > 0 && h > 0)
-        setSelection({ x, y, w, h, feather: 0, inverted: false });
+        setSelection({ shape: g.tool === 'ellipse-select' ? 'ellipse' : 'rectangle', x, y, w, h, feather: 0, inverted: false });
       else void paint(f);
     } else if (g.tool === 'crop' && g.moved) {
       const left = Math.max(0, Math.floor(Math.min(p.x, g.start.x))),
