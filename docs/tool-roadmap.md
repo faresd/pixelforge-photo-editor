@@ -30,7 +30,7 @@ This matrix distills the two user-provided toolbar references into an implementa
 
 Implemented in this branch (production deployment follows the protected merge): Move, Crop, Brush, Pencil, Color Replacement, Eraser, Text, Rectangle, Ellipse, single-row and single-column marquee presets, layer properties, nondestructive per-layer adjustments, rotate/flip, local/cloud project persistence, optional Cheaply session and production CI/CD. The supplied Cheaply artwork is used in the brand lockup beside an original cyan Pixel monogram.
 
-The active implementation increment adds Hand, Zoom, Eyedropper, Paint Bucket, Gradient, Clone, Healing, rectangular/elliptical/lasso and Magic Wand color selection, selection composition (replace/add/subtract/intersect), inversion, feather control and alpha-correct nondestructive masks. Each tool must have a dedicated desktop and mobile browser acceptance test before merge. Pixel does not claim Photoshop equivalence while the remaining families are incomplete.
+The active implementation increment adds Hand, Zoom, Eyedropper, Paint Bucket, Gradient, Clone, Healing, rectangular/elliptical/single-row/single-column/lasso and Magic Wand color selection, selection composition (replace/add/subtract/intersect), inversion, feather control and alpha-correct nondestructive masks. Each tool must have a dedicated desktop and mobile browser acceptance test before merge. Pixel does not claim Photoshop equivalence while the remaining families are incomplete.
 
 ## Delivery gates
 
