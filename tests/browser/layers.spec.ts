@@ -266,21 +266,17 @@ test('layer position, blending and visibility produce exact composite pixels', a
     };
     return { blue: make('#0000ff', 2), red: make('#ff0000', 1) };
   });
-  await page
-    .getByTestId('file-input')
-    .setInputFiles({
-      name: 'blue.png',
-      mimeType: 'image/png',
-      buffer: Buffer.from(fixtures.blue, 'base64'),
-    });
+  await page.getByTestId('file-input').setInputFiles({
+    name: 'blue.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(fixtures.blue, 'base64'),
+  });
   await expect(page.getByLabel('Document name')).toHaveValue('blue');
-  await page
-    .getByTestId('layer-input')
-    .setInputFiles({
-      name: 'red.png',
-      mimeType: 'image/png',
-      buffer: Buffer.from(fixtures.red, 'base64'),
-    });
+  await page.getByTestId('layer-input').setInputFiles({
+    name: 'red.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(fixtures.red, 'base64'),
+  });
   await expect(page.getByLabel('Layer name', { exact: true })).toHaveValue(
     'red.png',
   );
@@ -336,4 +332,50 @@ test('vector shapes remain editable through property edits, rotation and undo', 
   await page.getByRole('menuitem', { name: /^Undo/ }).click();
   const undone = await project(page);
   expect(undone.value.history[undone.value.index].layers[1]).toEqual(original);
+});
+
+test('a stale tab cannot overwrite or discard newer work and can save its own local copy', async ({
+  page,
+  context,
+}) => {
+  const bookmark = page.url();
+  const second = await context.newPage();
+  await second.route(
+    'https://marketplace.cheaply.fr/marketplace/api/photoeditor**',
+    (route) => route.fulfill({ json: { authenticated: false } }),
+  );
+  await second.goto(bookmark);
+  await expect(second.getByRole('application')).toHaveAttribute(
+    'aria-busy',
+    'false',
+  );
+  await second.getByLabel('Document name').fill('Newer tab work');
+  await saved(second);
+  await page.getByLabel('Document name').fill('Older tab edits');
+  await expect(page.getByRole('alert')).toHaveText(
+    'This draft changed in another tab. Save a local copy to keep your edits.',
+  );
+  page.once('dialog', (dialog) => dialog.accept());
+  await page
+    .getByRole('button', { name: 'Discard draft', exact: true })
+    .click();
+  await expect(
+    page.getByRole('status', { name: 'Draft save status' }),
+  ).toHaveText('Could not discard the draft. Please try again.');
+  await second.reload();
+  await expect(second.getByLabel('Document name')).toHaveValue(
+    'Newer tab work',
+  );
+  await saved(second);
+  await page
+    .getByRole('button', { name: 'Save local copy', exact: true })
+    .click();
+  await saved(page);
+  expect(page.url()).not.toBe(bookmark);
+  await page.reload();
+  await expect(page.getByLabel('Document name')).toHaveValue('Older tab edits');
+  await saved(page);
+  await page.goto(bookmark);
+  await expect(page.getByLabel('Document name')).toHaveValue('Newer tab work');
+  await second.close();
 });

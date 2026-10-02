@@ -42,3 +42,5 @@
 .layer-typography textarea { min-height:70px; resize:vertical; }
 .canvas-wrap { background: repeating-conic-gradient(#e4e4e7 0% 25%,#ffffff 0% 50%) 50% / 16px 16px; }
 .tool-move { cursor: move; }
+.draft-conflict { position:absolute; z-index:20; top:12px; left:12px; right:12px; padding:12px; border:1px solid #c57c43; border-radius:8px; background:#3b2a1df5; color:#ffdfac; font-size:13px; line-height:1.5; }
+@media(max-width:680px) { .docbar input { width:clamp(60px,22vw,120px); } }

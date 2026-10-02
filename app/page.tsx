@@ -27,6 +27,7 @@ import {
 import { useEffect, useRef, useState } from 'react';
 
 import {
+  LOCAL_CONFLICT,
   createDraftId,
   discardDraft,
   initialDraftId,
@@ -193,6 +194,8 @@ export default function Home() {
   const [draftId, setDraftId] = useState(initialDraftId),
     openingDraftId = useRef(draftId),
     [saveStatus, setSaveStatus] = useState('Opening saved document…');
+  const localVersions = useRef(new Map<string, number>());
+  const saveQueue = useRef(Promise.resolve());
   const saveSequence = useRef(0),
     saving = useRef(false),
     discarding = useRef(false);
@@ -304,6 +307,10 @@ export default function Home() {
           if (cancelled) return;
           setName(saved.name);
           setCloud(saved.cloud);
+          localVersions.current.set(
+            openingDraftId.current,
+            saved.localRevision || 0,
+          );
           restoreSettings(saved.settings);
           if (saved.migrated) {
             setDraftId(createDraftId());
@@ -369,25 +376,39 @@ export default function Home() {
     const sequence = ++saveSequence.current;
     saving.current = true;
     setSaveStatus('Saving on this device…');
-    void saveDraft(draftId, {
+    const value: Draft = {
       version: 2,
       cloud,
-      history: history.current,
-      assets: assets.current,
+      history: history.current.slice(),
+      assets: { ...assets.current },
       index: index.current,
       name,
       settings: { tool, zoom, color, size, text, fontSize, ...neutral },
-    })
+    };
+    saveQueue.current = saveQueue.current
+      .then(async () => {
+        if (discarding.current) return;
+        const version = await saveDraft(
+          draftId,
+          value,
+          localVersions.current.get(draftId) || 0,
+        );
+        localVersions.current.set(draftId, version);
+      })
       .then(() => {
         if (sequence === saveSequence.current) {
           saving.current = false;
           setSaveStatus('Saved on this device');
         }
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (sequence === saveSequence.current) {
           saving.current = true;
-          setSaveStatus('Local save failed — export a copy');
+          setSaveStatus(
+            error instanceof Error && error.message === LOCAL_CONFLICT
+              ? LOCAL_CONFLICT
+              : 'Local save failed — export a copy',
+          );
         }
       });
   }, [
@@ -498,10 +519,12 @@ export default function Home() {
     saving.current = false;
     ++saveSequence.current;
     try {
-      await discardDraft(draftId);
+      await saveQueue.current;
+      await discardDraft(draftId, localVersions.current.get(draftId) || 0);
       location.assign('/');
     } catch {
       discarding.current = false;
+      saving.current = true;
       setSaveStatus('Could not discard the draft. Please try again.');
     }
   };
@@ -1145,6 +1168,15 @@ export default function Home() {
           <small>• &nbsp;{dimensions}</small>
         </div>
         <div className="draft-actions">
+          <button
+            onClick={() => {
+              setDraftId(createDraftId());
+              clearCloud();
+              setNotice('New local copy created. The original draft is kept.');
+            }}
+          >
+            Save local copy
+          </button>
           <a href="/">Home</a>
           <button onClick={() => void discard()}>Discard draft</button>
         </div>
@@ -1180,6 +1212,11 @@ export default function Home() {
           </label>
         </aside>
         <section ref={stage} className={`stage ${drag ? 'dragging' : ''}`}>
+          {saveStatus === LOCAL_CONFLICT && (
+            <div role="alert" className="draft-conflict">
+              {LOCAL_CONFLICT}
+            </div>
+          )}
           {drag && (
             <div className="drop">
               <ImagePlus />

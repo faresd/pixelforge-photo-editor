@@ -27,6 +27,7 @@ export type Settings = {
 };
 export type Draft = {
   version: 2;
+  localRevision?: number;
   cloud?: CloudLink;
   history: Frame[];
   assets: Assets;
@@ -180,13 +181,27 @@ export function initialDraftId() {
   return id && /^[a-f0-9-]{36}$/.test(id) ? rememberDraft(id) : createDraftId();
 }
 
-export async function discardDraft(id: string) {
+export const LOCAL_CONFLICT =
+  'This draft changed in another tab. Save a local copy to keep your edits.';
+
+export async function discardDraft(id: string, expectedRevision: number) {
   const db = await openDatabase();
   await new Promise<void>((resolve, reject) => {
     const transaction = db.transaction('drafts', 'readwrite');
-    transaction.objectStore('drafts').delete(id);
+    const store = transaction.objectStore('drafts');
+    let conflict = false;
+    const read = store.get(id);
+    read.onsuccess = () => {
+      if ((read.result?.localRevision || 0) !== expectedRevision) {
+        conflict = true;
+        transaction.abort();
+        return;
+      }
+      store.delete(id);
+    };
     transaction.oncomplete = () => resolve();
-    transaction.onabort = () => reject(transaction.error);
+    transaction.onabort = () =>
+      reject(conflict ? new Error(LOCAL_CONFLICT) : transaction.error);
     transaction.onerror = () => reject(transaction.error);
   });
   try {
@@ -217,13 +232,29 @@ export async function readDraft(id: string): Promise<Draft | undefined> {
   });
 }
 
-export async function saveDraft(id: string, value: Draft) {
+export async function saveDraft(
+  id: string,
+  value: Draft,
+  expectedRevision = 0,
+): Promise<number> {
   const db = await openDatabase();
-  await new Promise<void>((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     const transaction = db.transaction('drafts', 'readwrite');
-    transaction.objectStore('drafts').put(value, id);
-    transaction.oncomplete = () => resolve();
-    transaction.onabort = () => reject(transaction.error);
+    const store = transaction.objectStore('drafts');
+    let conflict = false;
+    const revision = expectedRevision + 1;
+    const read = store.get(id);
+    read.onsuccess = () => {
+      if ((read.result?.localRevision || 0) !== expectedRevision) {
+        conflict = true;
+        transaction.abort();
+        return;
+      }
+      store.put({ ...value, localRevision: revision }, id);
+    };
+    transaction.oncomplete = () => resolve(revision);
+    transaction.onabort = () =>
+      reject(conflict ? new Error(LOCAL_CONFLICT) : transaction.error);
     transaction.onerror = () => reject(transaction.error);
   });
 }
