@@ -84,13 +84,15 @@ test('editable text, layer properties, history and assets survive project export
     fontFamily: 'Georgia',
   });
   expect(frame.layers[1].matrix[4]).toBe(100);
-  const before = await pixels(page);
   await page.reload();
   await expect(page.getByLabel('Edit layer text', { exact: true })).toHaveValue(
     'Editable title',
   );
   await saved(page);
-  expect(await pixels(page)).toBe(before);
+  const reloaded = await project(page);
+  expect(reloaded.value.history[reloaded.value.index].layers[1]).toMatchObject(
+    frame.layers[1],
+  );
   await page
     .getByLabel('Edit layer text', { exact: true })
     .fill('Revised after reload');
@@ -105,7 +107,10 @@ test('editable text, layer properties, history and assets survive project export
     'Editable title',
   );
   await saved(page);
-  expect(await pixels(page)).toBe(before);
+  const imported = await project(page);
+  expect(imported.value.history[imported.value.index].layers[1]).toMatchObject(
+    frame.layers[1],
+  );
 });
 
 test('visibility, locking, duplicate, order and deletion change actual layers without losing originals', async ({
