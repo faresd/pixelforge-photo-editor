@@ -504,7 +504,8 @@ export default function Home() {
   };
   const resizeImage = (w: number, h: number) => {
     const f = current();
-    commit(transformFrame(f, [w / f.w, 0, 0, h / f.h, 0, 0], w, h));
+    if (!commit(transformFrame(f, [w / f.w, 0, 0, h / f.h, 0, 0], w, h)))
+      return;
     setResizing(null);
     setNotice('Image resized; layers remain editable');
   };
@@ -532,6 +533,7 @@ export default function Home() {
     const f = current();
     if (f.layers.length >= 32) {
       setNotice('32-layer limit reached');
+      void paint(f);
       return false;
     }
     if (commit({ ...f, layers: [...f.layers, layer], active: layer.id })) {
@@ -597,7 +599,7 @@ export default function Home() {
         assets.current,
       );
       if (current() !== f) return;
-      editLayer({
+      const changed = editLayer({
         ...commonLayer(layer.name),
         id: layer.id,
         kind: 'raster',
@@ -607,7 +609,8 @@ export default function Home() {
         visible: layer.visible,
         adjustments: layer.adjustments,
       });
-      setNotice('Layer rasterized. Undo restores editable content.');
+      if (changed)
+        setNotice('Layer rasterized. Undo restores editable content.');
     } catch {
       setNotice('Could not rasterize layer');
     }
@@ -679,7 +682,7 @@ export default function Home() {
       p = point(e);
     canvas.current!.setPointerCapture(e.pointerId);
     if (tool === 'text') {
-      addLayer({
+      const added = addLayer({
         ...commonLayer('Text ' + f.layers.length),
         kind: 'text',
         text: text || 'Your text',
@@ -689,7 +692,7 @@ export default function Home() {
         color,
         matrix: [1, 0, 0, 1, p.x, p.y],
       });
-      setNotice('Editable text layer added');
+      if (added) setNotice('Editable text layer added');
       return;
     }
     if (tool === 'rectangle' || tool === 'crop') {
@@ -839,13 +842,13 @@ export default function Home() {
       const matrix = [...g.layer.matrix] as Matrix;
       matrix[4] += p.x - g.start.x;
       matrix[5] += p.y - g.start.y;
-      commit({
+      const changed = commit({
         ...f,
         layers: f.layers.map((l) =>
           l.id === g.layer!.id ? { ...l, matrix } : l,
         ),
       });
-      setNotice('Layer moved');
+      if (changed) setNotice('Layer moved');
     } else if (g.buffer && g.layer) {
       const x = g.buffer.getContext('2d')!;
       x.beginPath();
@@ -853,7 +856,7 @@ export default function Home() {
       x.lineTo(p.x, p.y);
       x.stroke();
       const asset = addAsset(assets.current, g.buffer);
-      commit({
+      const changed = commit({
         ...f,
         layers: f.layers.map((l) =>
           l.id === g.layer!.id
@@ -861,7 +864,7 @@ export default function Home() {
             : l,
         ),
       });
-      setNotice('Paint layer updated');
+      if (changed) setNotice('Paint layer updated');
     } else if (g.tool === 'rectangle' && g.moved) {
       addLayer({
         ...commonLayer('Shape ' + f.layers.length),
@@ -886,8 +889,8 @@ export default function Home() {
         w = Math.floor(Math.min(f.w - left, Math.abs(p.x - g.start.x))),
         h = Math.floor(Math.min(f.h - top, Math.abs(p.y - g.start.y)));
       if (w > 0 && h > 0) {
-        commit(transformFrame(f, [1, 0, 0, 1, -left, -top], w, h));
-        setNotice('Canvas cropped; layer pixels retained');
+        if (commit(transformFrame(f, [1, 0, 0, 1, -left, -top], w, h)))
+          setNotice('Canvas cropped; layer pixels retained');
       } else void paint(f);
     } else void paint(f);
   };
@@ -901,7 +904,7 @@ export default function Home() {
           : a === 'h'
             ? [-1, 0, 0, 1, f.w, 0]
             : [1, 0, 0, -1, 0, f.h];
-    commit(
+    const changed = commit(
       transformFrame(
         f,
         matrix,
@@ -909,7 +912,7 @@ export default function Home() {
         a === 'left' || a === 'right' ? f.w : f.h,
       ),
     );
-    setNotice('Transform applied to document; layers preserved');
+    if (changed) setNotice('Transform applied to document; layers preserved');
   };
   const undo = () => {
       travel(-1);

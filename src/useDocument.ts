@@ -83,13 +83,15 @@ export function useDocument(onError: (message: string) => void) {
         return true;
       } catch (error) {
         assets.current = referencedAssets(history.current, assets.current);
+        if (history.current[index.current])
+          void paint(history.current[index.current]);
         onError(
           error instanceof Error ? error.message : 'Edit could not be applied',
         );
         return false;
       }
     },
-    [publish, onError],
+    [publish, onError, paint],
   );
   const install = useCallback(async (draft: Draft) => {
     const expected = history.current[index.current];

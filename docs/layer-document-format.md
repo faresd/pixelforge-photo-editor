@@ -11,3 +11,5 @@ Limits: 32 layers, 16 megapixels per canvas or image asset, 64 megapixels of ras
 The renderer uses Canvas 2D; tested browser coverage is Chromium desktop and mobile. System font metrics may differ across platforms. PSD, CMYK, RAW, masks, groups, selections, cloning/healing, pressure curves, tiled workers, color-managed export and batch processing remain outstanding. This milestone does not claim Photoshop compatibility or professional parity.
 
 Next gates: structured selections/masks and groups, command coalescing and durable blob storage, explicit large-image performance budgets, cross-browser pixel/format tests, then advanced tools. No lossy PSD import should be presented as a faithful round trip.
+
+Local persistence also uses an atomic IndexedDB revision comparison. A stale tab cannot overwrite or discard a newer stored draft. Saves within one tab are queued; the saved indicator follows transaction completion. A conflict leaves the in-memory edits available for project export or “Save local copy,” which creates a separate bookmark and clears its cloud-update link. `localRevision` is storage metadata and is omitted from portable/cloud documents.
