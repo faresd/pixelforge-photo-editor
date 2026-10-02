@@ -108,6 +108,12 @@ export default function Home() {
     return () => window.removeEventListener('beforeunload', protectPendingSave);
   }, [cloudBusy]);
 
+  useEffect(() => {
+    const openBookmark = () => { if (new URLSearchParams(location.hash.slice(1)).get('draft') !== draftId) location.reload(); };
+    window.addEventListener('hashchange', openBookmark);
+    return () => window.removeEventListener('hashchange', openBookmark);
+  }, [draftId]);
+
   const saveToCloud = async () => {
     if (!member || cloudBusy) return;
     setCloudBusy(true); setCloudMessage('Saving private cloud project…');
