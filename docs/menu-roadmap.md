@@ -1,0 +1,112 @@
+# Photoshop menu and workflow roadmap
+
+The supplied Photoshop screenshots are treated as a capability inventory, not as a promise to copy Adobe's UI or expose unfinished actions. The app's public brand is Pixel; PixelForge remains the repository name. Pixel keeps its free anonymous, local-first editor and reuses the existing Cheaply session only for optional private projects. Every action exposed in the app must be either a working command with persistence and extensive tests or visibly disabled with a roadmap label.
+
+This digest covers the supplied Edit, Image, Layer, Type and Select screenshots (01.07.09 through 01.07.35), the Image Size dialog (01.11.43), the Filter/Blur screenshot (01.12.44), and Blur Gallery, Distort, Pixelate, Render, Sharpen and Video screenshots (01.13.02 through 01.13.28). Repeated screenshots are deduplicated. A gray Photoshop item is still included as a requested capability; its appearance does not establish whether Pixel implements it. Unopened submenus are recorded by name without inventing their contents.
+
+“Implemented” below describes available branch code, subject to the release gates. It does not establish deployment. The existing menu shell covers only a subset of this inventory. A disabled menu entry records future work; an inventory item without a menu entry is still part of the roadmap.
+
+## Menu taxonomy extracted from the references
+
+| Menu family | Capability groups | Current PixelForge state | Next evidence required |
+| --- | --- | --- | --- |
+| Edit | Undo/redo/history, fade, cut/copy/paste, search/spelling/text replacement, fill/stroke, content-aware and generative actions, transform/warp, presets, purge, color management, keyboard/menu/toolbar customization | Undo/redo, an internal layer clipboard and selection-aware Fill are implemented. The internal clipboard is not yet an operating-system pixel/text clipboard. Many unsupported entries are disabled; the remaining inventory is planned. | Clipboard/layer round trips, fill pixel fixtures, command history and explicit provider/privacy contracts for any remote or AI action |
+| Image | Mode, adjustments, auto tone/contrast/color, image size, generative upscale, canvas size, rotation, crop, trim/reveal, duplicate, apply/calculations, variables and analysis | Image resize, crop, rotate and flip are active. The adjustment panel is nondestructive for the currently supported controls. Other entries remain disabled until a document-model and performance contract exists. | Dimension/units/resolution persistence, canvas expansion pixels, adjustment-layer fixtures, bounded worker/tile performance and offline failure behavior |
+| Layer | New/copy/duplicate/delete, export, styles, smart filters, fill/adjustment layers, raster/vector masks, clipping, smart objects/video, rasterize, slices, grouping, arrange/align/distribute, locks/links, merge/flatten/matting | Paint/new, duplicate/delete, group/ungroup, hide, selection masks, document export and flatten are implemented. Separate layer-scoped export and merge-visible semantics need dedicated contracts; shared document-export/flatten handlers do not establish those distinct capabilities. Group blend isolation, vector masks, clipping, links, smart objects, video, slices and alignment remain planned. | Layer and asset round trips, non-destructive mask pixels, affine transforms, group compositing and conflict-safe history |
+| Type | Fonts, panels, antialiasing, orientation, OpenType, work paths/shapes, rasterize/convert, dynamic text, warp, matching, language and type styles | Editable multiline horizontal text with font, size, color and bold controls is active. Text tool menu entry is active; vertical type, OpenType, alignment/spacing, type masks, path conversion and style presets remain planned. | Font fallback disclosure, line metrics, alignment/spacing persistence, text-mask alpha fixtures and mobile editing |
+| Select | All/deselect/reselect/inverse, layer selection, color range/focus/subject/sky, select-and-mask, modify/grow/similar, transform selection, quick mask, load/save selection | All, deselect, inverse, rectangular/elliptical/row/column/lasso/polygonal lasso, add/subtract/intersect, feather, magic wand and nondestructive masks are active. Inference, quick mask, selection files and selection transforms remain planned. | Deterministic alpha fixtures, disconnected-region behavior, selection file migration, privacy disclosure for inference and mask round trips |
+| Filter | Smart-filter conversion, neural/camera raw/AI filters, lens/distort, blur and blur gallery, noise, pixelate, render, sharpen, stylize, video and other effects | Preset filters plus editable brightness/contrast/saturation/blur are active. The menu inventory is recorded; advanced filters are disabled until each has a bounded, nondestructive renderer and pixel tests. | Representative pixels, undo/source preservation, parameter persistence, large-image budgets and explicit unsupported-format labels |
+| View | Fit/actual zoom, screen modes and workspace visibility from the toolbar references; the supplied menu screenshots show only the View heading | Fit, actual size and zoom controls are implemented. Browser fullscreen and distraction-free modes remain planned. | Escape recovery, keyboard reachability, mobile viewport tests and no draft mutation |
+| Plugins / Window | Headings are visible; neither menu's contents were supplied | No plugin or remote asset provider is connected; the current Plugins shell has disabled entries. Window/panel management is planned, with its contents to be specified from product needs. | Permission, quota, privacy, offline fallback and provider-failure tests before activation |
+
+## Complete menu-command inventory
+
+These tables record the visible commands verbatim where practical. Groups provide planning categories, not additional submenu contents.
+
+| Edit group | Commands visible in the reference | Dependency / intended increment |
+| --- | --- | --- |
+| History | Undo; Redo; Toggle Last State; Fade… | Named undoable commands and retained prior-state/operation parameters; Fade requires amount and blend behavior |
+| Clipboard | Cut; Copy; Copy Merged; Paste; Paste Special ▶; Clear | Selection-aware raster/text clipboard and document coordinates; Paste Special contents were not shown |
+| Text utilities | Search; Check Spelling…; Find and Replace Text… | Command search, editable text traversal, language metadata and reversible replacements |
+| Fill and assistance | Fill…; Stroke…; Content-Aware Fill…; Prompt to Edit…; Generative Fill…; Generate Image…; Reflection Removal… | Local fill/stroke first; deterministic content-aware methods or explicit opt-in provider contracts later |
+| Transform and compositing | Content-Aware Scale; Puppet Warp; Perspective Warp; Free Transform; Transform ▶; Rotate Object; Auto-Align Layers…; Auto-Blend Layers…; Sky Replacement… | Affine transforms before perspective/mesh warps; layer alignment/compositing and object/sky masks before assisted replacements |
+| Reusable assets | Define Brush Preset…; Define Pattern…; Define Custom Shape… | Versioned brush, tile and vector preset storage with portable imports |
+| Maintenance and configuration | Purge ▶; Adobe PDF Presets…; Presets ▶; Remote Connections…; Color Settings…; OpenColorIO Settings…; Assign Profile…; Convert to Profile…; Keyboard Shortcuts…; Menus…; Toolbar… | Safe history/cache eviction, export/color metadata and user preferences; Adobe-specific labels require Pixel equivalents rather than an implied Adobe integration |
+
+| Image group | Commands visible in the reference | Dependency / intended increment |
+| --- | --- | --- |
+| Color and correction | Mode ▶; Adjustments ▶; Auto Tone; Auto Contrast; Auto Color | Document color-space/bit-depth contract; deterministic histogram corrections and adjustment commands |
+| Geometry | Image Size…; Generative Upscale…; Canvas Size…; Image Rotation ▶; Crop; Trim…; Reveal All | Unit/resolution metadata and reversible layer/mask transforms; assisted upscale separated from resampling |
+| Image composition | Duplicate…; Apply Image…; Calculations… | Independent duplicate identity; channel arithmetic and source/destination validation |
+| Data and analysis | Variables ▶; Apply Data Set…; Trap…; Analysis ▶ | Typed variable templates and measurement data; print trapping after a validated print/color pipeline |
+
+| Layer group | Commands visible in the reference | Dependency / intended increment |
+| --- | --- | --- |
+| Creation and export | New ▶; Copy CSS; Copy SVG; Duplicate Layer…; Delete ▶; Quick Export as PNG; Export As… | Typed layer creation, vector/text serialization and independently specified layer/document export scopes |
+| Appearance | Rename Layer…; Layer Style ▶; Smart Filter ▶; New Fill Layer ▶; New Adjustment Layer ▶; Harmonize; Layer Content Options… | Editable style stack, fill/adjustment nodes and preserved sources; harmonization quality/privacy contract |
+| Masks | Layer Mask ▶; Vector Mask ▶; Create Clipping Mask; Mask All Objects | Raster masks before vector/clipping dependencies and automatic object masks |
+| Source types | Smart Objects ▶; Video Layers ▶; Rasterize ▶; New Layer Based Slice | Linked/embedded source identity, format support and loss-of-editability disclosure; temporal layers separately scoped |
+| Structure | Group Layers; Ungroup Layers; Hide Layers; Arrange ▶; Combine Shapes ▶; Align ▶; Distribute | Multi-layer selection, group compositing, vector boolean operations and numeric alignment |
+| Locks and links | Lock Layers…; Link Layers; Select Linked Layers | Persisted lock policy and transform links without corrupting independent assets |
+| Compositing | Merge Layers; Merge Visible; Flatten Image; Matting ▶ | Separate selected/visible/all scope, preserved hidden layers where required, alpha edge handling and reversible history |
+
+| Type group | Commands visible in the reference | Dependency / intended increment |
+| --- | --- | --- |
+| Fonts and panels | More from Adobe Fonts…; Panels ▶; Anti-Alias ▶; Orientation ▶; OpenType ▶ | Local/system font workflow first; licensed optional font providers, shaping/metrics and text panels |
+| Conversions | Create Work Path; Convert to Shape; Rasterize Type Layer; Convert Text Shape Type; Convert to Dynamic Text ▶ | Vector outlines, text-on-shape representation and explicit reversible conversion boundaries |
+| Layout and discovery | Warp Text…; Match Font…; Font Preview Size ▶; Language Options ▶ | Text transforms, font matching quality, preview preferences, writing direction and script support |
+| Maintenance and presets | Update All Text Layers; Manage Missing Fonts; Paste Lorem Ipsum; Load Default Type Styles; Save Default Type Styles | Missing-font diagnostics, safe bulk updates and validated portable style presets |
+
+| Select group | Commands visible in the reference | Dependency / intended increment |
+| --- | --- | --- |
+| Selection state | All; Deselect; Reselect; Inverse | Current and previous selection snapshots, deterministic alpha algebra |
+| Layer selection | All Layers; Deselect Layers; Find Layers; Isolate Layers | Multi-layer selection and stable layer identifiers |
+| Assisted selection | Color Range…; Focus Area…; Subject; Sky; Select and Mask… | Local color/edge refinement before measured semantic inference; upload consent only if a remote method is introduced |
+| Refinement | Modify ▶; Grow; Similar; Transform Selection | Mask morphology, disconnected-region behavior and transformed selection coordinates |
+| Interchange | Edit in Quick Mask Mode; Load Selection…; Save Selection… | Editable alpha overlay, independent named selections and portable selection validation |
+
+| Filter group | Commands visible in the reference | Dependency / intended increment |
+| --- | --- | --- |
+| Repeat and source preservation | Last Filter; Convert for Smart Filters | Persisted operation/parameters, repeat behavior and editable source/filter stack |
+| Advanced corrections | Neural Filters…; Filter Gallery…; Adaptive Wide Angle…; Camera Raw Filter…; AI Denoise…; AI Sharpen…; Lens Correction…; Liquify…; Vanishing Point… | Raw/lens metadata, bounded local kernels and geometric warps; inference quality, licensing and privacy gates |
+| Effect families | Blur ▶; Blur Gallery ▶; Distort ▶; Noise ▶; Pixelate ▶; Render ▶; Sharpen ▶; Stylize ▶; Video ▶; Other ▶ | Individual effects listed below; Noise, Stylize and Other contents were not opened in the supplied images |
+
+## Filter submenu inventory
+
+| Family | Exact visible effects | Implementation order and test emphasis |
+| --- | --- | --- |
+| Blur | Average; Blur; Blur More; Box Blur…; Gaussian Blur…; Lens Blur…; Motion Blur…; Radial Blur…; Shape Blur…; Smart Blur…; Surface Blur… | Average/box/Gaussian kernels first; edge-aware, directional and aperture variants later. Test alpha edges, radius bounds, tiny images and selected-region seams. Existing adjustment blur does not establish these separate menu effects. |
+| Blur Gallery | Field Blur…; Iris Blur…; Tilt-Shift…; Path Blur…; Spin Blur… | Persisted control points and spatial masks; test centers, falloffs, rotations and preview/export agreement. |
+| Distort | Displace…; Pinch…; Polar Coordinates…; Ripple…; Shear…; Spherize…; Twirl…; Wave…; ZigZag… | Shared inverse-mapping/interpolation engine; test identity settings, corners, transparent edges, displacement input and coordinate round trips. |
+| Noise | Submenu heading only | Concrete algorithms require a later specification; Add Noise in the menu shell is a planning addition, not extracted submenu evidence. |
+| Pixelate | Color Halftone…; Crystallize…; Facet; Fragment; Mezzotint…; Mosaic…; Pointillize… | Mosaic and seeded deterministic effects first; test grid edges, seed persistence, channel handling and alpha. |
+| Render | Flame…; Picture Frame…; Tree…; Clouds; Difference Clouds; Fibers…; Lens Flare… | Seeded procedural assets and explicit foreground/background use; test reproducibility, parameter bounds and document-size scaling. |
+| Sharpen | Sharpen; Sharpen Edges; Sharpen More; Smart Sharpen…; Unsharp Mask… | Basic kernel/unsharp mask first, edge-aware variants later; test flat regions, contrast edges, halos and transparent pixels. |
+| Stylize | Submenu heading only | Effects must be specified before implementation; none are inferred from this image. |
+| Video | De-Interlace…; NTSC Colors | Legacy raster corrections can be independent of video-layer editing; test field parity and output color bounds. |
+| Other | Submenu heading only | Effects must be specified before implementation; none are inferred from this image. |
+
+Every named effect above remains an individual roadmap item. Shared infrastructure and parameterized test fixtures may be reused, but each effect needs its own expected output and error cases before it is enabled.
+
+## Image Size workflow
+
+The visible dialog contains an image preview, Image Size estimate, Dimensions with units, Fit To (Original Size shown), linked Width/Height, independent unit selectors (Centimeters shown), Resolution (Pixels/Inch shown), a Resample checkbox/method (Automatic shown), settings control, Cancel/OK and “Open in Generative Upscale…”. Its example values are 3264 × 1936 pixels, 18.1M, 115.15 × 68.3 cm and 72 pixels/inch; these are sample document values, not Pixel defaults or performance limits.
+
+Pixel currently provides a pixel-dimension resize dialog with linked dimensions and editable layers. Remaining requirements are physical units, resolution metadata, fit presets, a truthful memory/size estimate, preview and explicit resampling choice. Turning resampling off must change print dimensions/resolution without changing pixel dimensions; enabling it must transform layers and masks consistently. Canvas Size, Trim and Reveal All are separate commands with distinct extent/anchor behavior. Locale-aware numeric input must handle the decimal commas shown in the reference.
+
+Generative upscaling must create a separately identified document and disclose its potentially reconstructed detail. It must remain opt-in and must never silently upload an anonymous user's photo. Required tests cover aspect lock/unlock, unit conversions, resolution-only changes, up/downsampling, cancellation, invalid/extreme dimensions, decimal separators, layer/mask transforms, undo, reload and project export/import.
+
+## Delivery rules
+
+Menu breadth is delivered in dependency order: document and selection contracts first, then vector/text and adjustment renderers, then batch/export and scale workflows. A menu's visual presence is not completion evidence. Every implemented feature requires the extensive test contract in [`tool-roadmap.md`](./tool-roadmap.md#extensive-test-contract), including core correctness, boundary/failure cases, desktop/mobile use, undo where applicable, persistence/interchange and appropriate performance evidence. Planned entries remain disabled until those gates pass.
+
+| Increment | Menu capabilities | Prerequisite / exit evidence |
+| --- | --- | --- |
+| A — Reliable command shell | Menu keyboard navigation, current Undo/Redo, clipboard-layer commands, Fill, All/Deselect/Inverse, masks and flatten | Correct enabled/disabled states, Escape/outside-click recovery, precise command names/scopes, per-command behavior tests and tested revision evidence |
+| B — Precision and selection | Image/Canvas Size, Trim/Reveal All, free transform, selection modification, Reselect, Quick Mask and saved selections | Document coordinates, numeric/unit validation, mask morphology, undo and local/project round trips |
+| C — Editable composition | Multi-layer selection/merge/alignment, clipping/vector masks, fill/adjustment layers, styles, source/filter stacks, text layout and vector exports | Isolated group compositing, path/text model, filter serialization and correct export scope |
+| D — Local effects and retouch | Auto corrections, repeat filter, basic blur/sharpen/noise/pixelate, brush/pattern presets, transform distortions and text conversions | Deterministic kernels and procedural seeds; representative fixtures, selection/alpha boundaries and bounded processing |
+| E — Production and automation | Data sets/variables, batch workflows, interoperable imports/exports, color profiles, measurement/analysis and workspace customization | Format/color fidelity contracts, validated presets, storage/performance failure recovery and accessibility |
+| F — Advanced assistance | Content-aware warps/fills, raw/lens/mesh pipelines, subject/sky/object tools, harmonization, optional generation, remote connections and plugins | Quality/licensing/privacy/free-operation criteria, quotas, opt-in remote processing where needed and cancellation/provider failure tests |
+
+This is a dependency schedule, not a calendar commitment. Advanced local features may ship before an unrelated provider integration when their prerequisites and tests are complete. Filter Gallery is a browsable effect workflow, not proof that every individual effect works. Adobe Fonts/Stock/PDF preset references are capability prompts; no Adobe service, content library or compatible file format is claimed until explicitly integrated and validated.

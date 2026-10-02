@@ -307,6 +307,127 @@ test('Photoshop-style tool, color and selection shortcuts are implemented', asyn
   await expect(page.getByLabel('Background color')).toHaveValue('#ffffff');
 });
 
+test('Photoshop menu families expose working commands and label planned actions', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  for (const menu of ['File', 'Edit', 'Image', 'Layer', 'Type', 'Select', 'Filter', 'View', 'Plugins']) {
+    await page.getByRole('button', { name: menu, exact: true }).click();
+    await expect(page.getByRole('menu', { name: `${menu} menu` })).toBeVisible();
+    await page.keyboard.press('Escape');
+  }
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: /^Copy Layer/ })).toBeEnabled();
+  await expect(page.getByRole('menuitem', { name: /^Fill/ })).toBeEnabled();
+  const generativeFill = page.getByRole('menuitem', { name: /^Generative Fill/ });
+  await expect(generativeFill).toBeDisabled();
+  await expect(generativeFill).toHaveAttribute('title', 'Planned for a later roadmap stage');
+  await expect(page.getByRole('menuitem', { name: /^Cut Layer/ })).toBeDisabled();
+  await expect(page.getByRole('menuitem', { name: /^Paste Layer/ })).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Merge Visible', exact: true })).toBeEnabled();
+  await expect(page.getByRole('menuitem', { name: 'Flatten Image', exact: true })).toBeEnabled();
+  await expect(page.getByRole('menuitem', { name: 'Layer Mask', exact: true })).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: /^Gaussian Blur/ })).toBeDisabled();
+  await page.getByRole('menuitem', { name: 'Vivid', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Vivid filter', exact: true })).toHaveClass(/selected/);
+});
+
+test('Edit Fill is undoable and menu selection commands persist', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
+  const canvas = page.getByTestId('editor-canvas');
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Fill/ }).click();
+  await expect.poll(() => canvas.evaluate((item: HTMLCanvasElement) => Array.from(item.getContext('2d')!.getImageData(12, 12, 1, 1).data))).toEqual([255, 92, 53, 255]);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  await expect.poll(() => canvas.evaluate((item: HTMLCanvasElement) => item.getContext('2d')!.getImageData(12, 12, 1, 1).data[3])).toBe(0);
+
+  await page.getByRole('button', { name: 'Select', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^All Ctrl\+A$/ }).click();
+  const downloaded = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
+  const path = await (await downloaded).path();
+  const project = JSON.parse(await (await import('node:fs/promises')).readFile(path!, 'utf8'));
+  expect(project.history[project.index].selection).toMatchObject({ shape: 'rectangle', w: 1200, h: 800 });
+  await page.getByRole('button', { name: 'Select', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Deselect Ctrl\+D$/ }).click();
+  await expect(page.getByRole('button', { name: 'Mask from selection', exact: true })).toBeDisabled();
+});
+
+test('Edit Clear, Shift-F5 fill and Merge Visible preserve pixels and hidden layers', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^New white document/ }).click();
+  const canvas = page.getByTestId('editor-canvas');
+  await expect.poll(() => canvas.evaluate((item: HTMLCanvasElement) => Array.from(item.getContext('2d')!.getImageData(12, 12, 1, 1).data))).toEqual([255, 255, 255, 255]);
+  await page.keyboard.press('Shift+F5');
+  await expect.poll(() => canvas.evaluate((item: HTMLCanvasElement) => Array.from(item.getContext('2d')!.getImageData(12, 12, 1, 1).data))).toEqual([255, 92, 53, 255]);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Clear', exact: true }).click();
+  await expect.poll(() => canvas.evaluate((item: HTMLCanvasElement) => item.getContext('2d')!.getImageData(12, 12, 1, 1).data[3])).toBe(0);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  await expect.poll(() => canvas.evaluate((item: HTMLCanvasElement) => Array.from(item.getContext('2d')!.getImageData(12, 12, 1, 1).data))).toEqual([255, 92, 53, 255]);
+
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Duplicate Layer/ }).click();
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Hide Layers/ }).click();
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Merge Visible', exact: true }).click();
+  await expect(page.getByRole('heading', { name: /Layers/ })).toContainText('2 /');
+  const downloaded = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
+  const path = await (await downloaded).path();
+  const project = JSON.parse(await (await import('node:fs/promises')).readFile(path!, 'utf8'));
+  expect(project.history[project.index].layers).toHaveLength(2);
+  expect(project.history[project.index].layers.filter((layer: { visible: boolean }) => !layer.visible)).toHaveLength(1);
+});
+
+test('layer menu copy, paste, hide and flatten preserve an undoable project', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'Type', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Text Tool/ }).click();
+  const canvas = page.getByTestId('editor-canvas');
+  const box = (await canvas.boundingBox())!;
+  await canvas.click({ position: { x: box.width / 2, y: box.height / 2 } });
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Copy Layer/ }).click();
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Paste Layer/ }).click();
+  let downloaded = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
+  let path = await (await downloaded).path();
+  let project = JSON.parse(await (await import('node:fs/promises')).readFile(path!, 'utf8'));
+  expect(project.history[project.index].layers).toHaveLength(3);
+
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Hide Layers/ }).click();
+  await expect(page.getByLabel('Visible', { exact: true })).not.toBeChecked();
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Flatten Image', exact: true }).click();
+  await expect.poll(() => page.getByRole('heading', { name: /Layers/ }).textContent()).toContain('1 /');
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  downloaded = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
+  path = await (await downloaded).path();
+  project = JSON.parse(await (await import('node:fs/promises')).readFile(path!, 'utf8'));
+  expect(project.history[project.index].layers.length).toBe(3);
+});
+
 test('Photoshop-style document shortcuts drive existing actions and ignore text fields', async ({ page }) => {
   await page.goto('/editor?new=1');
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');

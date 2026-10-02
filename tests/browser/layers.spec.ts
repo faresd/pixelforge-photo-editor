@@ -863,6 +863,46 @@ test('lasso selection stores polygon points and survives project round-trip', as
   expect(reloaded.value.history[reloaded.value.index].selection.shape).toBe('polygon');
 });
 
+test('polygonal lasso closes by vertex, masks representative pixels and survives reload', async ({
+  page,
+}) => {
+  const canvas = page.getByTestId('editor-canvas');
+  const box = (await canvas.boundingBox())!;
+  await page.getByRole('button', { name: 'Polygonal Lasso tool', exact: true }).click();
+  const points = [
+    [0.2, 0.2],
+    [0.8, 0.2],
+    [0.5, 0.75],
+  ];
+  for (const [x, y] of points)
+    await page.mouse.click(box.x + box.width * x, box.y + box.height * y);
+  // Clicking the first vertex closes the polygon on both mouse and touch-style
+  // pointer sequences; the gesture does not require a drag.
+  await page.mouse.click(box.x + box.width * points[0][0], box.y + box.height * points[0][1]);
+  await expect(page.getByText('Polygonal selection created', { exact: true })).toBeVisible();
+
+  const exported = await project(page),
+    frame = exported.value.history[exported.value.index],
+    selection = frame.selection;
+  expect(selection).toMatchObject({ shape: 'polygon', points: expect.any(Array) });
+  expect(selection.points).toHaveLength(3);
+  expect(selection.w).toBeGreaterThan(1);
+  await page.getByRole('button', { name: 'Mask from selection', exact: true }).click();
+  await expect(page.getByText('Nondestructive mask active', { exact: true })).toBeVisible();
+  await expect.poll(() => canvas.evaluate((item: HTMLCanvasElement) => {
+    const context = item.getContext('2d')!,
+      inside = context.getImageData(Math.floor(item.width * 0.5), Math.floor(item.height * 0.4), 1, 1).data[3],
+      outside = context.getImageData(Math.floor(item.width * 0.1), Math.floor(item.height * 0.1), 1, 1).data[3];
+    return { inside, outside };
+  })).toEqual({ inside: expect.any(Number), outside: 0 });
+  await page.reload();
+  await expect(page.getByText('Nondestructive mask active', { exact: true })).toBeVisible();
+  const reloaded = await project(page),
+    reloadedFrame = reloaded.value.history[reloaded.value.index];
+  expect(reloadedFrame.selection.points).toHaveLength(3);
+  expect(reloadedFrame.layers[0].mask).toEqual(expect.any(String));
+});
+
 test('selection add mode composes geometry and masks pixels nondestructively', async ({
   page,
 }) => {
