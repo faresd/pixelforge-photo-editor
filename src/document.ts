@@ -42,6 +42,8 @@ type Common = {
   adjustments: Adjustments;
   /** Optional canvas-space alpha mask asset. Source pixels remain untouched. */
   mask?: string;
+  /** Optional editable folder membership. Groups are metadata; source pixels stay local to the layer. */
+  groupId?: string;
 };
 export type Layer = Common &
   (
@@ -71,6 +73,17 @@ export type Layer = Common &
         fill: boolean;
       }
   );
+/** A persisted, editable layer folder. Layers keep their own order in Frame.layers. */
+export type Group = {
+  id: string;
+  name: string;
+  visible: boolean;
+  locked: boolean;
+  opacity: number;
+  blend: (typeof BLENDS)[number];
+  /** UI-only state persisted with the draft so a reopened project keeps its workspace. */
+  collapsed: boolean;
+};
 export type SelectionOperation = 'replace' | 'add' | 'subtract' | 'intersect';
 export type SelectionPart = {
   shape: 'rectangle' | 'ellipse' | 'polygon';
@@ -99,6 +112,8 @@ export type Frame = {
   h: number;
   layers: Layer[];
   active: string;
+  /** Optional for backwards compatibility with v2 drafts created before folders. */
+  groups?: Group[];
   selection?: Selection;
 };
 export type Asset = { url: string; w: number; h: number };
@@ -258,6 +273,25 @@ export function validateFrame(
   )
     return fail();
   const ids = new Set<string>();
+  if (value.groups !== undefined && !Array.isArray(value.groups)) return fail();
+  const groups = Array.isArray(value.groups) ? value.groups : [];
+  if (groups.length > 32) return fail();
+  for (const group of groups) {
+    if (
+      !record(group) ||
+      !validId(group.id) ||
+      ids.has(group.id) ||
+      !short(group.name, 160) ||
+      typeof group.visible !== 'boolean' ||
+      typeof group.locked !== 'boolean' ||
+      !number(group.opacity, 0, 1) ||
+      !BLENDS.includes(group.blend as (typeof BLENDS)[number]) ||
+      typeof group.collapsed !== 'boolean'
+    )
+      return fail();
+    ids.add(group.id);
+  }
+  const groupIds = new Set(groups.map((group) => group.id));
   let pixels = 0;
   for (const layer of value.layers) {
     if (
@@ -272,7 +306,9 @@ export function validateFrame(
       !Array.isArray(layer.matrix) ||
       layer.matrix.length !== 6 ||
       !layer.matrix.every((v) => number(v, -1000000, 1000000)) ||
-      !validAdjustments(layer.adjustments)
+      !validAdjustments(layer.adjustments) ||
+      (layer.groupId !== undefined &&
+        (!validId(layer.groupId) || !groupIds.has(layer.groupId)))
     )
       return fail();
     const m = layer.matrix as Matrix;
@@ -601,9 +637,12 @@ export async function renderFrame(
   overrides?: Record<string, HTMLCanvasElement>,
 ): Promise<HTMLCanvasElement> {
   const out = surface(frame.w, frame.h),
-    context = out.getContext('2d')!;
+    context = out.getContext('2d')!,
+    groups = new Map((frame.groups || []).map((group) => [group.id, group]));
   for (const layer of frame.layers) {
-    if (!layer.visible) continue;
+    const group = layer.groupId ? groups.get(layer.groupId) : undefined;
+    if (!layer.visible || (group && !group.visible)) continue;
+    const groupOpacity = group?.opacity ?? 1;
     const override = overrides?.[layer.id];
     const image =
       layer.kind === 'raster' && !override
@@ -631,7 +670,7 @@ export async function renderFrame(
       maskContext.drawImage(maskImage, 0, 0);
       maskContext.restore();
       context.save();
-      context.globalAlpha = layer.opacity;
+      context.globalAlpha = layer.opacity * groupOpacity;
       context.globalCompositeOperation = layer.blend;
       context.drawImage(masked, 0, 0);
       context.restore();
@@ -639,7 +678,7 @@ export async function renderFrame(
     }
     context.save();
     context.setTransform(...layer.matrix);
-    context.globalAlpha = layer.opacity;
+    context.globalAlpha = layer.opacity * groupOpacity;
     context.globalCompositeOperation = layer.blend;
     context.filter = filterCSS(layer.adjustments);
     if (override) {

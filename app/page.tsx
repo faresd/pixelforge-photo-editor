@@ -67,6 +67,7 @@ import {
   transformFrameWithMasks,
   floodFill,
   type Adjustments,
+  type Group,
   type Layer,
   type Frame,
   type Matrix,
@@ -301,10 +302,15 @@ export default function Home() {
     setFontSize(s.fontSize);
   };
   const current = () => history.current[index.current];
+  const groupForLayer = (f: Frame, layer: Layer) =>
+    layer.groupId ? f.groups?.find((group) => group.id === layer.groupId) : undefined;
+  const layerIsLocked = (f: Frame, layer: Layer) =>
+    layer.locked || Boolean(groupForLayer(f, layer)?.locked);
   const editLayer = (patch: Partial<Layer>) => {
     const f = current(),
       layer = f.layers.find((l) => l.id === f.active)!;
-    if (layer.locked && !('locked' in patch) && !('visible' in patch)) {
+    const group = groupForLayer(f, layer);
+    if (group?.locked || (layer.locked && !('locked' in patch) && !('visible' in patch))) {
       setNotice('Unlock this layer before editing');
       return false;
     }
@@ -320,6 +326,32 @@ export default function Home() {
       })
     ) {
       setNotice('Layer updated');
+      return true;
+    }
+    return false;
+  };
+  const editGroup = (id: string, patch: Partial<Group>) => {
+    const f = current(),
+      group = f.groups?.find((item) => item.id === id);
+    if (!group) return false;
+    if (
+      group.locked &&
+      !('locked' in patch) &&
+      !('visible' in patch) &&
+      !('collapsed' in patch)
+    ) {
+      setNotice('Unlock this group before editing it');
+      return false;
+    }
+    const next = { ...group, ...patch };
+    if (JSON.stringify(next) === JSON.stringify(group)) return true;
+    if (
+      commit({
+        ...f,
+        groups: (f.groups || []).map((item) => (item.id === id ? next : item)),
+      })
+    ) {
+      setNotice('Group updated');
       return true;
     }
     return false;
@@ -365,7 +397,7 @@ export default function Home() {
       setNotice('Select a raster layer and create a selection first');
       return;
     }
-    if (layer.locked) {
+    if (layerIsLocked(f, layer)) {
       setNotice('Unlock this layer before editing its mask');
       return;
     }
@@ -672,6 +704,66 @@ export default function Home() {
     }
     return false;
   };
+  const groupActiveLayer = () => {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!layer) return;
+    if (layer.groupId) {
+      setNotice('The active layer is already in a group');
+      return;
+    }
+    if ((f.groups || []).length >= 32) {
+      setNotice('32-group limit reached');
+      return;
+    }
+    const group: Group = {
+      id: crypto.randomUUID(),
+      name: `Group ${(f.groups || []).length + 1}`,
+      visible: true,
+      locked: false,
+      opacity: 1,
+      blend: 'source-over',
+      collapsed: false,
+    };
+    if (
+      commit({
+        ...f,
+        groups: [...(f.groups || []), group],
+        layers: f.layers.map((item) =>
+          item.id === layer.id ? { ...item, groupId: group.id } : item,
+        ),
+      })
+    )
+      setNotice('Layer added to a new group');
+  };
+  const ungroupActiveLayer = () => {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active),
+      groupId = layer?.groupId;
+    if (!layer || !groupId) {
+      setNotice('Select a grouped layer first');
+      return;
+    }
+    const group = f.groups?.find((item) => item.id === groupId);
+    if (group?.locked) {
+      setNotice('Unlock this group before ungrouping');
+      return;
+    }
+    const layers = f.layers.map((item) => {
+      if (item.id !== layer.id) return item;
+      const { groupId: _groupId, ...withoutGroup } = item;
+      return withoutGroup as Layer;
+    });
+    const stillUsed = layers.some((item) => item.groupId === groupId);
+    if (
+      commit({
+        ...f,
+        groups: stillUsed ? f.groups : (f.groups || []).filter((item) => item.id !== groupId),
+        layers,
+      })
+    )
+      setNotice(stillUsed ? 'Layer removed from group' : 'Empty group removed');
+  };
   const addPaint = () => {
     const f = current();
     addLayer({
@@ -684,6 +776,7 @@ export default function Home() {
   const duplicate = () => {
     const f = current(),
       layer = f.layers.find((l) => l.id === f.active)!;
+    if (layerIsLocked(f, layer)) return;
     addLayer({
       ...layer,
       id: crypto.randomUUID(),
@@ -694,7 +787,7 @@ export default function Home() {
   const remove = () => {
     const f = current(),
       layer = f.layers.find((l) => l.id === f.active)!;
-    if (layer.locked || f.layers.length === 1) return;
+    if (layerIsLocked(f, layer) || f.layers.length === 1) return;
     const layers = f.layers.filter((l) => l.id !== f.active);
     commit({ ...f, layers, active: layers.at(-1)!.id });
     setNotice('Layer deleted. Undo restores it.');
@@ -704,14 +797,14 @@ export default function Home() {
       layers = f.layers.slice(),
       from = layers.findIndex((l) => l.id === f.active),
       to = from + direction;
-    if (to < 0 || to >= layers.length || layers[from].locked) return;
+    if (to < 0 || to >= layers.length || layerIsLocked(f, layers[from])) return;
     [layers[from], layers[to]] = [layers[to], layers[from]];
     commit({ ...f, layers });
   };
   const rasterize = async () => {
     const f = current(),
       layer = f.layers.find((l) => l.id === f.active)!;
-    if (layer.locked) return;
+    if (layerIsLocked(f, layer)) return;
     try {
       const image = await renderFrame(
         {
@@ -738,6 +831,7 @@ export default function Home() {
         blend: layer.blend,
         visible: layer.visible,
         adjustments: layer.adjustments,
+        groupId: layer.groupId,
       });
       if (changed)
         setNotice('Layer rasterized. Undo restores editable content.');
@@ -833,7 +927,7 @@ export default function Home() {
       return;
     }
     if (tool === 'fill') {
-      if (layer.locked || !layer.visible || layer.kind !== 'raster') {
+      if (layerIsLocked(f, layer) || !layer.visible || layer.kind !== 'raster') {
         setNotice('Select a visible, unlocked raster layer before filling');
         return;
       }
@@ -854,7 +948,7 @@ export default function Home() {
       return;
     }
     if (tool === 'clone' || tool === 'heal') {
-      if (layer.locked || !layer.visible || layer.kind !== 'raster') {
+      if (layerIsLocked(f, layer) || !layer.visible || layer.kind !== 'raster') {
         setNotice('Select a visible, unlocked raster layer before retouching');
         return;
       }
@@ -885,7 +979,7 @@ export default function Home() {
       return;
     }
     if (tool === 'color-replace') {
-      if (layer.locked || !layer.visible || layer.kind !== 'raster') {
+      if (layerIsLocked(f, layer) || !layer.visible || layer.kind !== 'raster') {
         setNotice('Select a visible, unlocked raster layer before replacing colors');
         return;
       }
@@ -939,7 +1033,7 @@ export default function Home() {
       return;
     }
     if (tool === 'gradient') {
-      if (layer.locked || !layer.visible || layer.kind !== 'raster') {
+      if (layerIsLocked(f, layer) || !layer.visible || layer.kind !== 'raster') {
         setNotice('Select a visible, unlocked raster layer before applying a gradient');
         return;
       }
@@ -947,7 +1041,7 @@ export default function Home() {
       return;
     }
     if (tool === 'magic-wand') {
-      if (layer.locked || !layer.visible || layer.kind !== 'raster') {
+      if (layerIsLocked(f, layer) || !layer.visible || layer.kind !== 'raster') {
         setNotice('Select a visible, unlocked raster layer before color-selecting');
         return;
       }
@@ -1005,7 +1099,7 @@ export default function Home() {
       gesture.current = { tool, start: p, last: p, frame: f, moved: false };
       return;
     }
-    if (layer.locked || !layer.visible) {
+    if (layerIsLocked(current(), layer) || !layer.visible) {
       setNotice('Select a visible, unlocked layer');
       return;
     }
@@ -1688,6 +1782,9 @@ export default function Home() {
               duplicate={duplicate}
               remove={remove}
               reorder={reorder}
+              groupActive={groupActiveLayer}
+              ungroupActive={ungroupActiveLayer}
+              editGroup={editGroup}
               rasterize={() => void rasterize()}
               importImage={() => layerFile.current?.click()}
               createMask={createMaskFromSelection}

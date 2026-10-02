@@ -150,6 +150,56 @@ test('visibility, locking, duplicate, order and deletion change actual layers wi
   ).toBeVisible();
 });
 
+test('layer folders persist visibility, opacity, locking and collapsed workspace state', async ({
+  page,
+}) => {
+  const beforeAlpha = await page.getByTestId('editor-canvas').evaluate(
+    (canvas: HTMLCanvasElement) =>
+      canvas.getContext('2d')!.getImageData(600, 400, 1, 1).data[3],
+  );
+  await page.getByRole('button', { name: 'Group active layer', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Collapse group Group 1', exact: true })).toBeVisible();
+  await page.getByLabel('Group name Group 1', { exact: true }).fill('Backdrop');
+  await expect(page.getByLabel('Group name Backdrop', { exact: true })).toHaveValue('Backdrop');
+  await page.getByLabel('Group opacity Backdrop', { exact: true }).fill('50');
+  await saved(page);
+  const halfAlpha = await page.getByTestId('editor-canvas').evaluate(
+    (canvas: HTMLCanvasElement) =>
+      canvas.getContext('2d')!.getImageData(600, 400, 1, 1).data[3],
+  );
+  expect(beforeAlpha).toBe(255);
+  expect(halfAlpha).toBeLessThan(beforeAlpha);
+  await page.getByLabel('Visible group Backdrop', { exact: true }).uncheck();
+  const hiddenAlpha = await page.getByTestId('editor-canvas').evaluate(
+    (canvas: HTMLCanvasElement) =>
+      canvas.getContext('2d')!.getImageData(600, 400, 1, 1).data[3],
+  );
+  expect(hiddenAlpha).toBe(0);
+  await page.getByLabel('Visible group Backdrop', { exact: true }).check();
+  const exported = await project(page),
+    frame = exported.value.history[exported.value.index];
+  expect(frame.groups).toHaveLength(1);
+  expect(frame.groups[0]).toMatchObject({ name: 'Backdrop', opacity: 0.5, collapsed: false });
+  expect(frame.layers[0].groupId).toBe(frame.groups[0].id);
+  await page.getByRole('button', { name: 'Collapse group Backdrop', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Select layer Background', exact: true })).toHaveCount(0);
+  await page.getByLabel('Lock group Backdrop', { exact: true }).check();
+  await expect(page.getByLabel('Layer name', { exact: true })).toBeDisabled();
+  await expect(page.getByLabel('Visible', { exact: true })).toBeDisabled();
+  await expect(page.getByLabel('Lock layer', { exact: true })).toBeDisabled();
+  await page.getByLabel('Lock group Backdrop', { exact: true }).uncheck();
+  await page.getByRole('button', { name: 'Expand group Backdrop', exact: true }).click();
+  await page.getByRole('button', { name: 'Ungroup active layer', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Collapse group Backdrop', exact: true })).toHaveCount(0);
+  await saved(page);
+  await page.reload();
+  await saved(page);
+  const reloaded = await project(page),
+    reloadedFrame = reloaded.value.history[reloaded.value.index];
+  expect(reloadedFrame.groups || []).toHaveLength(0);
+  expect(reloadedFrame.layers[0].groupId).toBeUndefined();
+});
+
 test('legacy projects migrate with history and the original bookmark is preserved', async ({
   page,
 }) => {
@@ -223,6 +273,22 @@ test('malformed layer assets are rejected before replacing the current draft', a
     page.getByText('Invalid project assets', { exact: true }),
   ).toBeVisible();
   expect(page.url()).toBe(url);
+  expect(await pixels(page)).toBe(original);
+});
+
+test('malformed layer folder references are rejected before replacing the current draft', async ({
+  page,
+}) => {
+  const { value } = await project(page),
+    original = await pixels(page),
+    frame = value.history[value.index];
+  frame.layers[0].groupId = '739d75a0-66c0-4c52-a11c-2b6548dff828';
+  await page.getByTestId('project-input').setInputFiles({
+    name: 'invalid-group.pixelforge',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(value)),
+  });
+  await expect(page.getByText('Invalid layer document', { exact: true })).toBeVisible();
   expect(await pixels(page)).toBe(original);
 });
 
