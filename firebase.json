@@ -53,6 +53,10 @@
       {
         "source": "/health",
         "destination": "/api/readyz.json"
+      },
+      {
+        "source": "/editor",
+        "destination": "/index.html"
       }
     ]
   }
