@@ -229,6 +229,7 @@ test('paint stays on its own raster layer and nondestructive filters retain sour
     .click();
   await page.getByTestId('editor-canvas').click();
   await saved(page);
+  expect(await pixels(page)).not.toBe(before);
   await page.getByLabel('Visible', { exact: true }).uncheck();
   await saved(page);
   expect(await pixels(page)).toBe(before);
@@ -303,7 +304,7 @@ test('layer position, blending and visibility produce exact composite pixels', a
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '1');
 });
 
-test('vector shapes remain editable through move, crop, rotation and undo', async ({
+test('vector shapes remain editable through property edits, rotation and undo', async ({
   page,
 }) => {
   await page.getByRole('button', { name: 'Shape tool', exact: true }).click();
