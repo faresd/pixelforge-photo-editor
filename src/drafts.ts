@@ -10,7 +10,7 @@ import {
   type Assets,
   type Frame,
 } from './document';
-export type Tool = 'move' | 'crop' | 'brush' | 'eraser' | 'text' | 'rectangle' | 'ellipse' | 'select';
+export type Tool = 'move' | 'crop' | 'brush' | 'eraser' | 'text' | 'rectangle' | 'ellipse';
 export type Shot = { url: string; w: number; h: number };
 export type Settings = {
   tool: Tool;
@@ -40,7 +40,7 @@ let database: Promise<IDBDatabase> | undefined;
 function validSettings(settings: Settings) {
   if (
     !settings ||
-    !['move', 'crop', 'brush', 'eraser', 'text', 'rectangle', 'ellipse', 'select'].includes(
+    !['move', 'crop', 'brush', 'eraser', 'text', 'rectangle', 'ellipse'].includes(
       settings.tool,
     ) ||
     typeof settings.text !== 'string' ||

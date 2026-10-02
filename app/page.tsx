@@ -56,7 +56,6 @@ import {
   type Layer,
   type Frame,
   type Matrix,
-  type Selection,
 } from '../src/document';
 import { useDocument } from '../src/useDocument';
 import LayersPanel from '../src/LayersPanel';
@@ -99,7 +98,6 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'text', label: 'Text', icon: Type, key: 'T' },
   { id: 'rectangle', label: 'Shape', icon: Shapes, key: 'R' },
   { id: 'ellipse', label: 'Ellipse', icon: Shapes, key: 'O' },
-  { id: 'select', label: 'Select', icon: Crop, key: 'M' },
 ];
 const FILTERS = [
   ['Original', 'none', '#315277', '#d59b6c'],
@@ -261,54 +259,6 @@ export default function Home() {
       return true;
     }
     return false;
-  };
-  const setSelection = (selection: Selection | undefined) => {
-    const f = current();
-    if (JSON.stringify(f.selection) === JSON.stringify(selection)) return;
-    if (commit({ ...f, selection }))
-      setNotice(selection ? 'Rectangular selection created' : 'Selection cleared');
-  };
-  const invertSelection = () => {
-    const f = current();
-    if (!f.selection) return;
-    setSelection({ ...f.selection, inverted: !f.selection.inverted });
-  };
-  const createMaskFromSelection = () => {
-    const f = current(), layer = f.layers.find((l) => l.id === f.active);
-    if (!f.selection || !layer || layer.kind !== 'raster') {
-      setNotice('Select a raster layer and create a selection first');
-      return;
-    }
-    if (layer.locked) {
-      setNotice('Unlock this layer before editing its mask');
-      return;
-    }
-    const mask = surface(f.w, f.h), context = mask.getContext('2d')!;
-    context.fillStyle = f.selection.inverted ? '#000' : '#fff';
-    context.fillRect(0, 0, f.w, f.h);
-    context.fillStyle = f.selection.inverted ? '#fff' : '#000';
-    context.fillRect(f.selection.x, f.selection.y, f.selection.w, f.selection.h);
-    if (f.selection.feather > 0) {
-      context.globalCompositeOperation = 'destination-in';
-      const gradient = context.createRadialGradient(
-        f.selection.x + f.selection.w / 2,
-        f.selection.y + f.selection.h / 2,
-        Math.max(0, Math.min(f.selection.w, f.selection.h) / 2 - f.selection.feather),
-        f.selection.x + f.selection.w / 2,
-        f.selection.y + f.selection.h / 2,
-        Math.max(f.selection.w, f.selection.h) / 2,
-      );
-      gradient.addColorStop(0, '#fff');
-      gradient.addColorStop(1, '#000');
-      context.fillStyle = gradient;
-      context.fillRect(f.selection.x, f.selection.y, f.selection.w, f.selection.h);
-    }
-    const maskId = addAsset(assets.current, mask);
-    if (editLayer({ mask: maskId })) setNotice('Nondestructive layer mask created');
-  };
-  const clearMask = () => {
-    const layer = current().layers.find((l) => l.id === current().active);
-    if (layer?.mask && editLayer({ mask: undefined })) setNotice('Layer mask removed; source pixels kept');
   };
   const adjust = (patch: Partial<Adjustments>) => {
     const layer = current().layers.find((l) => l.id === current().active)!;
@@ -746,10 +696,6 @@ export default function Home() {
       if (added) setNotice('Editable text layer added');
       return;
     }
-    if (tool === 'select') {
-      gesture.current = { tool, start: p, last: p, frame: f, moved: false };
-      return;
-    }
     if (tool === 'rectangle' || tool === 'ellipse' || tool === 'crop') {
       gesture.current = { tool, start: p, last: p, frame: f, moved: false };
       return;
@@ -865,22 +811,6 @@ export default function Home() {
         ],
       };
       void paint({ ...g.frame, layers: [...g.frame.layers, layer] });
-    } else if (g.tool === 'select') {
-      void paint(g.frame).then(() => {
-        if (gesture.current !== g) return;
-        const c = canvas.current!, x = c.getContext('2d')!;
-        x.save();
-        x.strokeStyle = '#fff';
-        x.lineWidth = 2;
-        x.setLineDash([8, 5]);
-        x.strokeRect(
-          Math.min(g.start.x, p.x),
-          Math.min(g.start.y, p.y),
-          Math.abs(p.x - g.start.x),
-          Math.abs(p.y - g.start.y),
-        );
-        x.restore();
-      });
     } else if (g.tool === 'crop') {
       const c = canvas.current!,
         x = c.getContext('2d')!;
@@ -954,14 +884,6 @@ export default function Home() {
           Math.min(p.y, g.start.y),
         ],
       });
-    } else if (g.tool === 'select' && g.moved) {
-      const x = Math.max(0, Math.min(g.start.x, p.x)),
-        y = Math.max(0, Math.min(g.start.y, p.y)),
-        w = Math.min(f.w - x, Math.abs(p.x - g.start.x)),
-        h = Math.min(f.h - y, Math.abs(p.y - g.start.y));
-      if (w > 0 && h > 0)
-        setSelection({ x, y, w, h, feather: 0, inverted: false });
-      else void paint(f);
     } else if (g.tool === 'crop' && g.moved) {
       const left = Math.max(0, Math.floor(Math.min(p.x, g.start.x))),
         top = Math.max(0, Math.floor(Math.min(p.y, g.start.y))),
@@ -1346,10 +1268,6 @@ export default function Home() {
               reorder={reorder}
               rasterize={() => void rasterize()}
               importImage={() => layerFile.current?.click()}
-              createMask={createMaskFromSelection}
-              clearMask={clearMask}
-              clearSelection={() => setSelection(undefined)}
-              invertSelection={invertSelection}
             />
           )}
           <section className="panel">

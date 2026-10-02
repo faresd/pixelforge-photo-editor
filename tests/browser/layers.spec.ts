@@ -361,36 +361,6 @@ test('ellipse layers stay vector-editable through export and reload', async ({
   });
 });
 
-test('rectangular selection creates a nondestructive raster mask and survives reload', async ({
-  page,
-}) => {
-  await page.getByRole('button', { name: 'Select tool', exact: true }).click();
-  const canvas = page.getByTestId('editor-canvas');
-  const box = (await canvas.boundingBox())!;
-  await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.2);
-  await page.mouse.down();
-  await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.7, {
-    steps: 5,
-  });
-  await page.mouse.up();
-  await expect(
-    page.getByRole('button', { name: 'Mask from selection', exact: true }),
-  ).toBeEnabled();
-  await page.getByRole('button', { name: 'Mask from selection', exact: true }).click();
-  await expect(page.getByText('Nondestructive mask active', { exact: true })).toBeVisible();
-  const exported = await project(page),
-    frame = exported.value.history[exported.value.index],
-    layer = frame.layers[0];
-  expect(frame.selection).toMatchObject({ inverted: false });
-  expect(layer.mask).toEqual(expect.any(String));
-  expect(exported.value.assets[layer.mask].w).toBe(frame.w);
-  expect(exported.value.assets[layer.mask].h).toBe(frame.h);
-  await page.reload();
-  await expect(page.getByText('Nondestructive mask active', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Remove mask', exact: true }).click();
-  await expect(page.getByText('Nondestructive mask active', { exact: true })).toHaveCount(0);
-});
-
 test('a stale tab cannot overwrite or discard newer work and can save its own local copy', async ({
   page,
   context,

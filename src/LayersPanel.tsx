@@ -11,10 +11,6 @@ type Props = {
   reorder: (direction: number) => void;
   rasterize: () => void;
   importImage: () => void;
-  createMask: () => void;
-  clearMask: () => void;
-  clearSelection: () => void;
-  invertSelection: () => void;
 };
 export default function LayersPanel({
   frame,
@@ -26,10 +22,6 @@ export default function LayersPanel({
   reorder,
   rasterize,
   importImage,
-  createMask,
-  clearMask,
-  clearSelection,
-  invertSelection,
 }: Props) {
   const layer = frame.layers.find((item) => item.id === frame.active)!;
   return (
@@ -87,21 +79,6 @@ export default function LayersPanel({
           Lock layer
         </label>
       </div>
-      <div className="layer-actions">
-        <button onClick={createMask} disabled={layer.kind !== 'raster' || !frame.selection}>
-          Mask from selection
-        </button>
-        <button onClick={clearMask} disabled={layer.kind !== 'raster' || !layer.mask}>
-          Remove mask
-        </button>
-        <button onClick={invertSelection} disabled={!frame.selection}>
-          Invert selection
-        </button>
-        <button onClick={clearSelection} disabled={!frame.selection}>
-          Clear selection
-        </button>
-      </div>
-      {layer.kind === 'raster' && layer.mask && <p className="mask-status">Nondestructive mask active</p>}
       <label className="layer-field">
         Layer name
         <input
