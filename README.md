@@ -34,6 +34,10 @@ See [deployment operations](docs/deployment.md). Pull requests run checks. A tes
 
 Draft pixels, settings and undo history autosave in IndexedDB. Document bookmarks restore work in the same browser; clearing browser data can remove local work. The home page promotes available tools and lets users continue their last draft. Discard draft removes the current local document and returns home.
 
+Photoshop-style keyboard shortcuts are available for the implemented tools and document actions, including tool-family cycling, selection commands, layer grouping/duplication, foreground/background color reset/swap and zoom. See the [keyboard shortcut contract](docs/keyboard-shortcuts.md) for the exact mapping and browser-specific limitations.
+
+After an online visit, the installable PWA shell can reopen the editor without a network connection. The service worker caches same-origin app assets only; cloud sign-in and project saves still require connectivity. See [offline and installable shell](docs/offline-pwa.md).
+
 Optional sign-in reuses the existing Marketplace session. The private project library supports explicit cloud save/update, reopen and removal; anonymous images never upload automatically. Cloud storage starts at 30 projects, 16 MB per project and 256 MB per account. New edits autosave locally; use Update cloud project to sync them across devices.
 
 Image > Resize image supports exact dimensions and locked proportions. File > Download project file saves pixels, settings and undo history in a portable .pixelforge file; Open project restores it as a separate draft. Image imports preserve their resolution up to 16 megapixels (larger images are rejected explicitly), and history is bounded to 24 snapshots or approximately 32 MB of encoded images.

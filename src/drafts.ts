@@ -17,6 +17,8 @@ export type Settings = {
   tool: Tool;
   zoom: number;
   color: string;
+  /** Photoshop-compatible foreground/background pair. Older drafts omit the background. */
+  backgroundColor?: string;
   size: number;
   brushOpacity?: number;
   hardness?: number;
@@ -53,7 +55,8 @@ function validSettings(settings: Settings) {
     settings.text.length > 10000 ||
     (settings.exportFormat !== undefined && !EXPORT_FORMATS.includes(settings.exportFormat)) ||
     (settings.exportQuality !== undefined && !validExportQuality(settings.exportQuality)) ||
-    !/^#[a-f\d]{6}$/i.test(settings.color)
+    !/^#[a-f\d]{6}$/i.test(settings.color) ||
+    (settings.backgroundColor !== undefined && !/^#[a-f\d]{6}$/i.test(settings.backgroundColor))
   )
     return false;
   const ranges = [

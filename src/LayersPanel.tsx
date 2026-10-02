@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { BLENDS, FONTS, type Frame, type Layer, type SelectionOperation } from './document';
+import { useState, type ReactNode } from 'react';
+import { BLENDS, FONTS, type Frame, type Group, type Layer, type SelectionOperation } from './document';
 
 type Props = {
   frame: Frame;
@@ -9,6 +9,9 @@ type Props = {
   duplicate: () => void;
   remove: () => void;
   reorder: (direction: number) => void;
+  groupActive: () => void;
+  ungroupActive: () => void;
+  editGroup: (id: string, patch: Partial<Group>) => void;
   rasterize: () => void;
   importImage: () => void;
   createMask: () => void;
@@ -27,6 +30,9 @@ export default function LayersPanel({
   duplicate,
   remove,
   reorder,
+  groupActive,
+  ungroupActive,
+  editGroup,
   rasterize,
   importImage,
   createMask,
@@ -38,6 +44,62 @@ export default function LayersPanel({
   setSelectionFeather,
 }: Props) {
   const layer = frame.layers.find((item) => item.id === frame.active)!;
+  const groups = frame.groups || [];
+  const groupById = new Map(groups.map((group) => [group.id, group]));
+  const activeGroup = layer.groupId ? groupById.get(layer.groupId) : undefined;
+  const layerLocked = layer.locked || Boolean(activeGroup?.locked);
+  const renderedGroups = new Set<string>();
+  const rows: ReactNode[] = [];
+  for (const item of [...frame.layers].reverse()) {
+    const group = item.groupId ? groupById.get(item.groupId) : undefined;
+    if (group && !renderedGroups.has(group.id)) {
+      rows.push(
+        <GroupRow
+          key={'group-' + group.id}
+          group={group}
+          editGroup={editGroup}
+          selected={activeGroup?.id === group.id}
+        />,
+      );
+      renderedGroups.add(group.id);
+    }
+    if (!group || !group.collapsed) {
+      rows.push(
+        <button
+          key={item.id}
+          className={
+            item.id === layer.id ? 'layer-row selected' : 'layer-row'
+          }
+          onClick={() => select(item.id)}
+          aria-pressed={item.id === layer.id}
+          aria-label={`Select layer ${item.name}`}
+        >
+          <span className="layer-type">
+            {item.kind === 'text' ? 'T' : item.kind === 'raster' ? '▧' : '□'}
+          </span>
+          <span>
+            <b>{item.name || 'Untitled layer'}</b>
+            <small>
+              {item.kind} {item.locked || group?.locked ? '· locked' : ''}{' '}
+              {!item.visible || group?.visible === false ? '· hidden' : ''}
+              {group ? ` · ${group.name}` : ''}
+            </small>
+          </span>
+        </button>,
+      );
+    }
+  }
+  for (const group of groups) {
+    if (renderedGroups.has(group.id)) continue;
+    rows.unshift(
+      <GroupRow
+        key={'group-' + group.id}
+        group={group}
+        editGroup={editGroup}
+        selected={activeGroup?.id === group.id}
+      />,
+    );
+  }
   return (
     <section className="panel layers-panel" aria-label="Layers">
       <h3>
@@ -50,36 +112,22 @@ export default function LayersPanel({
         <button onClick={importImage} disabled={frame.layers.length >= 32}>
           Add image layer
         </button>
+        <button onClick={groupActive} disabled={Boolean(layer.groupId)}>
+          Group active layer
+        </button>
+        <button onClick={ungroupActive} disabled={!layer.groupId || Boolean(activeGroup?.locked)}>
+          Ungroup active layer
+        </button>
       </div>
       <div className="layer-list">
-        {[...frame.layers].reverse().map((item) => (
-          <button
-            key={item.id}
-            className={
-              item.id === layer.id ? 'layer-row selected' : 'layer-row'
-            }
-            onClick={() => select(item.id)}
-            aria-pressed={item.id === layer.id}
-            aria-label={`Select layer ${item.name}`}
-          >
-            <span className="layer-type">
-              {item.kind === 'text' ? 'T' : item.kind === 'raster' ? '▧' : '□'}
-            </span>
-            <span>
-              <b>{item.name || 'Untitled layer'}</b>
-              <small>
-                {item.kind} {item.locked ? '· locked' : ''}{' '}
-                {!item.visible ? '· hidden' : ''}
-              </small>
-            </span>
-          </button>
-        ))}
+        {rows}
       </div>
       <div className="layer-toggles">
         <label>
           <input
             type="checkbox"
             checked={layer.visible}
+            disabled={Boolean(activeGroup?.locked)}
             onChange={(e) => edit({ visible: e.target.checked })}
           />
           Visible
@@ -101,6 +149,7 @@ export default function LayersPanel({
           <input
             type="checkbox"
             checked={layer.locked}
+            disabled={Boolean(activeGroup?.locked)}
             onChange={(e) => edit({ locked: e.target.checked })}
           />
           Lock layer
@@ -140,7 +189,7 @@ export default function LayersPanel({
           aria-label="Layer name"
           maxLength={160}
           value={layer.name}
-          disabled={layer.locked}
+          disabled={layerLocked}
           onChange={(e) => edit({ name: e.target.value })}
         />
       </label>
@@ -152,7 +201,7 @@ export default function LayersPanel({
           min="0"
           max="100"
           value={Math.round(layer.opacity * 100)}
-          disabled={layer.locked}
+          disabled={layerLocked}
           onChange={(e) => edit({ opacity: Number(e.target.value) / 100 })}
         />
       </label>
@@ -161,7 +210,7 @@ export default function LayersPanel({
         <select
           aria-label="Blend mode"
           value={layer.blend}
-          disabled={layer.locked}
+          disabled={layerLocked}
           onChange={(e) => edit({ blend: e.target.value as Layer['blend'] })}
         >
           {BLENDS.map((blend) => (
@@ -180,7 +229,7 @@ export default function LayersPanel({
           value={layer.matrix[4]}
           min={-32000}
           max={32000}
-          disabled={layer.locked}
+          disabled={layerLocked}
           apply={(x) =>
             edit({
               matrix: [
@@ -197,7 +246,7 @@ export default function LayersPanel({
           value={layer.matrix[5]}
           min={-32000}
           max={32000}
-          disabled={layer.locked}
+          disabled={layerLocked}
           apply={(y) =>
             edit({
               matrix: [...layer.matrix.slice(0, 5), y] as Layer['matrix'],
@@ -213,7 +262,7 @@ export default function LayersPanel({
               aria-label="Edit layer text"
               maxLength={10000}
               value={layer.text}
-              disabled={layer.locked}
+              disabled={layerLocked}
               onChange={(e) => edit({ text: e.target.value })}
             />
           </label>
@@ -222,7 +271,7 @@ export default function LayersPanel({
             <select
               aria-label="Layer font"
               value={layer.fontFamily}
-              disabled={layer.locked}
+              disabled={layerLocked}
               onChange={(e) =>
                 edit({ fontFamily: e.target.value as (typeof FONTS)[number] })
               }
@@ -238,14 +287,14 @@ export default function LayersPanel({
             value={layer.fontSize}
             min={1}
             max={1000}
-            disabled={layer.locked}
+            disabled={layerLocked}
             apply={(fontSize) => edit({ fontSize })}
           />
           <label>
             <input
               type="checkbox"
               checked={layer.bold}
-              disabled={layer.locked}
+              disabled={layerLocked}
               onChange={(e) => edit({ bold: e.target.checked })}
             />
             Bold
@@ -256,7 +305,7 @@ export default function LayersPanel({
               type="color"
               aria-label="Layer text color"
               value={layer.color}
-              disabled={layer.locked}
+              disabled={layerLocked}
               onChange={(e) => edit({ color: e.target.value })}
             />
           </label>
@@ -270,7 +319,7 @@ export default function LayersPanel({
             value={layer.width}
             min={1}
             max={16000}
-            disabled={layer.locked}
+            disabled={layerLocked}
             apply={(width) => edit({ width })}
           />
           <NumberField
@@ -279,14 +328,14 @@ export default function LayersPanel({
             value={layer.height}
             min={1}
             max={16000}
-            disabled={layer.locked}
+            disabled={layerLocked}
             apply={(height) => edit({ height })}
           />
           <label>
             <input
               type="checkbox"
               checked={layer.fill}
-              disabled={layer.locked}
+              disabled={layerLocked}
               onChange={(e) => edit({ fill: e.target.checked })}
             />
             Filled shape
@@ -295,7 +344,7 @@ export default function LayersPanel({
             type="color"
             aria-label="Shape color"
             value={layer.color}
-            disabled={layer.locked}
+            disabled={layerLocked}
             onChange={(e) => edit({ color: e.target.value })}
           />
         </div>
@@ -303,13 +352,13 @@ export default function LayersPanel({
       <div className="layer-actions">
         <button
           onClick={() => reorder(1)}
-          disabled={layer.locked || frame.layers.at(-1)?.id === layer.id}
+          disabled={layerLocked || frame.layers.at(-1)?.id === layer.id}
         >
           Raise layer
         </button>
         <button
           onClick={() => reorder(-1)}
-          disabled={layer.locked || frame.layers[0].id === layer.id}
+          disabled={layerLocked || frame.layers[0].id === layer.id}
         >
           Lower layer
         </button>
@@ -318,12 +367,12 @@ export default function LayersPanel({
         </button>
         <button
           onClick={remove}
-          disabled={layer.locked || frame.layers.length === 1}
+          disabled={layerLocked || frame.layers.length === 1}
         >
           Delete layer
         </button>
         {layer.kind !== 'raster' && (
-          <button onClick={rasterize} disabled={layer.locked}>
+          <button onClick={rasterize} disabled={layerLocked}>
             Rasterize layer
           </button>
         )}
@@ -332,6 +381,72 @@ export default function LayersPanel({
         Edits affect the selected layer. Deleting and rasterizing can be undone.
       </p>
     </section>
+  );
+}
+function GroupRow({
+  group,
+  editGroup,
+  selected,
+}: {
+  group: Group;
+  editGroup: (id: string, patch: Partial<Group>) => void;
+  selected: boolean;
+}) {
+  const action = group.collapsed ? 'Expand' : 'Collapse';
+  return (
+    <div className={selected ? 'group-row selected' : 'group-row'}>
+      <button
+        className="group-toggle"
+        aria-label={`${action} group ${group.name}`}
+        aria-expanded={!group.collapsed}
+        onClick={() => editGroup(group.id, { collapsed: !group.collapsed })}
+      >
+        <span aria-hidden="true">{group.collapsed ? '▸' : '▾'}</span>
+        <b>{group.name || 'Untitled group'}</b>
+      </button>
+      <label className="group-visibility">
+        <input
+          type="checkbox"
+          aria-label={`Visible group ${group.name}`}
+          checked={group.visible}
+          onChange={(event) => editGroup(group.id, { visible: event.target.checked })}
+        />
+        <span className="sr-only">Visible</span>
+      </label>
+      <label className="group-visibility">
+        <input
+          type="checkbox"
+          aria-label={`Lock group ${group.name}`}
+          checked={group.locked}
+          onChange={(event) => editGroup(group.id, { locked: event.target.checked })}
+        />
+        <span className="sr-only">Locked</span>
+      </label>
+      <label className="group-field">
+        <span className="sr-only">Group name</span>
+        <input
+          aria-label={`Group name ${group.name}`}
+          maxLength={160}
+          value={group.name}
+          disabled={group.locked}
+          onChange={(event) => editGroup(group.id, { name: event.target.value })}
+        />
+      </label>
+      <label className="group-opacity">
+        <span className="sr-only">Group opacity</span>
+        <input
+          type="range"
+          aria-label={`Group opacity ${group.name}`}
+          min="0"
+          max="100"
+          value={Math.round(group.opacity * 100)}
+          disabled={group.locked}
+          onChange={(event) =>
+            editGroup(group.id, { opacity: Number(event.target.value) / 100 })
+          }
+        />
+      </label>
+    </div>
   );
 }
 function NumberField({

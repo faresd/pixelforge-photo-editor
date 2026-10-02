@@ -31,6 +31,18 @@
 .layer-row b { display:block; max-width:170px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
 .layer-row small { display:block; font-size:10px; color:#afb8c8; margin-top:3px; }
 .layer-type { font-size:22px; width:24px; text-align:center; }
+.group-row { display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:5px; padding:5px 7px; border:1px solid #4c3e69; border-radius:6px; background:#2b2539; }
+.group-row.selected { border-color:#a88bdf; }
+.group-toggle { min-width:0; display:flex; align-items:center; gap:6px; border:0; background:transparent; color:#e4d9ff; text-align:left; font-size:11px; }
+.group-toggle span { width:12px; color:#c2a5ff; }
+.group-toggle b { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.group-visibility { display:flex; align-items:center; font-size:10px; }
+.group-visibility input { margin:0 !important; }
+.group-field { grid-column:1 / -1; display:block; }
+.group-field input { width:100%; border:1px solid #564b70; border-radius:4px; background:#211d2b; color:#eee8ff; padding:4px 6px; font-size:10px; }
+.group-opacity { grid-column:1 / -1; display:block; }
+.group-opacity input { width:100%; accent-color:#a88bdf; }
+.sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
 .layer-toggles { display:flex; justify-content:space-between; margin:12px 0; font-size:11px; }
 .layers-panel input[type=checkbox] { margin-right:5px; accent-color:#8b5cf6; }
 .layer-field { display:flex; flex-direction:column; gap:5px; font-size:11px; margin:9px 0; }
