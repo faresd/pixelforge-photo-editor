@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { listCloudProjects, openCloudProject, removeCloudProject, type CloudProject, type Member } from './cloud';
-import { rememberDraft, saveDraft } from './drafts';
+import { saveDraft } from './drafts';
 
 export default function ProjectLibrary({ member }: { member: Member }) {
   const [projects, setProjects] = useState<CloudProject[]>([]);
@@ -17,7 +17,7 @@ export default function ProjectLibrary({ member }: { member: Member }) {
       const result = await openCloudProject(project.id);
       const localId = crypto.randomUUID();
       await saveDraft(localId, { ...result.document, cloud: { id: project.id, generation: result.generation, owner: member.id } });
-      rememberDraft(localId); location.assign('/editor#draft=' + localId);
+      location.assign('/editor#draft=' + localId);
     } catch (error) { setBusy(false); setMessage(error instanceof Error ? error.message : 'Could not open project'); }
   };
   const remove = async (project: CloudProject) => {
