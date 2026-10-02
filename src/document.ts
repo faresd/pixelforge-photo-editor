@@ -71,8 +71,18 @@ export type Layer = Common &
         fill: boolean;
       }
   );
-export type Selection = {
+export type SelectionOperation = 'replace' | 'add' | 'subtract' | 'intersect';
+export type SelectionPart = {
   shape: 'rectangle' | 'ellipse' | 'polygon';
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  operation: SelectionOperation;
+  points?: { x: number; y: number }[];
+};
+export type Selection = {
+  shape: SelectionPart['shape'];
   x: number;
   y: number;
   w: number;
@@ -80,6 +90,7 @@ export type Selection = {
   feather: number;
   inverted: boolean;
   points?: { x: number; y: number }[];
+  parts?: SelectionPart[];
 };
 export type Frame = {
   w: number;
@@ -251,26 +262,40 @@ export function validateFrame(
     const s = selection as Record<string, unknown>,
       frameWidth = Number(value.w),
       frameHeight = Number(value.h);
+    const validPart = (part: unknown, requireOperation: boolean) => {
+      if (!record(part)) return false;
+      const p = part as Record<string, unknown>;
+      return (
+        ['rectangle', 'ellipse', 'polygon'].includes(String(p.shape)) &&
+        number(p.x, 0, frameWidth) &&
+        number(p.y, 0, frameHeight) &&
+        number(p.w, 1, frameWidth) &&
+        number(p.h, 1, frameHeight) &&
+        Number(p.x) + Number(p.w) <= frameWidth &&
+        Number(p.y) + Number(p.h) <= frameHeight &&
+        (!requireOperation ||
+          ['replace', 'add', 'subtract', 'intersect'].includes(String(p.operation))) &&
+        (p.shape !== 'polygon' ||
+          (Array.isArray(p.points) &&
+            p.points.length >= 3 &&
+            p.points.length <= 10000 &&
+            p.points.every(
+              (point) =>
+                record(point) &&
+                number(point.x, 0, frameWidth) &&
+                number(point.y, 0, frameHeight),
+            )))
+      );
+    };
     if (
-      !['rectangle', 'ellipse', 'polygon'].includes(String(s.shape)) ||
-      !number(s.x, 0, frameWidth) ||
-      !number(s.y, 0, frameHeight) ||
-      !number(s.w, 1, frameWidth) ||
-      !number(s.h, 1, frameHeight) ||
-      Number(s.x) + Number(s.w) > frameWidth ||
-      Number(s.y) + Number(s.h) > frameHeight ||
+      !validPart({ ...s, operation: 'replace' }, false) ||
       !number(s.feather, 0, 1000) ||
       typeof s.inverted !== 'boolean' ||
-      (s.shape === 'polygon' &&
-        (!Array.isArray(s.points) ||
-          s.points.length < 3 ||
-          s.points.length > 10000 ||
-          s.points.some(
-            (point) =>
-              !record(point) ||
-              !number(point.x, 0, frameWidth) ||
-              !number(point.y, 0, frameHeight),
-          )))
+      (s.parts !== undefined &&
+        (!Array.isArray(s.parts) ||
+          s.parts.length < 1 ||
+          s.parts.length > 1000 ||
+          s.parts.some((part) => !validPart(part, true))))
     )
       return fail();
   }

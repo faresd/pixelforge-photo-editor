@@ -63,6 +63,8 @@ import {
   type Frame,
   type Matrix,
   type Selection,
+  type SelectionOperation,
+  type SelectionPart,
 } from '../src/document';
 import { useDocument } from '../src/useDocument';
 import LayersPanel from '../src/LayersPanel';
@@ -200,6 +202,7 @@ export default function Home() {
       paint,
     } = doc;
   const [tool, setTool] = useState<Tool>('move'),
+    [selectionOperation, setSelectionOperation] = useState<SelectionOperation>('replace'),
     [zoom, setZoom] = useState(72),
     [color, setColor] = useState('#ff5c35'),
     [size, setSize] = useState(18),
@@ -286,10 +289,34 @@ export default function Home() {
     if (commit({ ...f, selection }))
       setNotice(selection ? `${selection.shape === 'ellipse' ? 'Elliptical' : 'Rectangular'} selection created` : 'Selection cleared');
   };
+  const selectionPart = (selection: Selection): SelectionPart => ({
+    shape: selection.shape,
+    x: selection.x,
+    y: selection.y,
+    w: selection.w,
+    h: selection.h,
+    points: selection.points,
+    operation: 'replace',
+  });
+  const mergeSelection = (next: Selection) => {
+    const currentSelection = current().selection;
+    if (!currentSelection || selectionOperation === 'replace') {
+      setSelection({ ...next, parts: [selectionPart(next)] });
+      return;
+    }
+    const parts = currentSelection.parts?.slice() || [selectionPart(currentSelection)];
+    parts.push({ ...selectionPart(next), operation: selectionOperation });
+    setSelection({ ...next, parts });
+  };
   const invertSelection = () => {
     const f = current();
     if (!f.selection) return;
     setSelection({ ...f.selection, inverted: !f.selection.inverted });
+  };
+  const setSelectionFeather = (feather: number) => {
+    const f = current();
+    if (f.selection && commit({ ...f, selection: { ...f.selection, feather } }))
+      setNotice(`Selection feather set to ${Math.round(feather)} px`);
   };
   const createMaskFromSelection = () => {
     const f = current(), layer = f.layers.find((l) => l.id === f.active);
@@ -302,42 +329,30 @@ export default function Home() {
       return;
     }
     const mask = surface(f.w, f.h), context = mask.getContext('2d')!;
-    context.fillStyle = f.selection.inverted ? '#000' : '#fff';
-    context.fillRect(0, 0, f.w, f.h);
-    context.fillStyle = f.selection.inverted ? '#fff' : '#000';
-    if (f.selection.shape === 'ellipse') {
-      context.beginPath();
-      context.ellipse(
-        f.selection.x + f.selection.w / 2,
-        f.selection.y + f.selection.h / 2,
-        f.selection.w / 2,
-        f.selection.h / 2,
-        0,
-        0,
-        Math.PI * 2,
-      );
-      context.fill();
-    } else if (f.selection.shape === 'polygon' && f.selection.points) {
-      context.beginPath();
-      context.moveTo(f.selection.points[0].x, f.selection.points[0].y);
-      for (const point of f.selection.points.slice(1)) context.lineTo(point.x, point.y);
-      context.closePath();
-      context.fill();
-    } else context.fillRect(f.selection.x, f.selection.y, f.selection.w, f.selection.h);
-    if (f.selection.feather > 0) {
-      context.globalCompositeOperation = 'destination-in';
-      const gradient = context.createRadialGradient(
-        f.selection.x + f.selection.w / 2,
-        f.selection.y + f.selection.h / 2,
-        Math.max(0, Math.min(f.selection.w, f.selection.h) / 2 - f.selection.feather),
-        f.selection.x + f.selection.w / 2,
-        f.selection.y + f.selection.h / 2,
-        Math.max(f.selection.w, f.selection.h) / 2,
-      );
-      gradient.addColorStop(0, '#fff');
-      gradient.addColorStop(1, '#000');
-      context.fillStyle = gradient;
-      context.fillRect(f.selection.x, f.selection.y, f.selection.w, f.selection.h);
+    const parts = f.selection.parts?.length ? f.selection.parts : [selectionPart(f.selection)];
+    context.clearRect(0, 0, f.w, f.h);
+    for (const part of parts) {
+      const shape = surface(f.w, f.h), shapeContext = shape.getContext('2d')!;
+      shapeContext.fillStyle = '#fff';
+      if (f.selection.feather > 0) shapeContext.filter = `blur(${f.selection.feather}px)`;
+      if (part.shape === 'ellipse') {
+        shapeContext.beginPath();
+        shapeContext.ellipse(part.x + part.w / 2, part.y + part.h / 2, part.w / 2, part.h / 2, 0, 0, Math.PI * 2);
+        shapeContext.fill();
+      } else if (part.shape === 'polygon' && part.points) {
+        shapeContext.beginPath();
+        shapeContext.moveTo(part.points[0].x, part.points[0].y);
+        for (const point of part.points.slice(1)) shapeContext.lineTo(point.x, point.y);
+        shapeContext.closePath();
+        shapeContext.fill();
+      } else shapeContext.fillRect(part.x, part.y, part.w, part.h);
+      context.globalCompositeOperation = part.operation === 'subtract' ? 'destination-out' : part.operation === 'intersect' ? 'destination-in' : 'source-over';
+      context.drawImage(shape, 0, 0);
+    }
+    if (f.selection.inverted) {
+      const pixels = context.getImageData(0, 0, f.w, f.h);
+      for (let i = 3; i < pixels.data.length; i += 4) pixels.data[i] = 255 - pixels.data[i];
+      context.putImageData(pixels, 0, 0);
     }
     const maskId = addAsset(assets.current, mask);
     if (editLayer({ mask: maskId })) setNotice('Nondestructive layer mask created');
@@ -1107,7 +1122,7 @@ export default function Home() {
         w = Math.min(f.w - x, Math.abs(p.x - g.start.x)),
         h = Math.min(f.h - y, Math.abs(p.y - g.start.y));
       if (w > 0 && h > 0)
-        setSelection({ shape: g.tool === 'ellipse-select' ? 'ellipse' : 'rectangle', x, y, w, h, feather: 0, inverted: false });
+        mergeSelection({ shape: g.tool === 'ellipse-select' ? 'ellipse' : 'rectangle', x, y, w, h, feather: 0, inverted: false });
       else void paint(f);
     } else if (g.tool === 'lasso' && g.moved) {
       const points = g.points || [];
@@ -1116,7 +1131,7 @@ export default function Home() {
           y = Math.max(0, Math.min(...points.map((point) => point.y))),
           right = Math.min(f.w, Math.max(...points.map((point) => point.x))),
           bottom = Math.min(f.h, Math.max(...points.map((point) => point.y)));
-        setSelection({ shape: 'polygon', x, y, w: right - x, h: bottom - y, points, feather: 0, inverted: false });
+        mergeSelection({ shape: 'polygon', x, y, w: right - x, h: bottom - y, points, feather: 0, inverted: false });
       } else void paint(f);
     } else if (g.tool === 'crop' && g.moved) {
       const left = Math.max(0, Math.floor(Math.min(p.x, g.start.x))),
@@ -1526,6 +1541,9 @@ export default function Home() {
               clearMask={clearMask}
               clearSelection={() => setSelection(undefined)}
               invertSelection={invertSelection}
+              selectionOperation={selectionOperation}
+              setSelectionOperation={setSelectionOperation}
+              setSelectionFeather={setSelectionFeather}
             />
           )}
           <section className="panel">

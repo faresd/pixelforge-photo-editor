@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BLENDS, FONTS, type Frame, type Layer } from './document';
+import { BLENDS, FONTS, type Frame, type Layer, type SelectionOperation } from './document';
 
 type Props = {
   frame: Frame;
@@ -15,6 +15,9 @@ type Props = {
   clearMask: () => void;
   clearSelection: () => void;
   invertSelection: () => void;
+  selectionOperation: SelectionOperation;
+  setSelectionOperation: (operation: SelectionOperation) => void;
+  setSelectionFeather: (feather: number) => void;
 };
 export default function LayersPanel({
   frame,
@@ -30,6 +33,9 @@ export default function LayersPanel({
   clearMask,
   clearSelection,
   invertSelection,
+  selectionOperation,
+  setSelectionOperation,
+  setSelectionFeather,
 }: Props) {
   const layer = frame.layers.find((item) => item.id === frame.active)!;
   return (
@@ -78,6 +84,19 @@ export default function LayersPanel({
           />
           Visible
         </label>
+        {frame.selection && (
+          <label className="layer-field">
+            Feather {Math.round(frame.selection.feather)} px
+            <input
+              aria-label="Selection feather"
+              type="range"
+              min="0"
+              max="100"
+              value={frame.selection.feather}
+              onChange={(e) => setSelectionFeather(Number(e.target.value))}
+            />
+          </label>
+        )}
         <label>
           <input
             type="checkbox"
@@ -88,6 +107,19 @@ export default function LayersPanel({
         </label>
       </div>
       <div className="layer-actions">
+        <label className="layer-field">
+          Selection mode
+          <select
+            aria-label="Selection mode"
+            value={selectionOperation}
+            onChange={(e) => setSelectionOperation(e.target.value as SelectionOperation)}
+          >
+            <option value="replace">Replace</option>
+            <option value="add">Add</option>
+            <option value="subtract">Subtract</option>
+            <option value="intersect">Intersect</option>
+          </select>
+        </label>
         <button onClick={createMask} disabled={layer.kind !== 'raster' || !frame.selection}>
           Mask from selection
         </button>

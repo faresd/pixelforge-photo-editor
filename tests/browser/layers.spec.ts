@@ -517,6 +517,34 @@ test('lasso selection stores polygon points and survives project round-trip', as
   expect(reloaded.value.history[reloaded.value.index].selection.shape).toBe('polygon');
 });
 
+test('selection add mode composes geometry and masks pixels nondestructively', async ({
+  page,
+}) => {
+  const canvas = page.getByTestId('editor-canvas');
+  const box = (await canvas.boundingBox())!;
+  await page.getByRole('button', { name: 'Select tool', exact: true }).click();
+  await page.mouse.move(box.x + box.width * 0.1, box.y + box.height * 0.2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.35, box.y + box.height * 0.8, { steps: 3 });
+  await page.mouse.up();
+  await page.getByLabel('Selection mode', { exact: true }).selectOption('add');
+  await page.getByRole('button', { name: 'Elliptical marquee tool', exact: true }).click();
+  await page.mouse.move(box.x + box.width * 0.65, box.y + box.height * 0.2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.9, box.y + box.height * 0.8, { steps: 3 });
+  await page.mouse.up();
+  await page.getByRole('button', { name: 'Mask from selection', exact: true }).click();
+  const exported = await project(page),
+    frame = exported.value.history[exported.value.index],
+    layer = frame.layers[0];
+  expect(frame.selection.parts.map((part: { operation: string }) => part.operation)).toEqual(['replace', 'add']);
+  expect(layer.mask).toEqual(expect.any(String));
+  await expect.poll(() => canvas.evaluate((item: HTMLCanvasElement) => {
+    const data = item.getContext('2d')!.getImageData(0, 0, item.width, item.height).data;
+    return [data[3], data[(item.width - 1) * 4 + 3]];
+  })).toEqual([0, 0]);
+});
+
 test('a stale tab cannot overwrite or discard newer work and can save its own local copy', async ({
   page,
   context,
