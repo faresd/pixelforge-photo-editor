@@ -89,6 +89,7 @@ test('editable text, layer properties, history and assets survive project export
   await expect(page.getByLabel('Edit layer text', { exact: true })).toHaveValue(
     'Editable title',
   );
+  await saved(page);
   expect(await pixels(page)).toBe(before);
   await page
     .getByLabel('Edit layer text', { exact: true })
