@@ -20,6 +20,11 @@ import {
   type Adjustments,
 } from './document';
 import { effectiveImageSize } from './imageSize.ts';
+import {
+  effectiveBrushPressureSettings,
+  validBrushPressureSettings,
+  type BrushPressureSettings,
+} from './brush.ts';
 export type Tool =
   | 'move'
   | 'hand'
@@ -56,6 +61,10 @@ export type Settings = {
   size: number;
   brushOpacity?: number;
   hardness?: number;
+  /** Opt-in pen/touch pressure mapping for future brush diameter. */
+  pressureSize?: boolean;
+  /** Opt-in pen/touch pressure mapping for brush alpha. */
+  pressureOpacity?: boolean;
   colorTolerance?: number;
   exportFormat?: ExportFormat;
   exportQuality?: number;
@@ -126,7 +135,8 @@ function validSettings(settings: Settings) {
       !validExportTargetBytes(settings.exportTargetBytes)) ||
     !/^#[a-f\d]{6}$/i.test(settings.color) ||
     (settings.backgroundColor !== undefined &&
-      !/^#[a-f\d]{6}$/i.test(settings.backgroundColor))
+      !/^#[a-f\d]{6}$/i.test(settings.backgroundColor)) ||
+    !validBrushPressureSettings(settings)
   )
     return false;
   const ranges = [
@@ -136,7 +146,7 @@ function validSettings(settings: Settings) {
   ];
   const brushRanges = [
     [settings.brushOpacity ?? 100, 1, 100],
-    [settings.hardness ?? 100, 1, 100],
+    [settings.hardness ?? 100, 0, 100],
     [settings.colorTolerance ?? 24, 0, 255],
   ];
   return (
@@ -148,6 +158,8 @@ function validSettings(settings: Settings) {
       ([value, min, max]) =>
         Number.isFinite(value) && value >= min && value <= max,
     ) &&
+    (settings.pressureSize === undefined || typeof settings.pressureSize === 'boolean') &&
+    (settings.pressureOpacity === undefined || typeof settings.pressureOpacity === 'boolean') &&
     validAdjustments(settings)
   );
 }
@@ -160,7 +172,11 @@ export function validateDraft(input: unknown): Draft {
   // complete adjustment record while keeping old bookmarks importable.
   const settings =
     value.settings && typeof value.settings === 'object'
-      ? { ...value.settings, ...effectiveAdjustments(value.settings) }
+      ? {
+          ...value.settings,
+          ...effectiveAdjustments(value.settings),
+          ...effectiveBrushPressureSettings(value.settings as BrushPressureSettings),
+        }
       : value.settings;
   if (
     !Array.isArray(value.history) ||
@@ -212,7 +228,7 @@ export function validateDraft(input: unknown): Draft {
       version: 2,
       assets,
       history,
-      settings: { ...value.settings, ...neutral },
+      settings: { ...value.settings, ...neutral, ...effectiveBrushPressureSettings(value.settings) },
       migrated: true,
     };
   }
