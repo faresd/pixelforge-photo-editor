@@ -28,6 +28,11 @@ import {
   validCurves,
   type Curves,
 } from './curves.ts';
+import {
+  effectiveImageSize,
+  validImageSizeMetadata,
+  type ImageSizeMetadata,
+} from './imageSize.ts';
 
 /** Version 2 stores immutable raster assets once; history contains editable layer metadata. */
 export const BLENDS = [
@@ -196,6 +201,8 @@ export type Selection = {
 export type Frame = {
   w: number;
   h: number;
+  /** Optional print-size metadata; omitted in legacy drafts and defaults to 72 ppi. */
+  imageSize?: ImageSizeMetadata;
   layers: Layer[];
   active: string;
   /** Optional for backwards compatibility with v2 drafts created before folders. */
@@ -347,6 +354,7 @@ export const transformFrame = (
   ...frame,
   w,
   h,
+  imageSize: effectiveImageSize(frame.imageSize),
   selection: undefined,
   previousSelection: undefined,
   // Geometric transforms change the canvas bounds. Named snapshots are
@@ -695,6 +703,8 @@ export function validateFrame(
     !value.layers.length ||
     value.layers.length > 32
   )
+    return fail();
+  if (value.imageSize !== undefined && !validImageSizeMetadata(value.imageSize))
     return fail();
   const ids = new Set<string>();
   if (value.groups !== undefined && !Array.isArray(value.groups)) return fail();

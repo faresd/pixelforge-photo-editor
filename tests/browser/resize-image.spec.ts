@@ -68,6 +68,10 @@ test('Image Size opens from the menu with safe defaults and a responsive dialog'
   expect(box!.y).toBeGreaterThanOrEqual(0);
   expect(box!.width).toBeGreaterThan(0);
   expect(box!.height).toBeGreaterThan(0);
+  const viewport = page.viewportSize();
+  expect(viewport).not.toBeNull();
+  expect(box!.x + box!.width).toBeLessThanOrEqual(viewport!.width);
+  expect(box!.y + box!.height).toBeLessThanOrEqual(viewport!.height);
 });
 
 test('locked dimensions preserve aspect ratio while unlocked dimensions stay independent', async ({
