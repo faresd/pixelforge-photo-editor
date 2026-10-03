@@ -10,7 +10,8 @@ export const BRUSH_MAX_PIXELS = 16000000;
 
 export const BRUSH_MODES = ['source-over', 'destination-out', 'clone', 'heal'] as const;
 export type BrushMode = (typeof BRUSH_MODES)[number];
-export type BrushPointerType = 'mouse' | 'pen' | 'touch' | (string & {});
+/** PointerEvent pointerType values; named values stay visible in editor hints. */
+export type BrushPointerType = 'mouse' | 'pen' | 'touch' | (string & { readonly __pointerType?: never });
 export type BrushColor = [number, number, number, number];
 export type BrushPressureSettings = {
   /** Defaults to false; pressure modulation is opt-in and explicit. */
@@ -24,7 +25,7 @@ export type BrushStampSettings = BrushPressureSettings & {
   /** Opacity is a normalized 0..1 value. */
   opacity: number;
   pressure?: number;
-  pointerType?: BrushPointerType | string;
+  pointerType?: BrushPointerType;
 };
 export type ResolvedBrushStamp = {
   pressure: number;
@@ -178,6 +179,23 @@ function assertPixels(value: ArrayLike<number>, width: number, height: number, l
     }
 }
 
+/** Translate destination stamp bounds into the source rectangle sampled by clone/heal. */
+function translatedSourceBounds(
+  bounds: StampBounds,
+  sourceX: number,
+  sourceY: number,
+  destinationX: number,
+  destinationY: number,
+  width: number,
+  height: number,
+): StampBounds {
+  const left = clamp(Math.round(sourceX + bounds.left - destinationX), 0, width),
+    top = clamp(Math.round(sourceY + bounds.top - destinationY), 0, height),
+    right = clamp(Math.round(sourceX + bounds.right - 1 - destinationX) + 1, 0, width),
+    bottom = clamp(Math.round(sourceY + bounds.bottom - 1 - destinationY) + 1, 0, height);
+  return { left, top, right: Math.max(left, right), bottom: Math.max(top, bottom) };
+}
+
 function sourceOver(destination: Uint8ClampedArray, offset: number, color: BrushColor, alpha: number): boolean {
   const sourceAlpha = clamp((color[3] / 255) * alpha, 0, 1);
   if (sourceAlpha <= 0) return false;
@@ -215,17 +233,27 @@ export function applyRadialStamp(
   if (!BRUSH_MODES.includes(request.mode)) throw new Error('Brush mode is invalid');
   const radial = radialStampMask(request);
   assertPixels(destination, request.width, request.height, 'Destination', radial.bounds);
-  const sourceMode = request.mode === 'clone' || request.mode === 'heal';
-  if (sourceMode) {
-    if (!request.source) throw new Error('Clone and healing stamps require source pixels');
-    // Only validate the source rectangle sampled by this bounded stamp.
-    assertPixels(request.source, request.width, request.height, 'Source', radial.bounds);
-  } else if (request.mode === 'source-over') {
-    assertColor(request.color);
-  }
   const sourceX = request.sourceX ?? request.x,
     sourceY = request.sourceY ?? request.y;
   if (!finite(sourceX) || !finite(sourceY)) throw new Error('Brush source point is invalid');
+  const sourceMode = request.mode === 'clone' || request.mode === 'heal';
+  if (sourceMode) {
+    if (!request.source) throw new Error('Clone and healing stamps require source pixels');
+    // Only validate the source rectangle sampled by this bounded stamp. The
+    // source centre can be offset from the destination centre for clone tools.
+    const sourceBounds = translatedSourceBounds(
+      radial.bounds,
+      sourceX,
+      sourceY,
+      request.x,
+      request.y,
+      request.width,
+      request.height,
+    );
+    assertPixels(request.source, request.width, request.height, 'Source', sourceBounds);
+  } else if (request.mode === 'source-over') {
+    assertColor(request.color);
+  }
   const healFactor = request.mode === 'heal' ? request.healingOpacity ?? 0.65 : 1;
   if (!finite(healFactor) || healFactor < 0 || healFactor > 1) throw new Error('Healing opacity is invalid');
   let changed = false;

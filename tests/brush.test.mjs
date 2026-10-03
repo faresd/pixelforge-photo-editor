@@ -101,6 +101,27 @@ test('clone uses an immutable source and returns a reusable mask', () => {
   assert.equal(result.mask[(3 - result.bounds.top) * result.width + (3 - result.bounds.left)], 255);
 });
 
+test('clone validates the shifted source rectangle rather than destination coordinates', () => {
+  const destination = pixels(7, 7, [0, 0, 0, 255]);
+  const source = Array.from(pixels(7, 7, [0, 0, 0, 255]), (value) => value);
+  // The destination stamp is centred at (5, 5), while clone samples around
+  // (1, 1). An invalid channel at the sampled source centre must be rejected.
+  source[(1 * 7 + 1) * 4] = NaN;
+  assert.throws(() => applyRadialStamp(destination, {
+    width: 7,
+    height: 7,
+    x: 5,
+    y: 5,
+    sourceX: 1,
+    sourceY: 1,
+    size: 3,
+    hardness: 100,
+    opacity: 1,
+    mode: 'clone',
+    source,
+  }), /Source/);
+});
+
 test('healing reuses the same mask with the bounded default healing opacity', () => {
   const destination = pixels(3, 3, [0, 0, 255, 255]);
   const source = pixels(3, 3, [255, 0, 0, 255]);
@@ -120,6 +141,6 @@ test('invalid sizes, hardness, pressure flags, dimensions, modes, sources and co
   assert.throws(() => applyRadialStamp(pixels(2, 2), { ...base, width: 2, height: 2, mode: 'clone' }), /source/);
   assert.throws(() => applyRadialStamp(pixels(2, 2), { ...base, width: 2, height: 2, mode: 'source-over', color: [0, 0, 0] }), /color/);
   assert.throws(() => applyRadialStamp(pixels(2, 2), { ...base, width: 2, height: 2, mode: 'clone', source: new Uint8ClampedArray(4) }), /Source/);
-  const invalid = new Array(3 * 3 * 4).fill(0); invalid[(1 * 3 + 1) * 4] = NaN;
+  const invalid = Array.from({ length: 3 * 3 * 4 }, () => 0); invalid[(1 * 3 + 1) * 4] = NaN;
   assert.throws(() => applyRadialStamp(invalid, { width: 3, height: 3, x: 1, y: 1, size: 3, hardness: 100, opacity: 1, mode: 'destination-out' }), /Destination/);
 });
