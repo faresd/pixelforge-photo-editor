@@ -122,8 +122,8 @@ test('pressure-on changes diameter and alpha in the expected direction', async (
   const lowAsset = low.assets[lowLayer.asset!], highAsset = high.assets[highLayer.asset!];
   expect(lowAsset.url).not.toBe(highAsset.url);
   const [lowAlpha, highAlpha] = await page.evaluate(async ({ lowUrl, highUrl, width, height }) => {
-    const sample = async (url: string) => { const image = new Image(); image.src = url; await image.decode(); const c = document.createElement('canvas'); c.width = width; c.height = height; c.getContext('2d')!.drawImage(image, 0, 0); return c.getContext('2d')!.getImageData(Math.floor(width * .3), Math.floor(height * .5), 1, 1).data[3]; };
-    return [await sample(lowUrl), await sample(highUrl)];
+    const sample = async (url: string, fraction: number) => { const image = new Image(); image.src = url; await image.decode(); const c = document.createElement('canvas'); c.width = width; c.height = height; c.getContext('2d')!.drawImage(image, 0, 0); return c.getContext('2d')!.getImageData(Math.floor(width * fraction), Math.floor(height * .5), 1, 1).data[3]; };
+    return [await sample(lowUrl, .3), await sample(highUrl, .7)];
   }, { lowUrl: lowAsset.url, highUrl: highAsset.url, width: lowAsset.w, height: lowAsset.h });
   expect(highAlpha).toBeGreaterThanOrEqual(lowAlpha);
 });
