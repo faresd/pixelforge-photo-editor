@@ -9,12 +9,18 @@ import { safeBatchStem, type ExportFormat } from './export.ts';
 
 type Props = {
   sources: BatchImageSource[];
+  name?: string;
   close: () => void;
   downloaded: (message: string) => void;
 };
 
 /** Local multi-input image export. Source files are intentionally owned by the caller. */
-export default function ImageBatchDialog({ sources, close, downloaded }: Props) {
+export default function ImageBatchDialog({
+  sources,
+  name,
+  close,
+  downloaded,
+}: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const controller = useRef<AbortController | null>(null);
   const [format, setFormat] = useState<ExportFormat>('png');
@@ -68,7 +74,7 @@ export default function ImageBatchDialog({ sources, close, downloaded }: Props) 
     const url = URL.createObjectURL(result.blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${safeBatchStem('pixelforge-images')}-batch.zip`;
+    link.download = `${safeBatchStem(name || 'pixelforge-images')}-batch.zip`;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     downloaded(
