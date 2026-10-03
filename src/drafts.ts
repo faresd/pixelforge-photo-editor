@@ -17,6 +17,7 @@ import {
   validId,
   type Assets,
   type Frame,
+  type Adjustments,
 } from './document';
 export type Tool =
   | 'move'
@@ -68,6 +69,8 @@ export type Settings = {
   hue: number;
   blur: number;
   filter: string;
+  colorBalance: Adjustments['colorBalance'];
+  sharpenNoise: Adjustments['sharpenNoise'];
 };
 export type Draft = {
   version: 2;
