@@ -11,8 +11,12 @@ The tolerance is the persisted colour-tolerance control (0–255). Components ar
 compared to their own seed colour using the maximum RGBA channel distance. A
 component that does not touch an edge keeps its original alpha, so enclosed
 subjects and antialiased interior pixels remain editable. Transparent source
-pixels remain transparent. The method is deterministic and bounded by the
-document pixel limit; it is not semantic subject detection and can remove a
+pixels remain transparent. The generated mask stores binary coverage for
+non-transparent retained pixels, so a source pixel with alpha 180 remains 180
+after compositing instead of being attenuated twice. The method is
+deterministic, allocates only bounded typed buffers and rejects documents over
+16 megapixels before allocation; the removal percentage counts only pixels
+with source alpha. It is not semantic subject detection and can remove a
 foreground object that touches the edge or a highly varied background that
 exceeds the tolerance.
 

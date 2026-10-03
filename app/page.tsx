@@ -1781,18 +1781,32 @@ export default function Home() {
     }
     try {
       const image = await decodeAsset(assets.current[layer.asset]);
-      const source = surface(f.w, f.h);
+      // Segment in native raster coordinates so a small/translated layer is
+      // not mistaken for an interior island merely because its backdrop does
+      // not touch the document canvas edge.
+      const source = surface(image.naturalWidth, image.naturalHeight);
       const context = source.getContext('2d');
       if (!context) throw new Error('Background removal canvas is unavailable');
-      context.save();
-      context.setTransform(...layer.matrix);
       context.drawImage(image, 0, 0);
-      context.restore();
       const result = createBackgroundMask(source, colorTolerance);
-      const mask = addAsset(assets.current, result.canvas);
+      // Decode/mask generation is asynchronous. Do not attach a result to a
+      // different active layer or a newer history frame chosen meanwhile.
+      if (current() !== f || current().active !== layer.id) {
+        setNotice('The document changed while the background was calculated');
+        return;
+      }
+      const maskCanvas = surface(f.w, f.h);
+      const maskContext = maskCanvas.getContext('2d');
+      if (!maskContext) throw new Error('Background removal mask is unavailable');
+      maskContext.imageSmoothingEnabled = false;
+      maskContext.save();
+      maskContext.setTransform(...layer.matrix);
+      maskContext.drawImage(result.canvas, 0, 0);
+      maskContext.restore();
+      const mask = addAsset(assets.current, maskCanvas);
       if (editLayer({ mask, maskEnabled: true, maskInverted: false })) {
         const removed = Math.round(
-          (result.removedPixels / result.totalPixels) * 100,
+          (result.removedPixels / Math.max(1, result.eligiblePixels)) * 100,
         );
         setNotice(`Background removed nondestructively (${removed}% edge pixels)`);
       }

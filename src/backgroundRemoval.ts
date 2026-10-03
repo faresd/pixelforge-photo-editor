@@ -12,6 +12,8 @@ export type BackgroundMaskResult = {
   mask: Uint8ClampedArray;
   removedPixels: number;
   totalPixels: number;
+  /** Opaque/partially opaque source pixels used for the UI removal ratio. */
+  eligiblePixels: number;
 };
 
 function integer(value: unknown, min: number, max: number): value is number {
@@ -28,6 +30,8 @@ function assertInput(
     throw new Error('Background removal pixels are invalid');
   if (!integer(width, 1, 16000) || !integer(height, 1, 16000))
     throw new Error('Background removal dimensions are invalid');
+  if (width * height > 16_000_000)
+    throw new Error('Background removal is limited to 16 megapixels');
   if (pixels.length !== width * height * 4)
     throw new Error('Background removal pixel length is invalid');
   if (!integer(tolerance, 0, 255))
@@ -56,8 +60,14 @@ export function removeConnectedBackground(
     mask[i + 2] = 255;
     mask[i + 3] = pixels[i + 3];
   }
-  const seen = new Uint8Array(width * height);
+  const pixelCount = width * height;
+  const seen = new Uint8Array(pixelCount);
+  // One bounded work queue doubles as the component member list: entries are
+  // retained until the component is classified, avoiding a second JS array
+  // (which can otherwise consume hundreds of MB on a 16MP image).
+  const work = new Uint32Array(pixelCount);
   let removedPixels = 0;
+  let eligiblePixels = 0;
   const sameAs = (offset: number, seed: number) =>
     Math.max(
       Math.abs(pixels[offset] - pixels[seed]),
@@ -66,19 +76,20 @@ export function removeConnectedBackground(
       Math.abs(pixels[offset + 3] - pixels[seed + 3]),
     ) <= tolerance;
 
-  for (let start = 0; start < width * height; start += 1) {
+  for (let start = 0; start < pixelCount; start += 1) {
     if (seen[start]) continue;
     const seed = start * 4;
-    const queue = [start];
-    const component: number[] = [];
+    let head = 0;
+    let tail = 1;
+    work[0] = start;
     let touchesEdge = false;
     seen[start] = 1;
-    while (queue.length) {
-      const current = queue.pop()!;
+    while (head < tail) {
+      const current = work[head++];
       const x = current % width;
       const y = Math.floor(current / width);
       const offset = current * 4;
-      component.push(current);
+      if (pixels[offset + 3] !== 0) eligiblePixels += 1;
       if (x === 0 || y === 0 || x === width - 1 || y === height - 1)
         touchesEdge = true;
       const neighbours = [
@@ -90,33 +101,43 @@ export function removeConnectedBackground(
       for (const next of neighbours) {
         if (next < 0 || seen[next] || !sameAs(next * 4, seed)) continue;
         seen[next] = 1;
-        queue.push(next);
+        work[tail++] = next;
       }
       // Alpha-zero pixels are always transparent in the result even when an
       // RGB-only source has an isolated transparent component.
       if (pixels[offset + 3] === 0) mask[offset + 3] = 0;
     }
     if (touchesEdge) {
-      for (const current of component) {
+      for (let i = 0; i < tail; i += 1) {
+        const current = work[i];
         const offset = current * 4;
         if (pixels[offset + 3] !== 0) removedPixels += 1;
         mask[offset + 3] = 0;
       }
     } else {
-      for (const current of component) {
+      for (let i = 0; i < tail; i += 1) {
+        const current = work[i];
         const offset = current * 4;
-        mask[offset + 3] = pixels[offset + 3];
+        // The mask is coverage, not source alpha. Compositing multiplies the
+        // source alpha by this value, so retaining 180 here would attenuate a
+        // semitransparent source twice. Transparent source pixels stay clear.
+        mask[offset + 3] = pixels[offset + 3] === 0 ? 0 : 255;
       }
     }
   }
-  return { mask, removedPixels, totalPixels: width * height };
+  return { mask, removedPixels, totalPixels: pixelCount, eligiblePixels };
 }
 
 /** Browser adapter used by the editor; the pure function above stays testable. */
 export function createBackgroundMask(
   source: HTMLCanvasElement,
   tolerance = 24,
-): { canvas: HTMLCanvasElement; removedPixels: number; totalPixels: number } {
+): {
+  canvas: HTMLCanvasElement;
+  removedPixels: number;
+  totalPixels: number;
+  eligiblePixels: number;
+} {
   if (!source || !source.getContext)
     throw new Error('Background removal source is invalid');
   const context = source.getContext('2d');
@@ -136,5 +157,10 @@ export function createBackgroundMask(
   const image = output.createImageData(source.width, source.height);
   image.data.set(result.mask);
   output.putImageData(image, 0, 0);
-  return { canvas, removedPixels: result.removedPixels, totalPixels: result.totalPixels };
+  return {
+    canvas,
+    removedPixels: result.removedPixels,
+    totalPixels: result.totalPixels,
+    eligiblePixels: result.eligiblePixels,
+  };
 }

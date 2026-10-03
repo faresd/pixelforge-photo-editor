@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { removeConnectedBackground } from '../src/backgroundRemoval.ts';
+import { applyLayerMaskPixels } from '../src/masks.ts';
 
 const rgba = (width, height, fn) => {
   const pixels = new Uint8ClampedArray(width * height * 4);
@@ -31,8 +32,14 @@ test('soft subject alpha is retained and transparent source pixels stay transpar
     return [250, 250, 250, 255];
   });
   const result = removeConnectedBackground(pixels, 3, 3, 0);
-  assert.equal(result.mask[(1 * 3 + 1) * 4 + 3], 180);
+  assert.equal(result.mask[(1 * 3 + 1) * 4 + 3], 255);
   assert.equal(result.mask[1 * 4 + 3], 0);
+  assert.equal(result.eligiblePixels, 8);
+  const composited = applyLayerMaskPixels(
+    new Uint8ClampedArray([100, 80, 40, 180]),
+    new Uint8ClampedArray([result.mask[(1 * 3 + 1) * 4 + 3]]),
+  );
+  assert.equal(composited[3], 180);
 });
 
 test('tolerance merges a lightly varied connected backdrop but preserves a contrasting island', () => {
@@ -59,5 +66,9 @@ test('invalid dimensions, buffers and tolerance fail closed', () => {
   assert.throws(
     () => removeConnectedBackground(new Uint8ClampedArray(16), 0, 2, 24),
     /dimensions/,
+  );
+  assert.throws(
+    () => removeConnectedBackground(new Uint8ClampedArray(0), 4001, 4000, 24),
+    /16 megapixels/,
   );
 });

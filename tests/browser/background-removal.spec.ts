@@ -30,7 +30,7 @@ const project = async (page: Page): Promise<Project> => {
 const fixture = [
   [40, 40, 40, 255], [40, 40, 40, 255], [40, 40, 40, 255], [40, 40, 40, 255], [40, 40, 40, 255],
   [40, 40, 40, 255], [210, 40, 30, 255], [210, 40, 30, 255], [210, 40, 30, 255], [40, 40, 40, 255],
-  [40, 40, 40, 255], [210, 40, 30, 255], [210, 40, 30, 255], [210, 40, 30, 255], [40, 40, 40, 255],
+  [40, 40, 40, 255], [210, 40, 30, 255], [210, 40, 30, 180], [210, 40, 30, 255], [40, 40, 40, 255],
   [40, 40, 40, 255], [210, 40, 30, 255], [210, 40, 30, 255], [210, 40, 30, 255], [40, 40, 40, 255],
   [40, 40, 40, 255], [40, 40, 40, 255], [40, 40, 40, 255], [40, 40, 40, 255], [40, 40, 40, 255],
 ];
@@ -67,6 +67,13 @@ const sampleAsset = async (page: Page, asset: Asset, points: Array<[number, numb
     return points.map(([x, y]) => Array.from(context.getImageData(x, y, 1, 1).data));
   }, { asset, points });
 
+const sampleCanvasPixel = (page: Page, x: number, y: number) =>
+  page.getByTestId('editor-canvas').evaluate(
+    (canvas: HTMLCanvasElement, point) =>
+      Array.from(canvas.getContext('2d')!.getImageData(point.x, point.y, 1, 1).data),
+    { x, y },
+  );
+
 test.beforeEach(async ({ page }) => openEditor(page));
 
 test('Remove Background creates a local nondestructive mask, preserves source pixels and survives reload', async ({ page }) => {
@@ -89,6 +96,9 @@ test('Remove Background creates a local nondestructive mask, preserves source pi
   const [edge, subject] = await sampleAsset(page, after.assets[afterLayer.mask!], [[0, 0], [2, 2]]);
   expect(edge[3]).toBe(0);
   expect(subject[3]).toBe(255);
+  // Mask alpha is coverage. It must not attenuate the source's existing 180
+  // alpha a second time in the compositor.
+  expect((await sampleCanvasPixel(page, 2, 2))[3]).toBe(180);
 
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Undo/ }).click();
@@ -107,4 +117,41 @@ test('Remove Background is disabled for locked layers and remains local', async 
   await page.getByLabel('Lock layer', { exact: true }).check();
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await expect(page.getByRole('menuitem', { name: 'Remove Background…', exact: true })).toBeDisabled();
+});
+
+test('Remove Background segments native raster bounds before mapping a translated layer mask', async ({ page }) => {
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
+  const encoded = await page.evaluate((values) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 5;
+    canvas.height = 5;
+    const context = canvas.getContext('2d')!;
+    const image = context.createImageData(5, 5);
+    values.flat().forEach((value, index) => { image.data[index] = value; });
+    context.putImageData(image, 0, 0);
+    return canvas.toDataURL('image/png').split(',')[1];
+  }, fixture);
+  await page.getByTestId('layer-input').setInputFiles({
+    name: 'small-background-fixture.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(encoded, 'base64'),
+  });
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
+  await page.getByLabel('Layer X', { exact: true }).fill('300');
+  await page.getByLabel('Layer X', { exact: true }).press('Enter');
+  await page.getByLabel('Layer Y', { exact: true }).fill('200');
+  await page.getByLabel('Layer Y', { exact: true }).press('Enter');
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Remove Background…', exact: true }).click();
+  await expect(page.locator('footer')).toContainText('Background removed nondestructively', { timeout: 10000 });
+  const after = await project(page);
+  const layer = after.history[after.index].layers.at(-1)!;
+  const mask = after.assets[layer.mask!];
+  expect(mask.w).toBe(1200);
+  expect(mask.h).toBe(800);
+  const [edge, subject] = await sampleAsset(page, mask, [[300, 200], [302, 202]]);
+  expect(edge[3]).toBe(0);
+  expect(subject[3]).toBe(255);
+  expect((await sampleCanvasPixel(page, 302, 202))[3]).toBe(180);
 });
