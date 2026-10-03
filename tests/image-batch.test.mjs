@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildImageBatchExport, MAX_BATCH_INPUTS } from '../src/imageBatch.ts';
+import { buildImageBatchExport, decodeBatchImage, MAX_BATCH_INPUTS } from '../src/imageBatch.ts';
 
 function canvas(width, height) {
   return { width, height };
@@ -122,4 +122,13 @@ test('multi-input export fails safely when every source is invalid', async () =>
     /no usable images.*Not an image/,
   );
   assert.deepEqual(progress.map((event) => event.status), ['failed', 'failed']);
+});
+
+test('batch decoding labels layered and camera formats before invoking browser decoders', async () => {
+  for (const source of [
+    { name: 'layered.psd', file: blob([1], 'application/octet-stream') },
+    { name: 'camera.nef', file: blob([1], 'application/octet-stream') },
+  ]) {
+    await assert.rejects(decodeBatchImage(source), /not supported yet|RAW/);
+  }
 });

@@ -35,7 +35,25 @@ The local multi-input contract is documented separately in
 kept separate from history export so each selected source can fail without
 discarding successful outputs. The editor integration remains gated on desktop
 and mobile selection, cancellation, mixed-result and no-network acceptance
-tests; this module does not claim HEIC/RAW/PSD compatibility or background
-removal quality for arbitrary batches.
+tests; this module does not claim successful HEIC/RAW/PSD decoding or
+background-removal quality for arbitrary batches. Unsupported layered and
+camera formats are rejected with explicit per-file compatibility labels before
+the browser decoder runs.
 
 This contract does not claim metadata editing, ICC color management, HEIC/PSD output or Photoshop compatibility. Those remain later production-workflow milestones.
+
+## Source-format compatibility disclosure
+
+Raster imports (PNG, JPEG, WebP and other browser-readable `image/*` inputs)
+are decoded into an editable raster layer. PixelForge deliberately labels this
+as a **flattened raster import**: original EXIF/GPS metadata, camera RAW data,
+layer stacks and the source container are not retained in the document.
+
+HEIC/HEIF is a conditional import. When the current browser can decode the
+container, it is imported as the same flattened raster and the UI says so;
+when it cannot, the source draft remains untouched and the user is told to
+convert to PNG or JPEG. PSD/PSB and camera RAW extensions (including DNG,
+CR3, NEF and similar formats) are explicitly rejected at the import boundary
+with a develop/flatten-first message. PixelForge does not claim lossless
+HEIC, PSD or RAW round trips, and batch import uses the same labels in its
+per-file failure manifest.
