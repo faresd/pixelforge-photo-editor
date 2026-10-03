@@ -39,6 +39,8 @@ export type Tool =
   | 'pencil'
   | 'color-replace'
   | 'eraser'
+  | 'background-eraser'
+  | 'magic-eraser'
   | 'text'
   | 'rectangle'
   | 'ellipse'
@@ -112,6 +114,8 @@ function validSettings(settings: Settings) {
       'pencil',
       'color-replace',
       'eraser',
+      'background-eraser',
+      'magic-eraser',
       'text',
       'rectangle',
       'ellipse',

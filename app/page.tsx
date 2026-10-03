@@ -117,6 +117,10 @@ import {
   type BrushColor,
   type BrushMode,
 } from '../src/brush';
+import {
+  eraseBackgroundStroke,
+  eraseMagicRegion,
+} from '../src/erasers';
 type MenuName =
   | 'File'
   | 'Edit'
@@ -212,6 +216,8 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'pencil', label: 'Pencil', icon: Pencil, key: 'B' },
   { id: 'color-replace', label: 'Color Replace', icon: Palette, key: 'B' },
   { id: 'eraser', label: 'Eraser', icon: Eraser, key: 'E' },
+  { id: 'background-eraser', label: 'Background Eraser', icon: Eraser, key: 'E' },
+  { id: 'magic-eraser', label: 'Magic Eraser', icon: Wand2, key: 'E' },
   { id: 'text', label: 'Text', icon: Type, key: 'T' },
   { id: 'rectangle', label: 'Shape', icon: Shapes, key: 'U' },
   { id: 'ellipse', label: 'Ellipse', icon: Shapes, key: 'U' },
@@ -248,6 +254,7 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   u: ['rectangle', 'ellipse', 'line', 'polygon'],
   m: MARQUEE_TOOLS,
   l: ['lasso', 'polygonal-lasso'],
+  e: ['eraser', 'background-eraser', 'magic-eraser'],
 };
 /** Existing PixelForge aliases retained while the primary keys follow Photoshop. */
 const TOOL_ALIASES: Record<string, Tool> = {
@@ -2547,6 +2554,104 @@ export default function Home() {
       }
       return;
     }
+    if (tool === 'magic-eraser') {
+      if (
+        layerIsLocked(f, layer) ||
+        !layer.visible ||
+        layer.kind !== 'raster'
+      ) {
+        setNotice('Select a visible, unlocked raster layer before erasing');
+        return;
+      }
+      try {
+        const image = await decodeAsset(assets.current[layer.asset]),
+          buffer = surface(image.naturalWidth, image.naturalHeight);
+        buffer.getContext('2d')!.drawImage(image, 0, 0);
+        if (!eraseMagicRegion(buffer, local.x, local.y, colorTolerance)) {
+          setNotice('No contiguous pixels matched at that point');
+          return;
+        }
+        const asset = addAsset(assets.current, buffer);
+        if (
+          commit({
+            ...f,
+            layers: f.layers.map((item) =>
+              item.id === layer.id ? { ...item, asset } : item,
+            ),
+          })
+        )
+          setNotice('Magic Eraser removed the contiguous region');
+      } catch {
+        setNotice('Could not erase this layer');
+      }
+      return;
+    }
+    if (tool === 'background-eraser') {
+      if (
+        layerIsLocked(f, layer) ||
+        !layer.visible ||
+        layer.kind !== 'raster'
+      ) {
+        setNotice('Select a visible, unlocked raster layer before erasing');
+        return;
+      }
+      const g = {
+        tool,
+        start: local,
+        last: local,
+        frame: f,
+        layer,
+        lastPressure: pressure(e),
+        pointerType: e.pointerType,
+        moved: false,
+        queued: [{ ...local, pressure: pressure(e), pointerType: e.pointerType }],
+      } as Gesture;
+      gesture.current = g;
+      g.pending = (async () => {
+        try {
+          const image = await decodeAsset(assets.current[layer.asset]),
+            source = surface(image.naturalWidth, image.naturalHeight),
+            buffer = surface(image.naturalWidth, image.naturalHeight),
+            sourceContext = source.getContext('2d')!,
+            bufferContext = buffer.getContext('2d')!;
+          sourceContext.drawImage(image, 0, 0);
+          bufferContext.drawImage(image, 0, 0);
+          if (gesture.current !== g) return;
+          const sample = sourceContext.getImageData(
+            Math.max(0, Math.min(source.width - 1, Math.floor(local.x))),
+            Math.max(0, Math.min(source.height - 1, Math.floor(local.y))),
+            1,
+            1,
+          ).data;
+          g.source = source;
+          g.buffer = buffer;
+          g.replaceTarget = [sample[0], sample[1], sample[2], sample[3]];
+          let from = g.start;
+          for (const point of g.queued || [{ ...g.start, pressure: g.lastPressure, pointerType: g.pointerType }]) {
+            eraseBackgroundStroke(
+              source,
+              buffer,
+              g.replaceTarget,
+              from.x,
+              from.y,
+              point.x,
+              point.y,
+              localSize(layer.matrix, size),
+              colorTolerance,
+              brushOpacity / 100,
+            );
+            from = point;
+          }
+          g.queued = undefined;
+          void paint(f, { [layer.id]: buffer });
+        } catch {
+          gesture.current = null;
+          setNotice('Could not prepare background eraser');
+        }
+      })();
+      await g.pending;
+      return;
+    }
     if (tool === 'clone' || tool === 'heal') {
       if (
         layerIsLocked(f, layer) ||
@@ -2911,6 +3016,35 @@ export default function Home() {
       void paint(g.frame, { [g.layer!.id]: g.buffer });
       g.last = local;
       return;
+    }
+    if (
+      g.tool === 'background-eraser' &&
+      g.buffer &&
+      g.source &&
+      g.replaceTarget
+    ) {
+      eraseBackgroundStroke(
+        g.source,
+        g.buffer,
+        g.replaceTarget,
+        g.last.x,
+        g.last.y,
+        local.x,
+        local.y,
+        localSize(g.layer!.matrix, size),
+        colorTolerance,
+        brushOpacity / 100,
+      );
+      void paint(g.frame, { [g.layer!.id]: g.buffer });
+      g.last = local;
+      return;
+    }
+    if (g.tool === 'background-eraser' && !g.buffer) {
+      (g.queued || (g.queued = [])).push({
+        ...local,
+        pressure: g.lastPressure,
+        pointerType: g.pointerType,
+      });
     }
     if ((g.tool === 'clone' || g.tool === 'heal') && !g.buffer) {
       (g.queued || (g.queued = [])).push({ ...local, pressure: g.lastPressure, pointerType: g.pointerType });
@@ -3370,6 +3504,35 @@ export default function Home() {
         setNotice(
           g.tool === 'heal' ? 'Healing stroke applied' : 'Clone stroke applied',
         );
+    } else if (g.tool === 'background-eraser' && g.buffer && g.layer) {
+      if (
+        g.moved &&
+        g.source &&
+        g.replaceTarget &&
+        (g.last.x !== local.x || g.last.y !== local.y)
+      )
+        eraseBackgroundStroke(
+          g.source,
+          g.buffer,
+          g.replaceTarget,
+          g.last.x,
+          g.last.y,
+          local.x,
+          local.y,
+          localSize(g.layer.matrix, size),
+          colorTolerance,
+          brushOpacity / 100,
+        );
+      const asset = addAsset(assets.current, g.buffer);
+      if (
+        commit({
+          ...f,
+          layers: f.layers.map((item) =>
+            item.id === g.layer!.id ? { ...item, asset } : item,
+          ),
+        })
+      )
+        setNotice('Background Eraser stroke applied');
     } else if (g.tool === 'color-replace' && g.buffer && g.layer) {
       const asset = addAsset(assets.current, g.buffer);
       if (
@@ -4533,6 +4696,8 @@ export default function Home() {
             tool === 'pencil' ||
             tool === 'color-replace' ||
             tool === 'eraser' ||
+            tool === 'background-eraser' ||
+            tool === 'magic-eraser' ||
             tool === 'clone' ||
             tool === 'heal' ||
             tool === 'rectangle' ||
@@ -4541,22 +4706,26 @@ export default function Home() {
             tool === 'polygon') && (
             <section className="panel">
               <Title icon={Brush} text="Tool options" />
-              <Slider
-                label="Size"
-                value={size}
-                min={2}
-                max={100}
-                set={setSize}
-                suffix="px"
-              />
+              {tool !== 'magic-eraser' && (
+                <Slider
+                  label="Size"
+                  value={size}
+                  min={2}
+                  max={100}
+                  set={setSize}
+                  suffix="px"
+                />
+              )}
               {(tool === 'brush' ||
                 tool === 'pencil' ||
                 tool === 'color-replace' ||
                 tool === 'eraser' ||
+                tool === 'background-eraser' ||
+                tool === 'magic-eraser' ||
                 tool === 'clone' ||
                 tool === 'heal') && (
                 <>
-                  {tool !== 'pencil' && tool !== 'color-replace' && (
+                  {tool !== 'pencil' && tool !== 'color-replace' && tool !== 'magic-eraser' && (
                     <Slider
                       label="Hardness"
                       value={hardness}
@@ -4566,15 +4735,17 @@ export default function Home() {
                       suffix="%"
                     />
                   )}
-                  <Slider
-                    label="Opacity"
-                    value={brushOpacity}
-                    min={1}
-                    max={100}
-                    set={setBrushOpacity}
-                    suffix="%"
-                  />
-                  {tool !== 'pencil' && tool !== 'color-replace' && (
+                  {tool !== 'magic-eraser' && (
+                    <Slider
+                      label="Opacity"
+                      value={brushOpacity}
+                      min={1}
+                      max={100}
+                      set={setBrushOpacity}
+                      suffix="%"
+                    />
+                  )}
+                  {tool !== 'pencil' && tool !== 'color-replace' && tool !== 'magic-eraser' && (
                     <>
                       <label className="check-row">
                         <input
@@ -4597,7 +4768,7 @@ export default function Home() {
                       <p className="adjust-note">Pressure mapping is off by default. Pen and touch inputs use full size and opacity until each option is enabled.</p>
                     </>
                   )}
-                  {tool === 'color-replace' && (
+                  {(tool === 'color-replace' || tool === 'background-eraser' || tool === 'magic-eraser') && (
                     <Slider
                       label="Color tolerance"
                       value={colorTolerance}
