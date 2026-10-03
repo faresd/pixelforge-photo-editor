@@ -6,7 +6,7 @@
  * raster sources remain immutable and canvas-space masks stay valid.
  */
 import type { Assets, Frame, Layer, Matrix } from './document.ts';
-import { identity, validMatrix } from './document.ts';
+import { alignedTextOffset, identity, trackedTextWidth, validMatrix } from './document.ts';
 import {
   MAX_IMAGE_DIMENSION,
   MAX_IMAGE_PIXELS,
@@ -75,12 +75,59 @@ export type TrimPlan = CanvasSizePlan & {
 export type RevealAllRequest = {
   /** Hidden layers are ignored by default because they do not contribute to the visible canvas. */
   includeHidden?: boolean;
+  /** Optional browser-measured local bounds for text layers, keyed by layer id. */
+  textBounds?: Record<string, PixelBounds>;
 };
 
 export type RevealAllPlan = CanvasSizePlan & {
   bounds: PixelBounds;
   includedLayerIds: string[];
 };
+
+/** Conservative glyph-width bound used outside a browser canvas. */
+export function estimatedTextLayerBounds(layer: Extract<Layer, { kind: 'text' }>): PixelBounds {
+  const boxWidth = Math.max(1, layer.boxWidth ?? 640),
+    lineHeight = Math.max(0.5, layer.lineHeight ?? 1.2),
+    spacing = Math.abs(layer.letterSpacing ?? 0),
+    lines = layer.text.split('\n'),
+    widths = lines.map((line) => {
+      const glyphs = Array.from(line).length;
+      // 2em per glyph safely covers wide fallback glyphs and positive tracking.
+      return Math.max(0, glyphs * layer.fontSize * 2 + Math.max(0, glyphs - 1) * spacing);
+    }),
+    maxWidth = Math.max(boxWidth, ...widths),
+    align = layer.textAlign ?? 'left',
+    left = align === 'right' ? boxWidth - maxWidth : align === 'center' ? (boxWidth - maxWidth) / 2 : 0,
+    top = 0,
+    height = Math.max(layer.fontSize * 1.3, (lines.length - 1) * layer.fontSize * lineHeight + layer.fontSize * 1.3);
+  return { x: left, y: top, width: maxWidth, height };
+}
+
+/**
+ * Measure editable text using the browser's actual font fallback and tracking.
+ * The returned local rectangle matches the top-baseline renderer and is safe
+ * to pass as Reveal All's `textBounds[layer.id]` value.
+ */
+export function measuredTextLayerBounds(
+  context: CanvasRenderingContext2D,
+  layer: Extract<Layer, { kind: 'text' }>,
+): PixelBounds {
+  const boxWidth = Math.max(1, layer.boxWidth ?? 640),
+    lineHeight = Math.max(0.5, layer.lineHeight ?? 1.2),
+    spacing = layer.letterSpacing ?? 0,
+    align = layer.textAlign ?? 'left',
+    lines = layer.text.split('\n');
+  context.save();
+  context.font = `${layer.bold ? '700' : '400'} ${layer.fontSize}px "${layer.fontFamily}"`;
+  const widths = lines.map((line) => trackedTextWidth(context, line, spacing)),
+    left = Math.min(...widths.map((width) => alignedTextOffset(width, boxWidth, align))),
+    right = Math.max(...widths.map((width) => alignedTextOffset(width, boxWidth, align) + width)),
+    measured = context.measureText('Mg'),
+    glyphHeight = Math.max(layer.fontSize, (measured.actualBoundingBoxAscent || 0) + (measured.actualBoundingBoxDescent || 0), layer.fontSize * 1.05),
+    height = Math.max(glyphHeight, (lines.length - 1) * layer.fontSize * lineHeight + glyphHeight);
+  context.restore();
+  return { x: left, y: 0, width: Math.max(1, right - left), height };
+}
 
 const validDimension = (value: number): boolean =>
   Number.isInteger(value) && value >= 1 && value <= MAX_IMAGE_DIMENSION;
@@ -290,15 +337,7 @@ export function layerLocalBounds(layer: Layer, assets: Assets): PixelBounds {
     return { x: 0, y: 0, width: asset.w, height: asset.h };
   }
   if (layer.kind === 'text') {
-    const lines = Math.max(1, layer.text.split('\n').length),
-      lineHeight = Math.max(0.5, layer.lineHeight ?? 1.2);
-    return {
-      x: 0,
-      y: 0,
-      // boxWidth is the editable text box and is conservative for all alignments.
-      width: Math.max(1, layer.boxWidth ?? 640),
-      height: Math.max(1, lines * layer.fontSize * lineHeight),
-    };
+    return estimatedTextLayerBounds(layer);
   }
   // Filled rectangle/ellipse layers do not call stroke in the renderer.
   const stroke = layer.kind !== 'line' && layer.fill ? 0 : Math.max(1, layer.stroke || 1);
@@ -312,7 +351,13 @@ export function layerLocalBounds(layer: Layer, assets: Assets): PixelBounds {
 
 /** Return transformed painted bounds for one layer. */
 export function layerBounds(layer: Layer, assets: Assets): PixelBounds {
-  return transformedCorners(layerLocalBounds(layer, assets), layer.matrix);
+  const local = layerLocalBounds(layer, assets),
+    // CSS blur tails extend beyond the geometric source; 3 sigma is a bounded conservative edge.
+    tail = Math.ceil(Math.max(0, layer.adjustments?.blur || 0) * 3);
+  return transformedCorners(
+    { x: local.x - tail, y: local.y - tail, width: local.width + tail * 2, height: local.height + tail * 2 },
+    layer.matrix,
+  );
 }
 
 function unionBounds(a: PixelBounds, b: PixelBounds): PixelBounds {
@@ -343,7 +388,15 @@ export function planRevealAll(
         (group !== undefined && (!group.visible || group.opacity <= 0)))
     )
       continue;
-    const next = layerBounds(layer, assets);
+    const next = layer.kind === 'text' && request.textBounds?.[layer.id]
+      ? transformedCorners(
+          (() => {
+            const local = request.textBounds![layer.id], tail = Math.ceil(Math.max(0, layer.adjustments?.blur || 0) * 3);
+            return { x: local.x - tail, y: local.y - tail, width: local.width + tail * 2, height: local.height + tail * 2 };
+          })(),
+          layer.matrix,
+        )
+      : layerBounds(layer, assets);
     bounds = unionBounds(bounds, next);
     includedLayerIds.push(layer.id);
   }

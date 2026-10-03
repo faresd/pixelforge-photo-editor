@@ -10,6 +10,7 @@ import {
   planCanvasSize,
   planRevealAll,
   planTrim,
+  measuredTextLayerBounds,
   trimBounds,
 } from '../src/canvasSize.ts';
 import { identity } from '../src/document.ts';
@@ -118,10 +119,20 @@ test('Reveal All handles rotated/vector/text layers and returns a no-op when con
   const text = layer({ id: id(4), kind: 'text', text: 'one\ntwo', fontSize: 20, boxWidth: 40, lineHeight: 1.5, textAlign: 'left', letterSpacing: 0, fontFamily: 'Arial', bold: false, color: '#fff' });
   const contained = planRevealAll({ w: 200, h: 200, layers: [shape, text] }, {});
   assert.equal(contained.changed, false);
-  assert.deepEqual(layerLocalBounds(text, {}), { x: 0, y: 0, width: 40, height: 60 });
+  assert.deepEqual(layerLocalBounds(text, {}), { x: 0, y: 0, width: 120, height: 56 });
   assert.deepEqual(layerBounds(shape, {}), { x: 80, y: 10, width: 10, height: 20 });
   const outlined = { ...shape, fill: false };
   assert.deepEqual(layerBounds(outlined, {}), { x: 79.5, y: 9.5, width: 11, height: 21 });
+});
+
+test('Reveal All has conservative text overflow and measured browser bounds hooks', () => {
+  const text = layer({ id: id(6), kind: 'text', text: 'wide', fontSize: 20, boxWidth: 10, lineHeight: 1.2, textAlign: 'center', letterSpacing: 4, fontFamily: 'Arial', bold: false, color: '#fff' });
+  const estimated = layerLocalBounds(text, {});
+  assert.ok(estimated.width > 10);
+  const context = { font: '', save() {}, restore() {}, measureText(value) { return { width: value.length * 10, actualBoundingBoxAscent: 15, actualBoundingBoxDescent: 5 }; } };
+  assert.deepEqual(measuredTextLayerBounds(context, text), { x: -21, y: 0, width: 52, height: 21 });
+  const blurred = layer({ matrix: identity(), adjustments: { ...adjustments, blur: 10 } });
+  assert.deepEqual(layerBounds(blurred, {}), { x: -30, y: -30, width: 70, height: 70 });
 });
 
 test('Reveal All enforces canvas limits and validates missing raster assets', () => {
