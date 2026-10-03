@@ -7,6 +7,7 @@ import {
   IMAGE_SIZE_UNITS,
   pixelsToImageSize,
   planImageSize,
+  resolutionInPpi,
   RESAMPLE_METHODS,
   RESOLUTION_UNITS,
   type ImageSizeMetadata,
@@ -86,7 +87,9 @@ export default function ResizeDialog({ width, height, imageSize, close, apply }:
   const changeResolutionUnit = (unit: ImageSizeMetadata['resolutionUnit']) => {
     const previous = metadata;
     const widthPixels = readPixels(w, widthUnit, previous), heightPixels = readPixels(h, heightUnit, previous);
-    const next = { ...metadata, resolutionUnit: unit };
+    const ppi = resolutionInPpi(metadata.resolution, metadata.resolutionUnit);
+    const next = { resolution: unit === 'ppcm' ? ppi / 2.54 : ppi, resolutionUnit: unit };
+    setResolution(next.resolution.toFixed(2));
     setMetadata(next);
     if (widthUnit !== 'pixels' && Number.isFinite(widthPixels)) setW(format(pixelsToImageSize(widthPixels, widthUnit, next), widthUnit));
     if (heightUnit !== 'pixels' && Number.isFinite(heightPixels)) setH(format(pixelsToImageSize(heightPixels, heightUnit, next), heightUnit));
