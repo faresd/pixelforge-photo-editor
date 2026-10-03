@@ -89,7 +89,7 @@ import BatchExportDialog from '../src/BatchExportDialog';
 import SelectionTransformDialog from '../src/SelectionTransformDialog';
 import CanvasSizeDialog from '../src/CanvasSizeDialog';
 import TrimDialog from '../src/TrimDialog';
-import { planCanvasSize, planRevealAll, trimBounds, type CanvasSizeRequest, type TrimMode, type TrimSides } from '../src/canvasSize';
+import { measuredTextLayerBounds, planCanvasSize, planRevealAll, trimBounds, type CanvasSizeRequest, type TrimMode, type TrimSides } from '../src/canvasSize';
 import CurveEditor from '../src/CurveEditor';
 import { type CurveChannel, type CurvePoints } from '../src/curves';
 import { type ExportFormat } from '../src/export';
@@ -1704,6 +1704,11 @@ export default function Home() {
         plan.width,
         plan.height,
       );
+      if (current() !== f) {
+        setCanvasSizing(null);
+        setNotice('Canvas changed while the operation was running; nothing was overwritten');
+        return;
+      }
       if (!commit(next)) return;
       setCanvasSizing(null);
       setNotice(`Canvas changed to ${plan.width} × ${plan.height}; layer pixels remain unchanged`);
@@ -1717,10 +1722,10 @@ export default function Home() {
       return;
     }
     const f = current();
-    const rendered = await renderFrame(f, assets.current);
-    let bounds;
     try {
-      bounds = trimBounds(
+      const rendered = await renderFrame(f, assets.current);
+      if (current() !== f) throw new Error('Canvas changed while Trim was rendering');
+      const bounds = trimBounds(
         rendered.getContext('2d')!.getImageData(0, 0, rendered.width, rendered.height).data,
         rendered.width,
         rendered.height,
@@ -1728,24 +1733,27 @@ export default function Home() {
         sides,
       );
       if (!bounds) throw new Error('Trim would remove the entire image');
+      setTrimming(false);
+      if (bounds.left === 0 && bounds.top === 0 && bounds.right === f.w && bounds.bottom === f.h) {
+        setNotice('Canvas already fits the visible artwork');
+        return;
+      }
+      const next = await transformFrameWithMasks(
+        f,
+        [1, 0, 0, 1, -bounds.left, -bounds.top],
+        assets.current,
+        bounds.right - bounds.left,
+        bounds.bottom - bounds.top,
+      );
+      if (current() !== f) {
+        setNotice('Canvas changed while Trim was running; nothing was overwritten');
+        return;
+      }
+      if (commit(next)) setNotice(`Canvas trimmed to ${next.w} × ${next.h}; layer pixels retained`);
     } catch (error) {
       setTrimming(false);
       setNotice(error instanceof Error ? error.message : 'Trim could not be applied');
-      return;
     }
-    setTrimming(false);
-    if (bounds.left === 0 && bounds.top === 0 && bounds.right === f.w && bounds.bottom === f.h) {
-      setNotice('Canvas already fits the visible artwork');
-      return;
-    }
-    const next = await transformFrameWithMasks(
-      f,
-      [1, 0, 0, 1, -bounds.left, -bounds.top],
-      assets.current,
-      bounds.right - bounds.left,
-      bounds.bottom - bounds.top,
-    );
-    if (commit(next)) setNotice(`Canvas trimmed to ${next.w} × ${next.h}; layer pixels retained`);
   };
   const revealAll = async () => {
     if (quickMasking) {
@@ -1754,7 +1762,14 @@ export default function Home() {
     }
     const f = current();
     try {
-      const plan = planRevealAll(f, assets.current);
+      const measureSurface = surface(1, 1);
+      const measureContext = measureSurface.getContext('2d')!;
+      const textBounds = Object.fromEntries(
+        f.layers
+          .filter((layer): layer is Extract<Layer, { kind: 'text' }> => layer.kind === 'text')
+          .map((layer) => [layer.id, measuredTextLayerBounds(measureContext, layer)]),
+      );
+      const plan = planRevealAll(f, assets.current, { textBounds });
       if (!plan.changed) {
         setNotice('Canvas already reveals all artwork');
         return;
@@ -1766,6 +1781,10 @@ export default function Home() {
         plan.width,
         plan.height,
       );
+      if (current() !== f) {
+        setNotice('Canvas changed while Reveal All was running; nothing was overwritten');
+        return;
+      }
       if (commit(next)) setNotice(`All artwork revealed in a ${next.w} × ${next.h} canvas`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Reveal All could not be applied');

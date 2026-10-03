@@ -62,6 +62,14 @@ test('Canvas Size cancel leaves dimensions unchanged and records no history edit
   await expect.poll(() => dimensions(page)).toEqual(before);
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await expect(page.getByRole('menuitem', { name: /^Undo/ })).toBeDisabled();
+
+  // Applying the current dimensions is also a no-op and must not create an
+  // undo frame that would obscure the user's previous edit.
+  await openImageItem(page, 'Canvas Size…');
+  await page.getByRole('dialog').getByRole('button', { name: 'Apply canvas size', exact: true }).click();
+  await expect(page.locator('footer')).toContainText('Canvas already has those dimensions');
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: /^Undo/ })).toBeDisabled();
 });
 
 test('Trim supports transparency and top-left color modes with a safe cancel path', async ({ page }) => {
@@ -117,6 +125,18 @@ test('Trim is undoable, persists after reload, and supports Escape dismissal', a
   await expect(page.getByRole('dialog')).toBeHidden();
 });
 
+test('Trim rejects an entirely transparent composite without changing the draft', async ({ page }) => {
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
+  const before = await dimensions(page);
+  await openImageItem(page, 'Trim…');
+  await page.getByRole('dialog').getByRole('button', { name: 'Apply trim', exact: true }).click();
+  await expect.poll(() => dimensions(page)).toEqual(before);
+  await expect(page.locator('footer')).toContainText('Trim would remove the entire image');
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: /^Undo/ })).toBeDisabled();
+});
+
 test('Reveal All is enabled, preserves the existing canvas, and expands translated artwork', async ({ page }) => {
   // Download a valid editable project, move its layer outside the canvas, then
   // re-open it through the public import path to exercise the document contract.
@@ -135,6 +155,9 @@ test('Reveal All is enabled, preserves the existing canvas, and expands translat
   const after = await dimensions(page);
   expect(after.width).toBeGreaterThan(before.width);
   await expect(page.locator('footer')).toContainText('All artwork revealed');
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', String(after.width));
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Undo/ }).click();
   await expect.poll(() => dimensions(page)).toEqual(before);
