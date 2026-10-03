@@ -144,6 +144,9 @@ export function planCanvasSize(
 function assertPixelBuffer(pixels: ArrayLike<number>, width: number, height: number): void {
   assertDimensions(width, height, 'Pixel buffer');
   if (pixels.length !== width * height * 4) throw new Error('Pixel buffer must contain RGBA data for every pixel');
+  for (let index = 0; index < pixels.length; index += 1)
+    if (!Number.isFinite(pixels[index]) || pixels[index] < 0 || pixels[index] > 255)
+      throw new Error('Pixel buffer channels must be finite 8-bit values');
 }
 
 function validColor(value: unknown): value is TrimColor {

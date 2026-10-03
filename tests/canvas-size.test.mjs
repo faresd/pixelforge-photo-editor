@@ -61,6 +61,7 @@ test('findTrimBounds trims transparent margins and reports an all-transparent im
   set(2, 1, [10, 20, 30, 255]); set(3, 2, [10, 20, 30, 128]);
   assert.deepEqual(findTrimBounds(pixels, 5, 4, { mode: 'transparent' }), { x: 2, y: 1, width: 2, height: 2 });
   assert.equal(findTrimBounds(rgba(2, 2), 2, 2, { mode: 'transparent' }), null);
+  assert.throws(() => findTrimBounds([0, 0, 0, NaN], 1, 1, { mode: 'transparent' }), /8-bit/);
 });
 
 test('findTrimBounds trims top-left and explicit colors with tolerance', () => {
