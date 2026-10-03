@@ -32,6 +32,7 @@ import {
   effectiveImageSize,
   validImageSizeMetadata,
   type ImageSizeMetadata,
+  type ResampleMethod,
 } from './imageSize.ts';
 
 /** Version 2 stores immutable raster assets once; history contains editable layer metadata. */
@@ -379,6 +380,7 @@ export async function transformFrameWithMasks(
   assets: Assets,
   w = frame.w,
   h = frame.h,
+  resampleMethod: ResampleMethod = 'automatic',
 ): Promise<Frame> {
   const next = transformFrame(frame, matrix, w, h);
   const layers = await Promise.all(
@@ -389,6 +391,7 @@ export async function transformFrameWithMasks(
       const image = await decodeAsset(mask),
         transformed = surface(w, h),
         context = transformed.getContext('2d')!;
+      context.imageSmoothingEnabled = resampleMethod !== 'nearest';
       context.setTransform(...matrix);
       context.drawImage(image, 0, 0);
       context.setTransform(1, 0, 0, 1, 0, 0);
@@ -408,6 +411,7 @@ export async function transformFrameWithMasks(
           ),
           transformed = surface(w, h),
           context = transformed.getContext('2d')!;
+        context.imageSmoothingEnabled = resampleMethod !== 'nearest';
         context.setTransform(...matrix);
         context.drawImage(original, 0, 0);
         return {

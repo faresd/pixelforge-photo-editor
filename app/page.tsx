@@ -1666,6 +1666,7 @@ export default function Home() {
       assets.current,
       plan.width,
       plan.height,
+      plan.method,
     );
     next.imageSize = plan.imageSize;
     if (!commit(next)) return;

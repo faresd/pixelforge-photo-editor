@@ -158,7 +158,18 @@ test('applied resize is undoable, persists after reload, and remains a pixel ope
   await dialog.getByRole('button', { name: 'Apply resize', exact: true }).click();
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '720');
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('height', '480');
-  await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Saved on this device');
+  const saveStatus = page.getByRole('status', { name: 'Draft save status' });
+  // Wait for this edit's save cycle, rather than accepting the previous
+  // "Saved" value left over from opening the editor.
+  await expect(saveStatus).toHaveText('Saving on this device…');
+  await expect(saveStatus).toHaveText('Saved on this device');
+
+  // Verify persistence before exercising history travel. Undo/redo is an
+  // independent contract and should never make the reload check ambiguous.
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '720');
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('height', '480');
 
   // The keyboard shortcut is part of the same contract as the menu command.
   await page.keyboard.press('Control+Alt+z');
@@ -167,12 +178,6 @@ test('applied resize is undoable, persists after reload, and remains a pixel ope
   await page.keyboard.press('Control+Shift+z');
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '720');
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('height', '480');
-
-  await page.reload();
-  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
-  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '720');
-  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('height', '480');
-  await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Saved on this device');
 });
 
 test('Image Size can be opened from the Photoshop shortcut and dismissed safely', async ({
