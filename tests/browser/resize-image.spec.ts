@@ -36,6 +36,26 @@ const dimensions = (page: Page) =>
     height: canvas.height,
   }));
 
+const savedDraftDimensions = (page: Page) =>
+  page.evaluate(
+    () =>
+      new Promise<{ width: number; height: number } | null>((resolve, reject) => {
+        const id = new URL(location.href).hash.match(/^#draft=([a-f0-9-]{36})$/)?.[1];
+        if (!id) return resolve(null);
+        const opened = indexedDB.open('pixelforge-documents', 1);
+        opened.onerror = () => reject(opened.error);
+        opened.onsuccess = () => {
+          const request = opened.result.transaction('drafts').objectStore('drafts').get(id);
+          request.onerror = () => reject(request.error);
+          request.onsuccess = () => {
+            const draft = request.result as { history?: Array<{ w: number; h: number }>; index?: number } | undefined;
+            const frame = draft?.history?.[draft.index ?? -1];
+            resolve(frame ? { width: frame.w, height: frame.h } : null);
+          };
+        };
+      }),
+  );
+
 const project = async (page: Page) => {
   await page.getByRole('button', { name: 'File', exact: true }).click();
   const pending = page.waitForEvent('download');
@@ -158,14 +178,10 @@ test('applied resize is undoable, persists after reload, and remains a pixel ope
   await dialog.getByRole('button', { name: 'Apply resize', exact: true }).click();
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '720');
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('height', '480');
-  const saveStatus = page.getByRole('status', { name: 'Draft save status' });
-  // Wait for this edit's save cycle, rather than accepting the previous
-  // "Saved" value left over from opening the editor.
-  await expect(saveStatus).toHaveText('Saving on this device…');
-  await expect(saveStatus).toHaveText('Saved on this device');
-
-  // Verify persistence before exercising history travel. Undo/redo is an
+  // Verify the IndexedDB record itself, rather than accepting the previous
+  // "Saved" status left over from opening the editor. Undo/redo is an
   // independent contract and should never make the reload check ambiguous.
+  await expect.poll(() => savedDraftDimensions(page)).toEqual({ width: 720, height: 480 });
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '720');
