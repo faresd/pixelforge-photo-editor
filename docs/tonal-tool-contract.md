@@ -33,4 +33,3 @@ settings persistence, undo/redo, lock guards and touch cancellation.
 The implementation intentionally remains a baked raster command rather than a
 Photoshop adjustment layer. Non-destructive tonal command metadata and
 pressure-sensitive exposure are separate roadmap work.
-
