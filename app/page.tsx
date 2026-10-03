@@ -197,6 +197,9 @@ type Command =
   | 'invert-selection'
   | 'transform-selection'
   | 'mask-selection'
+  | 'invert-layer-mask'
+  | 'toggle-layer-mask'
+  | 'remove-layer-mask'
   | 'quick-mask'
   | 'save-selection'
   | 'load-selection'
@@ -438,6 +441,9 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'New Fill Layer', command: 'noop', disabled: true },
     { label: 'New Adjustment Layer', command: 'noop', disabled: true },
     { label: 'Layer Mask', command: 'mask-selection' },
+    { label: 'Invert Layer Mask', command: 'invert-layer-mask' },
+    { label: 'Disable Layer Mask', command: 'toggle-layer-mask' },
+    { label: 'Remove Layer Mask', command: 'remove-layer-mask' },
     { label: 'Vector Mask', command: 'noop', disabled: true },
     { label: 'Create Clipping Mask', command: 'noop', disabled: true },
     { label: 'Smart Objects', command: 'noop', disabled: true },
@@ -1695,12 +1701,68 @@ export default function Home() {
     }
     const mask = await renderSelection(f.selection, f.w, f.h, assets.current);
     const maskId = addAsset(assets.current, mask);
-    if (editLayer({ mask: maskId }))
+    if (
+      editLayer({
+        mask: maskId,
+        maskEnabled: true,
+        maskInverted: false,
+      })
+    )
       setNotice('Nondestructive layer mask created');
   };
+  const invertLayerMask = () => {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || layer.kind !== 'raster' || !layer.mask || !layer.visible) {
+      setNotice('Create a layer mask before inverting it');
+      return;
+    }
+    if (layerIsLocked(f, layer)) {
+      setNotice('Unlock this layer before editing its mask');
+      return;
+    }
+    if (
+      editLayer({
+        maskInverted: !(layer.maskInverted === true),
+      })
+    )
+      setNotice(
+        layer.maskInverted
+          ? 'Layer mask inverted back to normal'
+          : 'Layer mask inverted',
+      );
+  };
+  const toggleLayerMask = () => {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || layer.kind !== 'raster' || !layer.mask || !layer.visible) {
+      setNotice('Create a layer mask before disabling it');
+      return;
+    }
+    if (layerIsLocked(f, layer)) {
+      setNotice('Unlock this layer before editing its mask');
+      return;
+    }
+    const enabled = layer.maskEnabled !== false;
+    if (editLayer({ maskEnabled: !enabled }))
+      setNotice(enabled ? 'Layer mask disabled' : 'Layer mask enabled');
+  };
   const clearMask = () => {
-    const layer = current().layers.find((l) => l.id === current().active);
-    if (layer?.mask && editLayer({ mask: undefined }))
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || layer.kind !== 'raster' || !layer.mask || !layer.visible)
+      return;
+    if (layerIsLocked(f, layer)) {
+      setNotice('Unlock this layer before editing its mask');
+      return;
+    }
+    if (
+      editLayer({
+        mask: undefined,
+        maskEnabled: undefined,
+        maskInverted: undefined,
+      })
+    )
       setNotice('Layer mask removed; source pixels kept');
   };
   const adjust = (patch: Partial<Adjustments>) => {
@@ -4723,6 +4785,9 @@ export default function Home() {
       if (current().selection) setSelectionTransforming(true);
       else setNotice('Create a selection before transforming it');
     } else if (command === 'mask-selection') void createMaskFromSelection();
+    else if (command === 'invert-layer-mask') invertLayerMask();
+    else if (command === 'toggle-layer-mask') toggleLayerMask();
+    else if (command === 'remove-layer-mask') clearMask();
     else if (command === 'reset') resetAdjustments();
     else if (command === 'levels')
       setNotice('Levels controls are available in Adjust selected layer');
@@ -4809,6 +4874,16 @@ export default function Home() {
         );
       case 'mask-selection':
         return !layer || layer.kind !== 'raster' || locked || !frame.selection;
+      case 'invert-layer-mask':
+      case 'toggle-layer-mask':
+      case 'remove-layer-mask':
+        return (
+          !layer ||
+          layer.kind !== 'raster' ||
+          locked ||
+          !layer.visible ||
+          !layer.mask
+        );
       case 'auto-tone':
       case 'auto-contrast':
       case 'auto-color':
@@ -5188,6 +5263,8 @@ export default function Home() {
               rasterize={() => void rasterize()}
               importImage={() => layerFile.current?.click()}
               createMask={createMaskFromSelection}
+              invertMask={invertLayerMask}
+              toggleMask={toggleLayerMask}
               clearMask={clearMask}
               clearSelection={() => setSelection(undefined)}
               invertSelection={invertSelection}
