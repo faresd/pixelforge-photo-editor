@@ -55,7 +55,7 @@ These tables record the visible commands verbatim where practical. Groups provid
 
 | Type group | Commands visible in the reference | Dependency / intended increment |
 | --- | --- | --- |
-| Fonts and panels | More from Adobe Fonts…; Panels ▶; Anti-Alias ▶; Orientation ▶; OpenType ▶ | Local/system font workflow first; licensed optional font providers, shaping/metrics and text panels |
+| Fonts and panels | More from Adobe Fonts…; Panels ▶; Anti-Alias ▶; Orientation ▶; OpenType ▶ | Local/system font workflow first. Horizontal and vertical editable text flow are active with persisted orientation controls in the Type menu and Layers panel; licensed optional font providers, full OpenType shaping/metrics and text panels remain staged. See [`vertical-type-contract.md`](./vertical-type-contract.md). |
 | Conversions | Create Work Path; Convert to Shape; Rasterize Type Layer; Convert Text Shape Type; Convert to Dynamic Text ▶ | Vector outlines, text-on-shape representation and explicit reversible conversion boundaries |
 | Layout and discovery | Warp Text…; Match Font…; Font Preview Size ▶; Language Options ▶ | Text transforms, font matching quality, preview preferences, writing direction and script support |
 | Maintenance and presets | Update All Text Layers; Manage Missing Fonts; Paste Lorem Ipsum; Load Default Type Styles; Save Default Type Styles | Missing-font diagnostics, safe bulk updates and validated portable style presets |

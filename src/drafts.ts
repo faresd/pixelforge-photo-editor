@@ -133,6 +133,22 @@ const validRevision = (value: unknown): value is number =>
   Number(value) >= 0 &&
   Number(value) <= Number.MAX_SAFE_INTEGER;
 
+/**
+ * Recovery must never replace in-memory edits with an equal or older record.
+ * A strict revision comparison makes a second recovery read safe when tabs
+ * race one another or a draft was already replaced.
+ */
+export function isNewerDraftRevision(
+  currentRevision: unknown,
+  candidateRevision: unknown,
+): candidateRevision is number {
+  return (
+    validRevision(currentRevision) &&
+    validRevision(candidateRevision) &&
+    candidateRevision > currentRevision
+  );
+}
+
 const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 let database: Promise<IDBDatabase> | undefined;

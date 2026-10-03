@@ -1,12 +1,14 @@
 # Performance budgets and current limits
 
-PixelForge currently renders locally on the main thread with Canvas 2D. A
-render is asynchronous from React's point of view, and stale renders are
-dropped, but the raster work itself is not streamed to a server and is not yet
-performed in a worker. A paint, clone or healing stroke can therefore touch a
-full-canvas buffer. These measurements and limits describe the current safety
-envelope; they do not establish Photoshop-class or industrial-scale
-performance.
+PixelForge renders the editable document locally with Canvas 2D. A render is
+asynchronous from React's point of view, and stale renders are dropped, but
+paint, clone, healing and adjustment work still run on the main thread and can
+touch a full-canvas buffer. The first bounded worker slice now encodes
+multi-input batch exports through OffscreenCanvas when supported, using
+row-major tiles and a Canvas2D fallback; it does not yet move document
+rendering or adjustment strokes off the main thread. These measurements and
+limits describe the current safety envelope; they do not establish
+Photoshop-class or industrial-scale performance.
 
 ## Current hard limits
 
@@ -85,13 +87,14 @@ The current full-canvas model should remain bounded while the roadmap adds
 professional tools. Before increasing the 16 MP limit or calling the editor
 industrial-scale, the implementation needs:
 
-1. A worker/`OffscreenCanvas` render path with cancellation and a visible
-   progress state. The main thread must stay responsive while a large frame or
-   adjustment renders.
-2. Bounded tiles (with explicit edge overlap for blur, healing and other
-   neighborhood operations) so one edit does not allocate several full-size
-   surfaces. Tile cache size and eviction must be measured on desktop and
-   mobile.
+1. A worker/`OffscreenCanvas` render path for document frames and adjustments,
+   with cancellation and a visible progress state. The main thread must stay
+   responsive while a large frame or adjustment renders; batch export already
+   uses this pattern when the browser supports it.
+2. Extend the bounded tile plan (with explicit edge overlap for blur, healing
+   and other neighborhood operations) from batch encoding into document
+   rendering so one edit does not allocate several full-size surfaces. Tile
+   cache size and eviction must be measured on desktop and mobile.
 3. Operation-level marks for pointer-to-paint, render completion, export and
    IndexedDB save, plus p50/p95 reports on physical devices. A browser
    `toDataURL` benchmark alone is insufficient.

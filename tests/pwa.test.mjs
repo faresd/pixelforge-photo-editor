@@ -33,10 +33,46 @@ test('PWA metadata exposes an installable PixelForge shell', async () => {
     const bytes = await readFile(new URL(`public${icon.src}`, root));
     assert.ok(bytes.subarray(0, pngSignature.length).equals(pngSignature), `${icon.src} is a PNG`);
   }
-  assert.match(sw, /const CACHE_NAME = 'pixelforge-shell-v1'/);
+  assert.match(sw, /const CACHE_NAME = 'pixelforge-shell-v2'/);
   assert.match(sw, /request\.mode === 'navigate'/);
   assert.match(sw, /caches\.match\('\/index\.html'\)/);
   assert.match(sw, /new URL\(request\.url\)\.origin !== self\.location\.origin/);
   assert.match(main, /import\.meta\.env\.PROD/);
   assert.match(main, /navigator\.serviceWorker\.register\('\/sw\.js'/);
+});
+
+test('release and readiness probes bypass offline caches including cache-busting queries', async () => {
+  const { runInNewContext } = await import('node:vm');
+  const handlers = new Map();
+  let cacheReads = 0;
+  let networkReads = 0;
+  runInNewContext(await read('public/sw.js'), {
+    URL,
+    self: {
+      location: { origin: 'https://photoeditor.cheaply.fr' },
+      addEventListener: (type, handler) => handlers.set(type, handler),
+    },
+    caches: { match: () => { cacheReads += 1; return Promise.resolve(undefined); } },
+    fetch: () => { networkReads += 1; return Promise.resolve({ ok: false }); },
+  });
+  const fetchHandler = handlers.get('fetch');
+  for (const path of ['/release.json?status=1', '/api/readyz.json?status=2']) {
+    let intercepted = false;
+    fetchHandler({
+      request: { method: 'GET', mode: 'cors', url: `https://photoeditor.cheaply.fr${path}` },
+      respondWith: () => { intercepted = true; },
+    });
+    assert.equal(intercepted, false, `${path} goes directly to browser network fetch`);
+  }
+  assert.equal(cacheReads, 0);
+  assert.equal(networkReads, 0);
+
+  let assetResponse;
+  fetchHandler({
+    request: { method: 'GET', mode: 'cors', url: 'https://photoeditor.cheaply.fr/assets/editor-hash.js' },
+    respondWith: (response) => { assetResponse = response; },
+  });
+  await Promise.resolve(assetResponse);
+  assert.equal(cacheReads, 1, 'ordinary immutable assets retain offline caching');
+  assert.equal(networkReads, 1);
 });

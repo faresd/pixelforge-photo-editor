@@ -3,6 +3,7 @@ import {
   BLENDS,
   FONTS,
   TEXT_ALIGNS,
+  TEXT_ORIENTATIONS,
   type Frame,
   type Group,
   type Layer,
@@ -341,6 +342,25 @@ export default function LayersPanel({
             >
               {FONTS.map((font) => (
                 <option key={font}>{font}</option>
+              ))}
+            </select>
+          </label>
+          <label className="layer-field">
+            Text orientation
+            <select
+              aria-label="Text orientation"
+              value={layer.orientation ?? 'horizontal'}
+              disabled={layerLocked}
+              onChange={(e) =>
+                edit({
+                  orientation: e.target.value as (typeof TEXT_ORIENTATIONS)[number],
+                })
+              }
+            >
+              {TEXT_ORIENTATIONS.map((orientation) => (
+                <option key={orientation} value={orientation}>
+                  {orientation[0].toUpperCase() + orientation.slice(1)}
+                </option>
               ))}
             </select>
           </label>

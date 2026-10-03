@@ -5,7 +5,10 @@ import { readFile } from 'node:fs/promises';
 test('deployable artifact identifies the app and contains resolvable assets', async () => {
   const release = JSON.parse(await readFile('dist/release.json', 'utf8'));
   const ready = JSON.parse(await readFile('dist/api/readyz.json', 'utf8'));
+  const manifest = JSON.parse(await readFile('package.json', 'utf8'));
   assert.equal(release.application, 'pixelforge-photo-editor');
+  assert.equal(release.version, manifest.version);
+  assert.equal(ready.version, manifest.version);
   assert.match(release.commit, /^[a-f0-9]{40}$/);
   assert.equal(ready.ready, true);
   assert.equal(ready.commit, release.commit);

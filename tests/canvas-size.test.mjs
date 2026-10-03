@@ -137,6 +137,35 @@ test('Reveal All has conservative text overflow and measured browser bounds hook
   assert.equal(planRevealAll({ w: 100, h: 100, layers: [empty] }, {}).changed, false);
 });
 
+test('Reveal All estimates and measures vertical text columns without clipping glyph flow', () => {
+  const text = layer({
+    id: id(8),
+    kind: 'text',
+    text: 'ABCD',
+    orientation: 'vertical',
+    fontSize: 20,
+    boxWidth: 10,
+    lineHeight: 1.2,
+    letterSpacing: 2,
+    fontFamily: 'Arial',
+    bold: false,
+    color: '#fff',
+  });
+  assert.deepEqual(layerLocalBounds(text, {}), { x: 0, y: 0, width: 40, height: 92 });
+  const context = {
+    font: '',
+    textBaseline: 'top',
+    save() {},
+    restore() {},
+    measureText() {
+      return { width: 10, actualBoundingBoxAscent: 15, actualBoundingBoxDescent: 5 };
+    },
+  };
+  assert.deepEqual(measuredTextLayerBounds(context, text), { x: 0, y: 0, width: 10, height: 87 });
+  const plan = planRevealAll({ w: 30, h: 30, layers: [text] }, {}, { textBounds: { [text.id]: measuredTextLayerBounds(context, text) } });
+  assert.deepEqual(plan.bounds, { x: 0, y: 0, width: 30, height: 87 });
+});
+
 test('Reveal All enforces canvas limits and validates missing raster assets', () => {
   const tooLarge = raster({ matrix: [1, 0, 0, 1, 20000, 0] });
   assert.throws(() => planRevealAll({ w: 100, h: 100, layers: [tooLarge] }, assets), /16,000/);

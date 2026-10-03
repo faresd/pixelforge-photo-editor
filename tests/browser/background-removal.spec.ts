@@ -108,6 +108,10 @@ test('Remove Background creates a local nondestructive mask, preserves source pi
   await page.getByRole('menuitem', { name: 'Remove Background…', exact: true }).click();
   await page.reload();
   await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Saved on this device');
+  // Mobile IndexedDB restore can finish a render one frame after the saved
+  // label changes; let the restored document settle before exporting it.
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
+  await page.waitForTimeout(100);
   const reloaded = await project(page);
   expect(reloaded.history[reloaded.index].layers.at(-1)!.mask).toBeTruthy();
 });

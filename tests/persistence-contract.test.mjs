@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   CURRENT_DRAFT_VERSION,
+  isNewerDraftRevision,
   prepareDraftForStorage,
   validCloudLink,
   validateDraft,
@@ -73,6 +74,15 @@ test('draft validation rejects unknown versions before accepting any payload', (
     () => validateDraft({ version: '2', history: [], settings: {} }),
     /Unsupported project version/,
   );
+});
+
+test('recovery only adopts a strictly newer local revision', () => {
+  assert.equal(isNewerDraftRevision(4, 5), true);
+  assert.equal(isNewerDraftRevision(4, 4), false);
+  assert.equal(isNewerDraftRevision(4, 3), false);
+  assert.equal(isNewerDraftRevision(4, undefined), false);
+  assert.equal(isNewerDraftRevision(-1, 5), false);
+  assert.equal(isNewerDraftRevision(4, Number.MAX_SAFE_INTEGER + 1), false);
 });
 
 test('v1 migration creates a complete editable v2 document and v2 validation is stable', () => {

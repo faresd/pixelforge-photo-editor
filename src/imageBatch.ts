@@ -1,11 +1,11 @@
 import {
   MAX_BATCH_EXPORT_BYTES,
   createZip,
-  encodeImage,
   safeBatchStem,
   type ExportFormat,
   type ZipEntry,
 } from './export.ts';
+import { encodeImageWithWorker } from './workerEncode.ts';
 
 /** Keep anonymous multi-file work bounded on memory-constrained devices. */
 export const MAX_BATCH_INPUTS = 64;
@@ -157,7 +157,10 @@ export async function buildImageBatchExport(
   throwIfAborted(signal);
 
   const decode = options.decode || decodeBatchImage;
-  const encode = options.encode || encodeImage;
+  const encode =
+    options.encode ||
+    ((image: HTMLCanvasElement, imageFormat: ExportFormat, imageQuality: number) =>
+      encodeImageWithWorker(image, imageFormat, imageQuality, { signal }));
   const extension = format === 'jpeg' ? 'jpg' : format;
   const entries: ZipEntry[] = [];
   const manifestEntries: BatchImageEntry[] = [];
