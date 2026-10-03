@@ -89,7 +89,11 @@ import LayersPanel from '../src/LayersPanel';
 import ResizeDialog from '../src/ResizeDialog';
 import ExportDialog from '../src/ExportDialog';
 import BatchExportDialog from '../src/BatchExportDialog';
+import ImageBatchDialog from '../src/ImageBatchDialog';
+import type { BatchImageSource } from '../src/imageBatch';
+import AccountMenu from '../src/AccountMenu';
 import SelectionTransformDialog from '../src/SelectionTransformDialog';
+import SelectionModifyDialog from '../src/SelectionModifyDialog';
 import CanvasSizeDialog from '../src/CanvasSizeDialog';
 import TrimDialog from '../src/TrimDialog';
 import {
@@ -107,6 +111,10 @@ import { applyAutoAdjustmentsPixels, type AutoMode } from '../src/auto';
 import { createBackgroundMask } from '../src/backgroundRemoval';
 import { type ExportFormat } from '../src/export';
 import { renderSelection } from '../src/selections';
+import {
+  refineSelectionAlpha,
+  type SelectionRefineMode,
+} from '../src/selectionRefine';
 import {
   createQuickMask,
   loadSelection,
@@ -166,6 +174,7 @@ type Command =
   | 'reveal-all'
   | 'project-save'
   | 'batch-export'
+  | 'batch-images'
   | 'project-open'
   | 'new-white'
   | 'new-transparent'
@@ -197,6 +206,8 @@ type Command =
   | 'reselect'
   | 'invert-selection'
   | 'transform-selection'
+  | 'grow-selection'
+  | 'contract-selection'
   | 'mask-selection'
   | 'remove-background'
   | 'invert-layer-mask'
@@ -325,6 +336,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Open project…', command: 'project-open' },
     { label: 'Download project file', command: 'project-save' },
     { label: 'Batch export history…', command: 'batch-export' },
+    { label: 'Batch export images…', command: 'batch-images' },
     { label: 'New white document', shortcut: 'Ctrl+N', command: 'new-white' },
     { label: 'New transparent document', command: 'new-transparent' },
     { label: 'Open image…', shortcut: 'Ctrl+O', command: 'open' },
@@ -504,7 +516,8 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Sky', command: 'noop', disabled: true },
     { label: 'Select and Mask…', command: 'noop', disabled: true },
     { label: 'Modify', command: 'noop', disabled: true },
-    { label: 'Grow', command: 'noop', disabled: true },
+    { label: 'Grow…', command: 'grow-selection' },
+    { label: 'Contract…', command: 'contract-selection' },
     { label: 'Similar', command: 'noop', disabled: true },
     { label: 'Transform Selection', command: 'transform-selection' },
     { label: 'Edit in Quick Mask Mode', command: 'quick-mask' },
@@ -905,6 +918,7 @@ export default function Home() {
     layerFile = useRef<HTMLInputElement>(null),
     projectFile = useRef<HTMLInputElement>(null),
     selectionFile = useRef<HTMLInputElement>(null),
+    batchImageFile = useRef<HTMLInputElement>(null),
     quickMaskOverlayCanvas = useRef<HTMLCanvasElement>(null),
     stage = useRef<HTMLElement>(null),
     menuArea = useRef<HTMLElement>(null),
@@ -974,6 +988,7 @@ export default function Home() {
       assets: typeof assets.current;
       name: string;
     } | null>(null),
+    [batchImages, setBatchImages] = useState<BatchImageSource[] | null>(null),
     [drag, setDrag] = useState(false),
     [resizing, setResizing] = useState<{
       width: number;
@@ -986,6 +1001,7 @@ export default function Home() {
   } | null>(null);
   const [trimming, setTrimming] = useState(false);
   const [selectionTransforming, setSelectionTransforming] = useState(false);
+  const [selectionRefining, setSelectionRefining] = useState<SelectionRefineMode | null>(null);
   const [quickMasking, setQuickMasking] = useState(false),
     [quickMask, setQuickMask] = useState<QuickMask | null>(null),
     [quickMaskReveal, setQuickMaskReveal] = useState(false),
@@ -1053,7 +1069,7 @@ export default function Home() {
   const saveSequence = useRef(0),
     saving = useRef(false),
     discarding = useRef(false);
-  const { member } = useMember();
+  const { member, checking } = useMember();
   const [cloud, setCloud] = useState<CloudLink | undefined>(),
     [cloudBusy, setCloudBusy] = useState(false),
     [cloudMessage, setCloudMessage] = useState('');
@@ -1142,6 +1158,9 @@ export default function Home() {
   const transformSelectionValue = selectionTransforming
     ? current().selection
     : undefined;
+  const selectionRefineValue = selectionRefining && current().selection
+    ? selectionRefining
+    : null;
   const currentSavedSelections = (): SavedSelectionBook =>
     current().savedSelections || emptySavedSelectionBook();
   const imageToQuickMask = (image: CanvasImageSource): QuickMask => {
@@ -1600,6 +1619,60 @@ export default function Home() {
       );
     } finally {
       setSelectionTransforming(false);
+    }
+  };
+  const applySelectionRefinement = async (radius: number) => {
+    const mode = selectionRefining;
+    const f = current();
+    const beforeIndex = index.current;
+    const beforeFrame = f;
+    if (!mode || !f.selection) {
+      setNotice('Create a selection before refining it');
+      setSelectionRefining(null);
+      return;
+    }
+    try {
+      const rendered = await renderSelection(f.selection, f.w, f.h, assets.current);
+      const context = rendered.getContext('2d');
+      if (!context) throw new Error('Selection mask renderer is unavailable');
+      const pixels = context.getImageData(0, 0, f.w, f.h).data;
+      const alpha = new Uint8ClampedArray(f.w * f.h);
+      for (let target = 0; target < alpha.length; target += 1) {
+        alpha[target] = pixels[target * 4 + 3];
+      }
+      const refined = refineSelectionAlpha(alpha, f.w, f.h, mode, radius);
+      // A refined selection is a canvas-sized alpha mask. RGB is white so the
+      // asset remains inspectable without changing alpha compositing semantics.
+      const mask = surface(f.w, f.h);
+      const maskContext = mask.getContext('2d');
+      if (!maskContext) throw new Error('Selection mask surface is unavailable');
+      const output = maskContext.createImageData(f.w, f.h);
+      for (let source = 0; source < refined.length; source += 1) {
+        const target = source * 4;
+        output.data[target] = 255;
+        output.data[target + 1] = 255;
+        output.data[target + 2] = 255;
+        output.data[target + 3] = refined[source];
+      }
+      maskContext.putImageData(output, 0, 0);
+      if (index.current !== beforeIndex || current() !== beforeFrame) return;
+      const maskId = addAsset(assets.current, mask);
+      const selection: Selection = {
+        shape: 'rectangle',
+        x: 0,
+        y: 0,
+        w: f.w,
+        h: f.h,
+        feather: 0,
+        inverted: false,
+        mask: maskId,
+      };
+      if (commit({ ...f, selection }))
+        setNotice(`Selection ${mode === 'grow' ? 'grown' : 'contracted'} by ${radius} px`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Selection refinement failed');
+    } finally {
+      setSelectionRefining(null);
     }
   };
   const selectAll = () => {
@@ -4797,6 +4870,7 @@ export default function Home() {
         assets: { ...assets.current },
         name,
       });
+    else if (command === 'batch-images') batchImageFile.current?.click();
     else if (command === 'project-open') projectFile.current?.click();
     else if (command === 'new-white') newDocument(false);
     else if (command === 'new-transparent') newDocument(true);
@@ -4837,6 +4911,9 @@ export default function Home() {
     else if (command === 'transform-selection') {
       if (current().selection) setSelectionTransforming(true);
       else setNotice('Create a selection before transforming it');
+    } else if (command === 'grow-selection' || command === 'contract-selection') {
+      if (current().selection) setSelectionRefining(command === 'grow-selection' ? 'grow' : 'contract');
+      else setNotice('Create a selection before refining it');
     } else if (command === 'mask-selection') void createMaskFromSelection();
     else if (command === 'remove-background') void removeBackground();
     else if (command === 'invert-layer-mask') invertLayerMask();
@@ -4954,6 +5031,9 @@ export default function Home() {
         return Boolean(frame.selection) || !frame.previousSelection;
       case 'transform-selection':
         return !frame.selection;
+      case 'grow-selection':
+      case 'contract-selection':
+        return !frame.selection;
       case 'hide-layer':
         return !layer || Boolean(groupForLayer(frame, layer)?.locked);
       case 'text-align-left':
@@ -5016,6 +5096,19 @@ export default function Home() {
         accept=".pixelselection,application/json"
         onChange={(event) => void importSelection(event.target.files?.[0])}
       />
+      <input
+        ref={batchImageFile}
+        data-testid="batch-image-input"
+        className="hidden"
+        type="file"
+        accept="image/*"
+        multiple
+        onChange={(event) => {
+          const files = Array.from(event.target.files || []);
+          if (files.length) setBatchImages(files.map((file) => ({ name: file.name, file })));
+          event.currentTarget.value = '';
+        }}
+      />
       {resizing && (
         <ResizeDialog
           width={resizing.width}
@@ -5043,6 +5136,13 @@ export default function Home() {
           apply={applySelectionTransform}
         />
       )}
+      {selectionRefineValue && (
+        <SelectionModifyDialog
+          mode={selectionRefineValue}
+          close={() => setSelectionRefining(null)}
+          apply={(radius) => void applySelectionRefinement(radius)}
+        />
+      )}
       {exporting && (
         <ExportDialog
           {...exporting}
@@ -5060,6 +5160,13 @@ export default function Home() {
         <BatchExportDialog
           {...batchExporting}
           close={() => setBatchExporting(null)}
+          downloaded={setNotice}
+        />
+      )}
+      {batchImages && (
+        <ImageBatchDialog
+          sources={batchImages}
+          close={() => setBatchImages(null)}
           downloaded={setNotice}
         />
       )}
@@ -5163,6 +5270,7 @@ export default function Home() {
           <button className="export" onClick={() => download()}>
             <Download /> Export
           </button>
+          <AccountMenu member={member} checking={checking} />
         </div>
       </header>
       <section className="docbar">
