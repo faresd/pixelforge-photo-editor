@@ -158,7 +158,6 @@ test('Smudge moves representative colour while preserving alpha, undo/redo and r
 
 test('Smudge selection alpha protects unselected pixels and a stationary tap is a no-op', async ({ page }) => {
   await importFixture(page);
-  const before = await project(page);
   await page.getByRole('button', { name: 'Select tool', exact: true }).click();
   const box = (await page.getByTestId('editor-canvas').boundingBox())!;
   await page.mouse.move(box.x + box.width * 0.25, box.y + box.height * 0.15);

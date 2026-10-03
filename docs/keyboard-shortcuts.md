@@ -33,9 +33,11 @@ Use `Cmd` on macOS and `Ctrl` on Windows/Linux.
 | `X` | Swap foreground/background colors |
 | `[` / `]` | Decrease/increase brush size |
 
-`P` and `A` remain PixelForge aliases for Pencil and Color Replace. Photoshop
-tools that PixelForge has not implemented yet (for example Pen, Paths and
-Rotate View) are not advertised behind these aliases.
+`P` activates the straight-segment Pen and `A` activates Direct Selection. Pen
+clicks place path nodes; click the first node after three or more points to
+close and commit the editable path layer. Escape cancels an open Pen gesture or
+a Direct Selection drag. Photoshop tools that PixelForge has not implemented
+yet (for example Freeform/Curvature Pen and Rotate View) remain planned.
 
 ## Commands and view
 

@@ -34,6 +34,7 @@ import {
   type ImageSizeMetadata,
   type ResampleMethod,
 } from './imageSize.ts';
+import { validatePath, type PathModel } from './paths.ts';
 
 /** Version 2 stores immutable raster assets once; history contains editable layer metadata. */
 export const BLENDS = [
@@ -161,6 +162,11 @@ export type Layer = Common &
         stroke: number;
         fill: boolean;
         sides: number;
+      }
+    | {
+        /** A local-coordinate, straight-segment Pen path. */
+        kind: 'path';
+        path: PathModel;
       }
   );
 /** A persisted, editable layer folder. Layers keep their own order in Frame.layers. */
@@ -792,6 +798,12 @@ export function validateFrame(
         (layer.kind === 'polygon' && !integer(layer.sides, 3, 32))
       )
         return fail();
+    } else if (layer.kind === 'path') {
+      try {
+        validatePath(layer.path);
+      } catch {
+        return fail();
+      }
     } else return fail();
   }
   const frameWidth = Number(value.w),
@@ -1329,6 +1341,26 @@ export async function renderFrame(
       context.closePath();
       if (layer.fill) context.fill();
       else context.stroke();
+    }
+    if (layer.kind === 'path') {
+      context.beginPath();
+      const [first, ...rest] = layer.path.nodes;
+      if (first) {
+        context.moveTo(first.x, first.y);
+        for (const node of rest) context.lineTo(node.x, node.y);
+        if (layer.path.closed) context.closePath();
+        if (layer.path.fill && layer.path.closed) {
+          context.fillStyle = layer.path.fillColor;
+          context.fill();
+        }
+        if (layer.path.stroke) {
+          context.strokeStyle = layer.path.strokeColor;
+          context.lineWidth = layer.path.strokeWidth;
+          context.lineJoin = 'round';
+          context.lineCap = 'round';
+          context.stroke();
+        }
+      }
     }
     context.restore();
   }

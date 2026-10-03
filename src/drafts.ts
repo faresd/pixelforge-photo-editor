@@ -46,6 +46,8 @@ export type Tool =
   | 'sponge'
   | 'smudge'
   | 'text'
+  | 'pen'
+  | 'direct-select'
   | 'rectangle'
   | 'ellipse'
   | 'line'
@@ -130,6 +132,8 @@ function validSettings(settings: Settings) {
       'sponge',
       'smudge',
       'text',
+      'pen',
+      'direct-select',
       'rectangle',
       'ellipse',
       'line',

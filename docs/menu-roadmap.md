@@ -47,6 +47,7 @@ These tables record the visible commands verbatim where practical. Groups provid
 | Creation and export | New ▶; Copy CSS; Copy SVG; Duplicate Layer…; Delete ▶; Quick Export as PNG; Export As… | Typed layer creation, vector/text serialization and independently specified layer/document export scopes |
 | Appearance | Rename Layer…; Layer Style ▶; Smart Filter ▶; New Fill Layer ▶; New Adjustment Layer ▶; Harmonize; Layer Content Options… | Editable style stack, fill/adjustment nodes and preserved sources; harmonization quality/privacy contract |
 | Masks | Layer Mask ▶; Vector Mask ▶; Create Clipping Mask; Mask All Objects | Raster masks before vector/clipping dependencies and automatic object masks |
+| Vector paths | Pen (`P`); Direct Selection (`A`) | Straight-segment Pen and editable Path layers are active. Nodes remain local metadata, with transformed fill/stroke rendering and direct node drags; Freeform/Curvature Pen and anchor conversion remain planned. |
 | Source types | Smart Objects ▶; Video Layers ▶; Rasterize ▶; New Layer Based Slice | Linked/embedded source identity, format support and loss-of-editability disclosure; temporal layers separately scoped |
 | Structure | Group Layers; Ungroup Layers; Hide Layers; Arrange ▶; Combine Shapes ▶; Align ▶; Distribute | Multi-layer selection, group compositing, vector boolean operations and numeric alignment |
 | Locks and links | Lock Layers…; Link Layers; Select Linked Layers | Persisted lock policy and transform links without corrupting independent assets |
