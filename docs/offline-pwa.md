@@ -27,3 +27,10 @@ The static contract is covered by `tests/pwa.test.mjs`. Verify the generated
 artifact with `npm run build && npm test`, then use a browser's Application
 panel to confirm the service worker controls the page and that a previously
 loaded `/editor` route opens with the network disabled.
+
+The desktop/mobile acceptance contract in
+`tests/browser/offline-pwa.spec.ts` performs that runtime check: it waits for
+an activated, controlling worker, saves a named local draft, disables the
+network, reloads the bookmarked draft, and verifies that the editor and draft
+status recover. Cloud requests intentionally remain online-only and are not
+treated as successful offline operations.
