@@ -112,3 +112,49 @@ test('typography alignment, tracking and line height render pixels and round-tri
   await page.getByRole('menuitem', { name: /^Redo/ }).click();
   await expect(page.getByLabel('Text alignment', { exact: true })).toHaveValue('right');
 });
+
+test('legacy text layers migrate presentation defaults without flattening', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
+  await page.getByRole('button', { name: 'Text tool', exact: true }).click();
+  await page.getByTestId('editor-canvas').click({ position: { x: 140, y: 140 } });
+  await page.getByLabel('Edit layer text', { exact: true }).fill('Legacy');
+  await saved(page);
+  const current = await project(page);
+  const legacy = structuredClone(current) as typeof current;
+  const text = legacy.history[legacy.index].layers.find((layer) => layer.kind === 'text')!;
+  delete text.textAlign;
+  delete text.boxWidth;
+  delete text.lineHeight;
+  delete text.letterSpacing;
+  await page.getByTestId('project-input').setInputFiles({
+    name: 'legacy.pixelforge',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({
+      version: 2,
+      ...legacy,
+      settings: {
+        tool: 'move',
+        zoom: 72,
+        color: '#ff5c35',
+        size: 18,
+        text: 'Legacy',
+        fontSize: 56,
+        brightness: 100,
+        contrast: 100,
+        saturation: 100,
+        blur: 0,
+        filter: 'none',
+      },
+    })),
+  });
+  await expect(page.getByLabel('Text alignment', { exact: true })).toHaveValue('left');
+  await expect(page.getByLabel('Line height', { exact: true })).toHaveValue('1.2');
+  await expect(page.getByLabel('Letter spacing', { exact: true })).toHaveValue('0');
+  const migrated = await project(page);
+  const migratedText = migrated.history[migrated.index].layers.find((layer) => layer.kind === 'text');
+  expect(migratedText).toMatchObject({ textAlign: 'left', lineHeight: 1.2, letterSpacing: 0 });
+  expect(Number(migratedText?.boxWidth)).toBeGreaterThan(0);
+});
