@@ -133,6 +133,8 @@ test('Reveal All has conservative text overflow and measured browser bounds hook
   assert.deepEqual(measuredTextLayerBounds(context, text), { x: -21, y: 0, width: 52, height: 21 });
   const blurred = layer({ matrix: identity(), adjustments: { ...adjustments, blur: 10 } });
   assert.deepEqual(layerBounds(blurred, {}), { x: -30, y: -30, width: 70, height: 70 });
+  const empty = layer({ id: id(7), kind: 'text', text: '', matrix: [1, 0, 0, 1, -500, -500], fontSize: 40, boxWidth: 100, lineHeight: 1.2, textAlign: 'left', letterSpacing: 0, fontFamily: 'Arial', bold: false, color: '#fff' });
+  assert.equal(planRevealAll({ w: 100, h: 100, layers: [empty] }, {}).changed, false);
 });
 
 test('Reveal All enforces canvas limits and validates missing raster assets', () => {

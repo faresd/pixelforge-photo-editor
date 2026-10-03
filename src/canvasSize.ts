@@ -86,6 +86,7 @@ export type RevealAllPlan = CanvasSizePlan & {
 
 /** Conservative glyph-width bound used outside a browser canvas. */
 export function estimatedTextLayerBounds(layer: Extract<Layer, { kind: 'text' }>): PixelBounds {
+  if (layer.text.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
   const boxWidth = Math.max(1, layer.boxWidth ?? 640),
     lineHeight = Math.max(0.5, layer.lineHeight ?? 1.2),
     spacing = Math.abs(layer.letterSpacing ?? 0),
@@ -388,6 +389,7 @@ export function planRevealAll(
         (group !== undefined && (!group.visible || group.opacity <= 0)))
     )
       continue;
+    if (layer.kind === 'text' && layer.text.length === 0) continue;
     const next = layer.kind === 'text' && request.textBounds?.[layer.id]
       ? transformedCorners(
           (() => {
