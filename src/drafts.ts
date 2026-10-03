@@ -12,6 +12,7 @@ import {
   referencedAssets,
   commonLayer,
   effectiveAdjustments,
+  effectiveTextLayer,
   neutral,
   validId,
   type Assets,
@@ -220,10 +221,15 @@ export function validateDraft(input: unknown): Draft {
     throw new Error('Invalid project assets');
   const history = value.history.map((frame) => ({
     ...frame,
-    layers: frame.layers.map((layer) => ({
-      ...layer,
-      adjustments: effectiveAdjustments(layer.adjustments),
-    })),
+    layers: frame.layers.map((layer) =>
+      effectiveTextLayer(
+        {
+          ...layer,
+          adjustments: effectiveAdjustments(layer.adjustments),
+        },
+        frame.w,
+      ),
+    ),
   }));
   history.forEach((frame) => validateFrame(frame, value.assets));
   if (

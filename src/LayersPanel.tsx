@@ -1,5 +1,13 @@
 import { useState, type ReactNode } from 'react';
-import { BLENDS, FONTS, type Frame, type Group, type Layer, type SelectionOperation } from './document';
+import {
+  BLENDS,
+  FONTS,
+  TEXT_ALIGNS,
+  type Frame,
+  type Group,
+  type Layer,
+  type SelectionOperation,
+} from './document';
 
 type Props = {
   frame: Frame;
@@ -289,6 +297,50 @@ export default function LayersPanel({
             max={1000}
             disabled={layerLocked}
             apply={(fontSize) => edit({ fontSize })}
+          />
+          <label className="layer-field">
+            Text alignment
+            <select
+              aria-label="Text alignment"
+              value={layer.textAlign ?? 'left'}
+              disabled={layerLocked}
+              onChange={(e) =>
+                edit({ textAlign: e.target.value as (typeof TEXT_ALIGNS)[number] })
+              }
+            >
+              {TEXT_ALIGNS.map((align) => (
+                <option key={align} value={align}>
+                  {align[0].toUpperCase() + align.slice(1)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <NumberField
+            key={layer.id + 'box' + layer.boxWidth}
+            label="Text box width"
+            value={layer.boxWidth ?? frame.w}
+            min={1}
+            max={16000}
+            disabled={layerLocked}
+            apply={(boxWidth) => edit({ boxWidth })}
+          />
+          <NumberField
+            key={layer.id + 'line-height' + layer.lineHeight}
+            label="Line height"
+            value={layer.lineHeight ?? 1.2}
+            min={0.5}
+            max={4}
+            disabled={layerLocked}
+            apply={(lineHeight) => edit({ lineHeight })}
+          />
+          <NumberField
+            key={layer.id + 'letter-spacing' + layer.letterSpacing}
+            label="Letter spacing"
+            value={layer.letterSpacing ?? 0}
+            min={-100}
+            max={100}
+            disabled={layerLocked}
+            apply={(letterSpacing) => edit({ letterSpacing })}
           />
           <label>
             <input
