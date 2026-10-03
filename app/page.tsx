@@ -89,6 +89,9 @@ import LayersPanel from '../src/LayersPanel';
 import ResizeDialog from '../src/ResizeDialog';
 import ExportDialog from '../src/ExportDialog';
 import BatchExportDialog from '../src/BatchExportDialog';
+import ImageBatchDialog from '../src/ImageBatchDialog';
+import type { BatchImageSource } from '../src/imageBatch';
+import AccountMenu from '../src/AccountMenu';
 import SelectionTransformDialog from '../src/SelectionTransformDialog';
 import SelectionModifyDialog from '../src/SelectionModifyDialog';
 import CanvasSizeDialog from '../src/CanvasSizeDialog';
@@ -171,6 +174,7 @@ type Command =
   | 'reveal-all'
   | 'project-save'
   | 'batch-export'
+  | 'batch-images'
   | 'project-open'
   | 'new-white'
   | 'new-transparent'
@@ -332,6 +336,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Open project…', command: 'project-open' },
     { label: 'Download project file', command: 'project-save' },
     { label: 'Batch export history…', command: 'batch-export' },
+    { label: 'Batch export images…', command: 'batch-images' },
     { label: 'New white document', shortcut: 'Ctrl+N', command: 'new-white' },
     { label: 'New transparent document', command: 'new-transparent' },
     { label: 'Open image…', shortcut: 'Ctrl+O', command: 'open' },
@@ -913,6 +918,7 @@ export default function Home() {
     layerFile = useRef<HTMLInputElement>(null),
     projectFile = useRef<HTMLInputElement>(null),
     selectionFile = useRef<HTMLInputElement>(null),
+    batchImageFile = useRef<HTMLInputElement>(null),
     quickMaskOverlayCanvas = useRef<HTMLCanvasElement>(null),
     stage = useRef<HTMLElement>(null),
     menuArea = useRef<HTMLElement>(null),
@@ -982,6 +988,7 @@ export default function Home() {
       assets: typeof assets.current;
       name: string;
     } | null>(null),
+    [batchImages, setBatchImages] = useState<BatchImageSource[] | null>(null),
     [drag, setDrag] = useState(false),
     [resizing, setResizing] = useState<{
       width: number;
@@ -1062,7 +1069,7 @@ export default function Home() {
   const saveSequence = useRef(0),
     saving = useRef(false),
     discarding = useRef(false);
-  const { member } = useMember();
+  const { member, checking } = useMember();
   const [cloud, setCloud] = useState<CloudLink | undefined>(),
     [cloudBusy, setCloudBusy] = useState(false),
     [cloudMessage, setCloudMessage] = useState('');
@@ -1630,8 +1637,9 @@ export default function Home() {
       if (!context) throw new Error('Selection mask renderer is unavailable');
       const pixels = context.getImageData(0, 0, f.w, f.h).data;
       const alpha = new Uint8ClampedArray(f.w * f.h);
-      for (let source = 3, target = 0; source < pixels.length; source += 4, target += 1)
-        alpha[target] = pixels[source];
+      for (let target = 0; target < alpha.length; target += 1) {
+        alpha[target] = pixels[target * 4 + 3];
+      }
       const refined = refineSelectionAlpha(alpha, f.w, f.h, mode, radius);
       // A refined selection is a canvas-sized alpha mask. RGB is white so the
       // asset remains inspectable without changing alpha compositing semantics.
@@ -1639,7 +1647,8 @@ export default function Home() {
       const maskContext = mask.getContext('2d');
       if (!maskContext) throw new Error('Selection mask surface is unavailable');
       const output = maskContext.createImageData(f.w, f.h);
-      for (let source = 0, target = 0; source < refined.length; source += 1, target += 4) {
+      for (let source = 0; source < refined.length; source += 1) {
+        const target = source * 4;
         output.data[target] = 255;
         output.data[target + 1] = 255;
         output.data[target + 2] = 255;
@@ -4861,6 +4870,7 @@ export default function Home() {
         assets: { ...assets.current },
         name,
       });
+    else if (command === 'batch-images') batchImageFile.current?.click();
     else if (command === 'project-open') projectFile.current?.click();
     else if (command === 'new-white') newDocument(false);
     else if (command === 'new-transparent') newDocument(true);
@@ -5086,6 +5096,19 @@ export default function Home() {
         accept=".pixelselection,application/json"
         onChange={(event) => void importSelection(event.target.files?.[0])}
       />
+      <input
+        ref={batchImageFile}
+        data-testid="batch-image-input"
+        className="hidden"
+        type="file"
+        accept="image/*"
+        multiple
+        onChange={(event) => {
+          const files = Array.from(event.target.files || []);
+          if (files.length) setBatchImages(files.map((file) => ({ name: file.name, file })));
+          event.currentTarget.value = '';
+        }}
+      />
       {resizing && (
         <ResizeDialog
           width={resizing.width}
@@ -5137,6 +5160,13 @@ export default function Home() {
         <BatchExportDialog
           {...batchExporting}
           close={() => setBatchExporting(null)}
+          downloaded={setNotice}
+        />
+      )}
+      {batchImages && (
+        <ImageBatchDialog
+          sources={batchImages}
+          close={() => setBatchImages(null)}
           downloaded={setNotice}
         />
       )}
@@ -5240,6 +5270,7 @@ export default function Home() {
           <button className="export" onClick={() => download()}>
             <Download /> Export
           </button>
+          <AccountMenu member={member} checking={checking} />
         </div>
       </header>
       <section className="docbar">
