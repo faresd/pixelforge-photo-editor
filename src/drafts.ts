@@ -71,6 +71,7 @@ export type Settings = {
   filter: string;
   colorBalance: Adjustments['colorBalance'];
   sharpenNoise: Adjustments['sharpenNoise'];
+  curves: Adjustments['curves'];
 };
 export type Draft = {
   version: 2;
