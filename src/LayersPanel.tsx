@@ -75,7 +75,7 @@ export default function LayersPanel({
           aria-label={`Select layer ${item.name}`}
         >
           <span className="layer-type">
-            {item.kind === 'text' ? 'T' : item.kind === 'raster' ? '▧' : '□'}
+            {item.kind === 'text' ? 'T' : item.kind === 'raster' ? '▧' : item.kind === 'line' ? '╱' : item.kind === 'polygon' ? '⬠' : '□'}
           </span>
           <span>
             <b>{item.name || 'Untitled layer'}</b>
@@ -311,7 +311,7 @@ export default function LayersPanel({
           </label>
         </div>
       )}
-      {(layer.kind === 'rectangle' || layer.kind === 'ellipse') && (
+      {(layer.kind === 'rectangle' || layer.kind === 'ellipse' || layer.kind === 'polygon') && (
         <div className="layer-position">
           <NumberField
             key={layer.id + layer.width}
@@ -343,6 +343,46 @@ export default function LayersPanel({
           <input
             type="color"
             aria-label="Shape color"
+            value={layer.color}
+            disabled={layerLocked}
+            onChange={(e) => edit({ color: e.target.value })}
+          />
+          {layer.kind === 'polygon' && (
+            <NumberField
+              key={layer.id + layer.sides}
+              label="Polygon sides"
+              value={layer.sides}
+              min={3}
+              max={32}
+              disabled={layerLocked}
+              apply={(sides) => edit({ sides })}
+            />
+          )}
+        </div>
+      )}
+      {layer.kind === 'line' && (
+        <div className="layer-position">
+          <NumberField
+            key={layer.id + layer.width}
+            label="Line length"
+            value={layer.width}
+            min={1}
+            max={16000}
+            disabled={layerLocked}
+            apply={(width) => edit({ width })}
+          />
+          <NumberField
+            key={layer.id + layer.height}
+            label="Line rise"
+            value={layer.height}
+            min={1}
+            max={16000}
+            disabled={layerLocked}
+            apply={(height) => edit({ height })}
+          />
+          <input
+            type="color"
+            aria-label="Line color"
             value={layer.color}
             disabled={layerLocked}
             onChange={(e) => edit({ color: e.target.value })}

@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { renderFrame, type Assets, type Frame } from './document';
-import { encodeImage, exportLabels, type ExportFormat } from './export';
+import {
+  encodeImage,
+  encodeImageForTarget,
+  exportLabels,
+  validExportTargetBytes,
+  type ExportFormat,
+} from './export';
 
 type Props = {
   frame: Frame;
@@ -8,75 +14,267 @@ type Props = {
   name: string;
   format: ExportFormat;
   quality: number;
+  targetBytes?: number;
   setFormat: (format: ExportFormat) => void;
   setQuality: (quality: number) => void;
+  setTargetBytes: (bytes: number | undefined) => void;
   close: () => void;
   downloaded: (message: string) => void;
 };
-type Preview = { blob: Blob; url: string; format: ExportFormat; quality: number };
+type Preview = {
+  blob: Blob;
+  url: string;
+  format: ExportFormat;
+  quality: number;
+  targetBytes?: number;
+  targetMet: boolean;
+};
 
-export default function ExportDialog({ frame, assets, name, format, quality, setFormat, setQuality, close, downloaded }: Props) {
+const MAX_TARGET_KB = 64 * 1024;
+
+export default function ExportDialog({
+  frame,
+  assets,
+  name,
+  format,
+  quality,
+  targetBytes,
+  setFormat,
+  setQuality,
+  setTargetBytes,
+  close,
+  downloaded,
+}: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const snapshot = useRef({ frame, assets });
   const [image, setImage] = useState<HTMLCanvasElement | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [error, setError] = useState('');
+  const [targetInput, setTargetInput] = useState(
+    targetBytes ? String(Math.round(targetBytes / 1024)) : '',
+  );
+  const [targetError, setTargetError] = useState('');
+
   useEffect(() => {
     dialog.current?.showModal();
     let cancelled = false;
-    void renderFrame(snapshot.current.frame, snapshot.current.assets).then((result) => {
-      if (!cancelled) setImage(result);
-    }).catch(() => {
-      if (!cancelled) setError('Could not prepare the image. Your editable draft is kept.');
-    });
-    return () => { cancelled = true; };
+    void renderFrame(snapshot.current.frame, snapshot.current.assets)
+      .then((result) => {
+        if (!cancelled) setImage(result);
+      })
+      .catch(() => {
+        if (!cancelled)
+          setError('Could not prepare the image. Your editable draft is kept.');
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
   useEffect(() => {
     if (!image) return;
     let cancelled = false;
     let url: string | undefined;
-    void encodeImage(image, format, quality).then((blob) => {
-      if (cancelled) return;
-      setError('');
-      url = URL.createObjectURL(blob);
-      setPreview({ blob, url, format, quality });
-    }).catch((reason: unknown) => {
-      if (!cancelled) setError(reason instanceof Error ? reason.message : 'Export failed. Your editable draft is kept.');
-    });
+    const targetMode = Boolean(targetBytes && format !== 'png');
+    const encoded = targetMode
+      ? encodeImageForTarget(image, format, targetBytes!)
+      : encodeImage(image, format, quality).then((blob) => ({
+          blob,
+          quality,
+          targetBytes,
+          targetMet: true,
+        }));
+    void encoded
+      .then((result) => {
+        if (cancelled) return;
+        setError('');
+        url = URL.createObjectURL(result.blob);
+        setPreview({
+          blob: result.blob,
+          url,
+          format,
+          quality: result.quality,
+          targetBytes: result.targetBytes,
+          targetMet: result.targetMet,
+        });
+      })
+      .catch((reason: unknown) => {
+        if (!cancelled)
+          setError(
+            reason instanceof Error
+              ? reason.message
+              : 'Export failed. Your editable draft is kept.',
+          );
+      });
     return () => {
       cancelled = true;
       if (url) URL.revokeObjectURL(url);
     };
-  }, [image, format, quality]);
-  const current = preview?.format === format && preview?.quality === quality ? preview : null;
+  }, [image, format, quality, targetBytes]);
+
+  const targetMode = Boolean(targetBytes && format !== 'png');
+  const current =
+    preview?.format === format &&
+    preview.targetBytes === targetBytes &&
+    (targetMode || preview.quality === quality)
+      ? preview
+      : null;
   const filename = `${name || 'pixelforge-edit'}.${format === 'jpeg' ? 'jpg' : format}`;
+  const updateTarget = (value: string) => {
+    setTargetInput(value);
+    if (!value.trim()) {
+      setTargetBytes(undefined);
+      setTargetError('');
+      return;
+    }
+    const kb = Number(value);
+    const bytes = Number.isFinite(kb) ? Math.round(kb * 1024) : NaN;
+    if (!validExportTargetBytes(bytes)) {
+      setTargetBytes(undefined);
+      setTargetError(
+        `Enter a target between 1 and ${MAX_TARGET_KB.toLocaleString()} KB.`,
+      );
+      return;
+    }
+    setTargetBytes(bytes);
+    setTargetError('');
+  };
+
   return (
-    <dialog ref={dialog} className="editor-dialog export-dialog" aria-labelledby="export-heading" onCancel={close}>
-      <form onSubmit={(event) => {
-        event.preventDefault();
-        if (!current) return;
-        const anchor = document.createElement('a');
-        anchor.download = filename;
-        anchor.href = current.url;
-        anchor.click();
-        downloaded(`${exportLabels[format]} export downloaded (${current.blob.size.toLocaleString()} bytes)`);
-      }}>
+    <dialog
+      ref={dialog}
+      className="editor-dialog export-dialog"
+      aria-labelledby="export-heading"
+      onCancel={close}
+    >
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!current) return;
+          const anchor = document.createElement('a');
+          anchor.download = filename;
+          anchor.href = current.url;
+          anchor.click();
+          downloaded(
+            `${exportLabels[format]} export downloaded (${current.blob.size.toLocaleString()} bytes)`,
+          );
+        }}
+      >
         <h2 id="export-heading">Export image</h2>
-        <p>Download a flattened image at {frame.w} × {frame.h} px. Keep a project file to continue editing layers.</p>
-        <label>Format<select aria-label="Export format" value={format} onChange={(event) => setFormat(event.target.value as ExportFormat)}>
-          <option value="png">PNG — lossless</option>
-          <option value="jpeg">JPEG — smaller, opaque</option>
-          <option value="webp">WebP — smaller, transparent</option>
-        </select></label>
-        {format !== 'png' && <label>Quality<output>{quality}%</output><input aria-label="Export quality" type="range" min="1" max="100" step="1" value={quality} onChange={(event) => setQuality(Number(event.target.value))} /></label>}
-        <p className="export-format-note">{format === 'jpeg' ? 'JPEG uses lossy compression. Transparent areas become white.' : format === 'webp' ? 'WebP uses lossy color compression and preserves transparency. Quality 100 is not a lossless guarantee.' : 'PNG preserves transparency and pixels without lossy compression. Quality does not apply.'}</p>
-        <div className="export-preview">{current && <img src={current.url} alt={`${exportLabels[format]} export preview`} />}</div>
-        <output className="export-size" aria-label="Encoded file size" aria-live="polite" data-bytes={current?.blob.size ?? ''}>
-          {current ? `${current.blob.size.toLocaleString()} bytes · ${filename}` : error ? 'Preview unavailable' : 'Encoding preview…'}
+        <p>
+          Download a flattened image at {frame.w} × {frame.h} px. Keep a project
+          file to continue editing layers.
+        </p>
+        <label>
+          Format
+          <select
+            aria-label="Export format"
+            value={format}
+            onChange={(event) => setFormat(event.target.value as ExportFormat)}
+          >
+            <option value="png">PNG — lossless</option>
+            <option value="jpeg">JPEG — smaller, opaque</option>
+            <option value="webp">WebP — smaller, transparent</option>
+          </select>
+        </label>
+        {format !== 'png' && (
+          <>
+            <label>
+              Quality
+              <output>
+                {targetMode && current
+                  ? `${current.quality}% (auto)`
+                  : `${quality}%`}
+              </output>
+              <input
+                aria-label="Export quality"
+                type="range"
+                min="1"
+                max="100"
+                step="1"
+                value={targetMode && current ? current.quality : quality}
+                disabled={targetMode}
+                onChange={(event) => setQuality(Number(event.target.value))}
+              />
+            </label>
+            <label>
+              Target size (KB)
+              <input
+                aria-label="Target size (KB)"
+                type="number"
+                min="1"
+                max={MAX_TARGET_KB}
+                step="1"
+                inputMode="numeric"
+                placeholder="No limit"
+                value={targetInput}
+                onChange={(event) => updateTarget(event.target.value)}
+              />
+            </label>
+            {targetError && (
+              <p role="alert" className="resize-error">
+                {targetError}
+              </p>
+            )}
+          </>
+        )}
+        <p className="export-format-note">
+          {format === 'jpeg'
+            ? 'JPEG uses lossy compression. Transparent areas become white.'
+            : format === 'webp'
+              ? 'WebP uses lossy color compression and preserves transparency. Quality 100 is not a lossless guarantee.'
+              : 'PNG preserves transparency and pixels without lossy compression. Quality does not apply.'}
+        </p>
+        {targetMode && (
+          <p className="export-format-note">
+            The encoder searches for the highest quality that fits the target;
+            dimensions are never reduced.
+          </p>
+        )}
+        <div className="export-preview">
+          {current && (
+            <img
+              src={current.url}
+              alt={`${exportLabels[format]} export preview`}
+            />
+          )}
+        </div>
+        <output
+          className="export-size"
+          aria-label="Encoded file size"
+          aria-live="polite"
+          data-bytes={current?.blob.size ?? ''}
+        >
+          {current
+            ? `${current.blob.size.toLocaleString()} bytes · ${filename}${
+                targetMode
+                  ? current.targetMet
+                    ? ` · target met at ${current.quality}% quality`
+                    : ` · target not met at ${current.quality}% minimum quality`
+                  : ''
+              }`
+            : error
+              ? 'Preview unavailable'
+              : 'Encoding preview…'}
         </output>
-        {error && <p role="alert" className="resize-error">{error}</p>}
-        <p>Encoded locally. Original EXIF/GPS metadata is not copied; source color profiles are not preserved. File size depends on image content and browser encoding.</p>
-        <div className="dialog-actions"><button type="button" onClick={close}>Close</button><button type="submit" disabled={!current}>Download image</button></div>
+        {error && (
+          <p role="alert" className="resize-error">
+            {error}
+          </p>
+        )}
+        <p>
+          Encoded locally. Original EXIF/GPS metadata is not copied; source
+          color profiles are not preserved. File size depends on image content
+          and browser encoding.
+        </p>
+        <div className="dialog-actions">
+          <button type="button" onClick={close}>
+            Close
+          </button>
+          <button type="submit" disabled={!current}>
+            Download image
+          </button>
+        </div>
       </form>
     </dialog>
   );

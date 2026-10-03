@@ -13,6 +13,8 @@ import {
   FlipVertical2,
   ImagePlus,
   Hand,
+  Hexagon,
+  Minus,
   Pipette,
   PaintBucket,
   Pencil,
@@ -57,6 +59,7 @@ import {
   colorSelectMask,
   commonLayer,
   decodeAsset,
+  effectiveAdjustments,
   inversePoint,
   localSize,
   neutral,
@@ -82,7 +85,16 @@ import ExportDialog from '../src/ExportDialog';
 import { type ExportFormat } from '../src/export';
 import { renderSelection } from '../src/selections';
 import { BrandLockup } from '../src/Brand';
-type MenuName = 'File' | 'Edit' | 'Image' | 'Layer' | 'Type' | 'Select' | 'Filter' | 'View' | 'Plugins';
+type MenuName =
+  | 'File'
+  | 'Edit'
+  | 'Image'
+  | 'Layer'
+  | 'Type'
+  | 'Select'
+  | 'Filter'
+  | 'View'
+  | 'Plugins';
 type Command =
   | 'noop'
   | 'resize'
@@ -115,6 +127,7 @@ type Command =
   | 'invert-selection'
   | 'mask-selection'
   | 'reset'
+  | 'levels'
   | 'crop'
   | 'rotate-left'
   | 'rotate-right'
@@ -154,12 +167,24 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'text', label: 'Text', icon: Type, key: 'T' },
   { id: 'rectangle', label: 'Shape', icon: Shapes, key: 'U' },
   { id: 'ellipse', label: 'Ellipse', icon: Shapes, key: 'U' },
+  { id: 'line', label: 'Line', icon: Minus, key: 'U' },
+  { id: 'polygon', label: 'Polygon', icon: Hexagon, key: 'U' },
   { id: 'select', label: 'Select', icon: Crop, key: 'M' },
   { id: 'ellipse-select', label: 'Elliptical marquee', icon: Shapes, key: 'M' },
   { id: 'row-select', label: 'Single Row marquee', icon: Rows3, key: 'M' },
-  { id: 'column-select', label: 'Single Column marquee', icon: Columns3, key: 'M' },
+  {
+    id: 'column-select',
+    label: 'Single Column marquee',
+    icon: Columns3,
+    key: 'M',
+  },
   { id: 'lasso', label: 'Lasso', icon: WandSparkles, key: 'L' },
-  { id: 'polygonal-lasso', label: 'Polygonal Lasso', icon: WandSparkles, key: 'L' },
+  {
+    id: 'polygonal-lasso',
+    label: 'Polygonal Lasso',
+    icon: WandSparkles,
+    key: 'L',
+  },
   { id: 'magic-wand', label: 'Magic Wand', icon: Wand2, key: 'W' },
 ];
 const MARQUEE_TOOLS: Tool[] = [
@@ -172,7 +197,7 @@ const MARQUEE_TOOLS: Tool[] = [
 const TOOL_GROUPS: Record<string, Tool[]> = {
   g: ['gradient', 'fill'],
   b: ['brush', 'pencil', 'color-replace'],
-  u: ['rectangle', 'ellipse'],
+  u: ['rectangle', 'ellipse', 'line', 'polygon'],
   m: MARQUEE_TOOLS,
   l: ['lasso', 'polygonal-lasso'],
 };
@@ -204,14 +229,29 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
   Edit: [
     { label: 'Undo', shortcut: 'Ctrl+Z', command: 'undo' },
     { label: 'Redo', shortcut: 'Ctrl+Y', command: 'redo' },
-    { label: 'Toggle Last State', shortcut: 'Ctrl+Alt+Z', command: 'undo', disabled: true },
+    {
+      label: 'Toggle Last State',
+      shortcut: 'Ctrl+Alt+Z',
+      command: 'undo',
+      disabled: true,
+    },
     { label: '', command: 'noop', separator: true },
-    { label: 'Fade…', shortcut: 'Ctrl+Shift+F', command: 'noop', disabled: true },
+    {
+      label: 'Fade…',
+      shortcut: 'Ctrl+Shift+F',
+      command: 'noop',
+      disabled: true,
+    },
     { label: '', command: 'noop', separator: true },
     { label: 'Copy Layer', shortcut: 'Ctrl+C', command: 'copy-layer' },
     { label: 'Cut Layer', shortcut: 'Ctrl+X', command: 'cut-layer' },
     { label: 'Paste Layer', shortcut: 'Ctrl+V', command: 'paste-layer' },
-    { label: 'Copy Merged', shortcut: 'Ctrl+Shift+C', command: 'noop', disabled: true },
+    {
+      label: 'Copy Merged',
+      shortcut: 'Ctrl+Shift+C',
+      command: 'noop',
+      disabled: true,
+    },
     { label: 'Clear', command: 'clear-layer' },
     { label: '', command: 'noop', separator: true },
     { label: 'Search', shortcut: 'Ctrl+F', command: 'noop', disabled: true },
@@ -226,7 +266,12 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Generate Image…', command: 'noop', disabled: true },
     { label: 'Reflection Removal…', command: 'noop', disabled: true },
     { label: '', command: 'noop', separator: true },
-    { label: 'Free Transform', shortcut: 'Ctrl+T', command: 'noop', disabled: true },
+    {
+      label: 'Free Transform',
+      shortcut: 'Ctrl+T',
+      command: 'noop',
+      disabled: true,
+    },
     { label: 'Transform', command: 'noop', disabled: true },
     { label: 'Perspective Warp', command: 'noop', disabled: true },
     { label: 'Puppet Warp', command: 'noop', disabled: true },
@@ -245,7 +290,13 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
   Image: [
     { label: 'Mode', command: 'noop', disabled: true },
     { label: 'Adjustments', command: 'reset', disabled: true },
-    { label: 'Auto Tone', shortcut: 'Shift+Ctrl+L', command: 'noop', disabled: true },
+    { label: 'Levels…', command: 'levels' },
+    {
+      label: 'Auto Tone',
+      shortcut: 'Shift+Ctrl+L',
+      command: 'noop',
+      disabled: true,
+    },
     { label: 'Auto Contrast', command: 'noop', disabled: true },
     { label: 'Auto Color', command: 'noop', disabled: true },
     { label: '', command: 'noop', separator: true },
@@ -269,7 +320,11 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
   ],
   Layer: [
     { label: 'New Paint Layer', command: 'new-layer' },
-    { label: 'Duplicate Layer…', shortcut: 'Ctrl+J', command: 'duplicate-layer' },
+    {
+      label: 'Duplicate Layer…',
+      shortcut: 'Ctrl+J',
+      command: 'duplicate-layer',
+    },
     { label: 'Delete Layer', command: 'delete-layer' },
     { label: '', command: 'noop', separator: true },
     { label: 'Quick Export document as PNG', command: 'png' },
@@ -286,7 +341,11 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Rasterize', command: 'noop', disabled: true },
     { label: '', command: 'noop', separator: true },
     { label: 'Group Layers', shortcut: 'Ctrl+G', command: 'group-layer' },
-    { label: 'Ungroup Layers', shortcut: 'Ctrl+Shift+G', command: 'ungroup-layer' },
+    {
+      label: 'Ungroup Layers',
+      shortcut: 'Ctrl+Shift+G',
+      command: 'ungroup-layer',
+    },
     { label: 'Hide Layers', shortcut: 'Ctrl+,', command: 'hide-layer' },
     { label: 'Merge Layers', command: 'noop', disabled: true },
     { label: 'Merge Visible', command: 'merge-visible' },
@@ -448,7 +507,8 @@ export default function Home() {
       paint,
     } = doc;
   const [tool, setTool] = useState<Tool>('move'),
-    [selectionOperation, setSelectionOperation] = useState<SelectionOperation>('replace'),
+    [selectionOperation, setSelectionOperation] =
+      useState<SelectionOperation>('replace'),
     [zoom, setZoom] = useState(72),
     [color, setColor] = useState('#ff5c35'),
     [backgroundColor, setBackgroundColor] = useState('#ffffff'),
@@ -458,13 +518,23 @@ export default function Home() {
     [colorTolerance, setColorTolerance] = useState(24),
     [exportFormat, setExportFormat] = useState<ExportFormat>('png'),
     [exportQuality, setExportQuality] = useState(92),
+    [exportTargetBytes, setExportTargetBytes] = useState<number | undefined>(
+      undefined,
+    ),
     [text, setText] = useState('Your text'),
     [fontSize, setFontSize] = useState(56);
-  const [cloneSource, setCloneSource] = useState<{ x: number; y: number } | null>(null);
+  const [cloneSource, setCloneSource] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
   const clipboardLayer = useRef<Layer | null>(null);
   const [hasClipboard, setHasClipboard] = useState(false);
   const [activeMenu, setActiveMenu] = useState<MenuName | null>(null),
-    [exporting, setExporting] = useState<{ frame: Frame; assets: typeof assets.current; name: string } | null>(null),
+    [exporting, setExporting] = useState<{
+      frame: Frame;
+      assets: typeof assets.current;
+      name: string;
+    } | null>(null),
     [drag, setDrag] = useState(false),
     [resizing, setResizing] = useState<{
       width: number;
@@ -483,8 +553,17 @@ export default function Home() {
     [cloudBusy, setCloudBusy] = useState(false),
     [cloudMessage, setCloudMessage] = useState('');
   const active = frame?.layers.find((l) => l.id === frame.active),
-    adjustments = active?.adjustments || neutral;
-  const { brightness, contrast, saturation, blur, filter } = adjustments;
+    adjustments = active ? effectiveAdjustments(active.adjustments) : neutral;
+  const {
+    brightness,
+    contrast,
+    saturation,
+    blur,
+    filter,
+    levelsBlack,
+    levelsWhite,
+    levelsGamma,
+  } = adjustments;
   const dimensions = frame ? `${frame.w} × ${frame.h} px` : 'Opening…',
     canUndo = index.current > 0,
     canRedo = index.current < history.current.length - 1;
@@ -500,6 +579,7 @@ export default function Home() {
     colorTolerance,
     exportFormat,
     exportQuality,
+    exportTargetBytes,
     text,
     fontSize,
     ...neutral,
@@ -523,6 +603,7 @@ export default function Home() {
     setColorTolerance(s.colorTolerance ?? 24);
     setExportFormat(s.exportFormat ?? 'png');
     setExportQuality(s.exportQuality ?? 92);
+    setExportTargetBytes(s.exportTargetBytes);
     setText(s.text);
     setFontSize(s.fontSize);
   };
@@ -545,7 +626,12 @@ export default function Home() {
     width: number,
     height: number,
   ) => {
-    const frameMask = await renderSelection(selection, frameWidth, frameHeight, assets.current);
+    const frameMask = await renderSelection(
+      selection,
+      frameWidth,
+      frameHeight,
+      assets.current,
+    );
     const [a, b, c, d, e, f] = layer.matrix;
     if (
       a === 1 &&
@@ -560,7 +646,8 @@ export default function Home() {
       return frameMask;
     const determinant = a * d - b * c;
     if (Math.abs(determinant) < 0.000000000001) return frameMask;
-    const localMask = surface(width, height), context = localMask.getContext('2d')!;
+    const localMask = surface(width, height),
+      context = localMask.getContext('2d')!;
     context.setTransform(
       d / determinant,
       -b / determinant,
@@ -574,14 +661,19 @@ export default function Home() {
     return localMask;
   };
   const groupForLayer = (f: Frame, layer: Layer) =>
-    layer.groupId ? f.groups?.find((group) => group.id === layer.groupId) : undefined;
+    layer.groupId
+      ? f.groups?.find((group) => group.id === layer.groupId)
+      : undefined;
   const layerIsLocked = (f: Frame, layer: Layer) =>
     layer.locked || Boolean(groupForLayer(f, layer)?.locked);
   const editLayer = (patch: Partial<Layer>) => {
     const f = current(),
       layer = f.layers.find((l) => l.id === f.active)!;
     const group = groupForLayer(f, layer);
-    if (group?.locked || (layer.locked && !('locked' in patch) && !('visible' in patch))) {
+    if (
+      group?.locked ||
+      (layer.locked && !('locked' in patch) && !('visible' in patch))
+    ) {
       setNotice('Unlock this layer before editing');
       return false;
     }
@@ -631,11 +723,12 @@ export default function Home() {
     const f = current();
     if (JSON.stringify(f.selection) === JSON.stringify(selection)) return;
     if (commit({ ...f, selection })) {
-      const label = selection?.shape === 'ellipse'
-        ? 'Elliptical'
-        : selection?.shape === 'polygon'
-          ? 'Polygonal'
-          : 'Rectangular';
+      const label =
+        selection?.shape === 'ellipse'
+          ? 'Elliptical'
+          : selection?.shape === 'polygon'
+            ? 'Polygonal'
+            : 'Rectangular';
       setNotice(selection ? `${label} selection created` : 'Selection cleared');
     }
   };
@@ -677,7 +770,9 @@ export default function Home() {
       setSelection({ ...next, parts: [selectionPart(next)] });
       return;
     }
-    const parts = currentSelection.parts?.slice() || [selectionPart(currentSelection)];
+    const parts = currentSelection.parts?.slice() || [
+      selectionPart(currentSelection),
+    ];
     parts.push({ ...selectionPart(next), operation: selectionOperation });
     setSelection({ ...next, parts });
   };
@@ -727,7 +822,8 @@ export default function Home() {
       setNotice(`Selection feather set to ${Math.round(feather)} px`);
   };
   const createMaskFromSelection = async () => {
-    const f = current(), layer = f.layers.find((l) => l.id === f.active);
+    const f = current(),
+      layer = f.layers.find((l) => l.id === f.active);
     if (!f.selection || !layer || layer.kind !== 'raster') {
       setNotice('Select a raster layer and create a selection first');
       return;
@@ -738,21 +834,28 @@ export default function Home() {
     }
     const mask = await renderSelection(f.selection, f.w, f.h, assets.current);
     const maskId = addAsset(assets.current, mask);
-    if (editLayer({ mask: maskId })) setNotice('Nondestructive layer mask created');
+    if (editLayer({ mask: maskId }))
+      setNotice('Nondestructive layer mask created');
   };
   const clearMask = () => {
     const layer = current().layers.find((l) => l.id === current().active);
-    if (layer?.mask && editLayer({ mask: undefined })) setNotice('Layer mask removed; source pixels kept');
+    if (layer?.mask && editLayer({ mask: undefined }))
+      setNotice('Layer mask removed; source pixels kept');
   };
   const adjust = (patch: Partial<Adjustments>) => {
     const layer = current().layers.find((l) => l.id === current().active)!;
-    return editLayer({ adjustments: { ...layer.adjustments, ...patch } });
+    return editLayer({
+      adjustments: { ...effectiveAdjustments(layer.adjustments), ...patch },
+    });
   };
   const resetAdjustments = () => adjust({ ...neutral });
   const setBrightness = (brightness: number) => adjust({ brightness }),
     setContrast = (contrast: number) => adjust({ contrast }),
     setSaturation = (saturation: number) => adjust({ saturation }),
-    setBlur = (blur: number) => adjust({ blur });
+    setBlur = (blur: number) => adjust({ blur }),
+    setLevelsBlack = (levelsBlack: number) => adjust({ levelsBlack }),
+    setLevelsWhite = (levelsWhite: number) => adjust({ levelsWhite }),
+    setLevelsGamma = (levelsGamma: number) => adjust({ levelsGamma });
   const chooseFilter = (filter: string, label: string) => {
     if (adjust({ filter }))
       setNotice(`${label} applied to selected layer; remains editable`);
@@ -869,7 +972,22 @@ export default function Home() {
       assets: { ...assets.current },
       index: index.current,
       name,
-      settings: { tool, zoom, color, backgroundColor, size, brushOpacity, hardness, colorTolerance, exportFormat, exportQuality, text, fontSize, ...neutral },
+      settings: {
+        tool,
+        zoom,
+        color,
+        backgroundColor,
+        size,
+        brushOpacity,
+        hardness,
+        colorTolerance,
+        exportFormat,
+        exportQuality,
+        exportTargetBytes,
+        text,
+        fontSize,
+        ...neutral,
+      },
     };
     saveQueue.current = saveQueue.current
       .then(async () => {
@@ -913,6 +1031,7 @@ export default function Home() {
     colorTolerance,
     exportFormat,
     exportQuality,
+    exportTargetBytes,
     text,
     fontSize,
     history,
@@ -1004,8 +1123,7 @@ export default function Home() {
       w,
       h,
     );
-    if (!commit(next))
-      return;
+    if (!commit(next)) return;
     setResizing(null);
     setNotice('Image resized; layers remain editable');
   };
@@ -1096,7 +1214,9 @@ export default function Home() {
     if (
       commit({
         ...f,
-        groups: stillUsed ? f.groups : (f.groups || []).filter((item) => item.id !== groupId),
+        groups: stillUsed
+          ? f.groups
+          : (f.groups || []).filter((item) => item.id !== groupId),
         layers,
       })
     )
@@ -1123,7 +1243,8 @@ export default function Home() {
     });
   };
   const copyLayer = () => {
-    const f = current(), layer = f.layers.find((item) => item.id === f.active);
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
     if (!layer) {
       setNotice('Select a layer before copying');
       return false;
@@ -1145,8 +1266,9 @@ export default function Home() {
     }
     const f = current();
     if (
-      (copied.kind === 'raster' &&
-        (!assets.current[copied.asset] || (copied.mask && !assets.current[copied.mask])))
+      copied.kind === 'raster' &&
+      (!assets.current[copied.asset] ||
+        (copied.mask && !assets.current[copied.mask]))
     ) {
       clearClipboard();
       setNotice('The copied layer is no longer available in this document');
@@ -1160,13 +1282,16 @@ export default function Home() {
       id: crypto.randomUUID(),
       name: `${copied.name} copy`.slice(0, 160),
       locked: false,
-      ...(copiedGroup && !copiedGroup.locked ? { groupId: copiedGroup.id } : { groupId: undefined }),
+      ...(copiedGroup && !copiedGroup.locked
+        ? { groupId: copiedGroup.id }
+        : { groupId: undefined }),
     } as Layer;
     addLayer(pasted);
     setNotice('Layer pasted');
   };
   const cutLayer = () => {
-    const f = current(), layer = f.layers.find((item) => item.id === f.active);
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
     if (!layer) {
       setNotice('Select a layer before cutting');
       return false;
@@ -1189,8 +1314,14 @@ export default function Home() {
     if (layer) editLayer({ visible: !layer.visible });
   };
   const fillActiveLayer = async () => {
-    const f = current(), layer = f.layers.find((item) => item.id === f.active);
-    if (!layer || layer.kind !== 'raster' || layerIsLocked(f, layer) || !layer.visible) {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (
+      !layer ||
+      layer.kind !== 'raster' ||
+      layerIsLocked(f, layer) ||
+      !layer.visible
+    ) {
       setNotice('Select a visible, unlocked raster layer before filling');
       return;
     }
@@ -1199,7 +1330,8 @@ export default function Home() {
         output = surface(image.naturalWidth, image.naturalHeight),
         context = output.getContext('2d')!;
       context.drawImage(image, 0, 0);
-      const fill = surface(output.width, output.height), fillContext = fill.getContext('2d')!;
+      const fill = surface(output.width, output.height),
+        fillContext = fill.getContext('2d')!;
       fillContext.fillStyle = color;
       fillContext.fillRect(0, 0, fill.width, fill.height);
       if (f.selection) {
@@ -1216,15 +1348,32 @@ export default function Home() {
       }
       context.drawImage(fill, 0, 0);
       const asset = addAsset(assets.current, output);
-      if (commit({ ...f, layers: f.layers.map((item) => item.id === layer.id ? { ...item, asset } : item) }))
-        setNotice(f.selection ? 'Selection filled; undo restores the original pixels' : 'Layer filled; undo restores the original pixels');
+      if (
+        commit({
+          ...f,
+          layers: f.layers.map((item) =>
+            item.id === layer.id ? { ...item, asset } : item,
+          ),
+        })
+      )
+        setNotice(
+          f.selection
+            ? 'Selection filled; undo restores the original pixels'
+            : 'Layer filled; undo restores the original pixels',
+        );
     } catch {
       setNotice('Could not fill this layer');
     }
   };
   const clearActiveLayer = async () => {
-    const f = current(), layer = f.layers.find((item) => item.id === f.active);
-    if (!layer || layer.kind !== 'raster' || layerIsLocked(f, layer) || !layer.visible) {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (
+      !layer ||
+      layer.kind !== 'raster' ||
+      layerIsLocked(f, layer) ||
+      !layer.visible
+    ) {
       setNotice('Select a visible, unlocked raster layer before clearing');
       return;
     }
@@ -1249,20 +1398,31 @@ export default function Home() {
       if (
         commit({
           ...f,
-          layers: f.layers.map((item) => (item.id === layer.id ? { ...item, asset } : item)),
+          layers: f.layers.map((item) =>
+            item.id === layer.id ? { ...item, asset } : item,
+          ),
         })
       )
-        setNotice(f.selection ? 'Selection cleared; undo restores the original pixels' : 'Layer cleared; undo restores the original pixels');
+        setNotice(
+          f.selection
+            ? 'Selection cleared; undo restores the original pixels'
+            : 'Layer cleared; undo restores the original pixels',
+        );
     } catch {
       setNotice('Could not clear this layer');
     }
   };
   const mergeVisible = async () => {
     try {
-      const f = current(), groups = new Map((f.groups || []).map((group) => [group.id, group]));
+      const f = current(),
+        groups = new Map((f.groups || []).map((group) => [group.id, group]));
       const visibleIds = new Set(
         f.layers
-          .filter((layer) => layer.visible && (!layer.groupId || groups.get(layer.groupId)?.visible !== false))
+          .filter(
+            (layer) =>
+              layer.visible &&
+              (!layer.groupId || groups.get(layer.groupId)?.visible !== false),
+          )
           .map((layer) => layer.id),
       );
       if (!visibleIds.size) {
@@ -1270,17 +1430,29 @@ export default function Home() {
         return;
       }
       const image = await renderFrame(
-          { ...f, layers: f.layers.map((layer) => ({ ...layer, visible: visibleIds.has(layer.id) })) },
+          {
+            ...f,
+            layers: f.layers.map((layer) => ({
+              ...layer,
+              visible: visibleIds.has(layer.id),
+            })),
+          },
           assets.current,
         ),
         merged = rasterFrame(image, assets.current, 'Merged visible'),
-        topVisibleIndex = Math.max(...f.layers.map((layer, index) => (visibleIds.has(layer.id) ? index : -1))),
+        topVisibleIndex = Math.max(
+          ...f.layers.map((layer, index) =>
+            visibleIds.has(layer.id) ? index : -1,
+          ),
+        ),
         layers: Layer[] = [];
       f.layers.forEach((layer, index) => {
         if (index === topVisibleIndex) layers.push(merged.layers[0]);
         if (!visibleIds.has(layer.id)) layers.push(layer);
       });
-      const usedGroups = new Set(layers.flatMap((layer) => (layer.groupId ? [layer.groupId] : [])));
+      const usedGroups = new Set(
+        layers.flatMap((layer) => (layer.groupId ? [layer.groupId] : [])),
+      );
       if (
         commit({
           ...f,
@@ -1296,8 +1468,11 @@ export default function Home() {
   };
   const flattenImage = async () => {
     try {
-      const f = current(), image = await renderFrame(f, assets.current), flattened = rasterFrame(image, assets.current, 'Flattened image');
-      if (commit(flattened)) setNotice('Image flattened; undo restores editable layers');
+      const f = current(),
+        image = await renderFrame(f, assets.current),
+        flattened = rasterFrame(image, assets.current, 'Flattened image');
+      if (commit(flattened))
+        setNotice('Image flattened; undo restores editable layers');
     } catch {
       setNotice('Could not flatten the image');
     }
@@ -1305,7 +1480,8 @@ export default function Home() {
   const remove = () => {
     const f = current(),
       layer = f.layers.find((l) => l.id === f.active);
-    if (!layer || layerIsLocked(f, layer) || f.layers.length === 1) return false;
+    if (!layer || layerIsLocked(f, layer) || f.layers.length === 1)
+      return false;
     const layers = f.layers.filter((l) => l.id !== f.active);
     if (!commit({ ...f, layers, active: layers.at(-1)!.id })) return false;
     setNotice('Layer deleted. Undo restores it.');
@@ -1410,7 +1586,9 @@ export default function Home() {
       if (layerFile.current) layerFile.current.value = '';
     }
   };
-  const point = (e: Pick<React.PointerEvent<HTMLCanvasElement>, 'clientX' | 'clientY'>) => {
+  const point = (
+    e: Pick<React.PointerEvent<HTMLCanvasElement>, 'clientX' | 'clientY'>,
+  ) => {
     const c = canvas.current!,
       r = c.getBoundingClientRect();
     return {
@@ -1419,7 +1597,9 @@ export default function Home() {
     };
   };
   const pressure = (e: React.PointerEvent<HTMLCanvasElement>) =>
-    (e.pointerType === 'pen' || e.pointerType === 'touch') && e.pressure > 0 && e.pressure <= 1
+    (e.pointerType === 'pen' || e.pointerType === 'touch') &&
+    e.pressure > 0 &&
+    e.pressure <= 1
       ? e.pressure
       : 1;
   const pointerDown = async (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -1431,7 +1611,11 @@ export default function Home() {
         p = point(e),
         points = g.points || (g.points = []),
         first = points[0];
-      if (first && points.length >= 3 && Math.hypot(p.x - first.x, p.y - first.y) <= 14) {
+      if (
+        first &&
+        points.length >= 3 &&
+        Math.hypot(p.x - first.x, p.y - first.y) <= 14
+      ) {
         gesture.current = null;
         finishPolygonalLasso(g);
       } else {
@@ -1451,7 +1635,8 @@ export default function Home() {
           context.setLineDash([8, 5]);
           context.beginPath();
           context.moveTo(g.points[0].x, g.points[0].y);
-          for (const point of g.points.slice(1)) context.lineTo(point.x, point.y);
+          for (const point of g.points.slice(1))
+            context.lineTo(point.x, point.y);
           context.stroke();
           context.restore();
         });
@@ -1471,8 +1656,15 @@ export default function Home() {
       return;
     }
     if (tool === 'eyedropper') {
-      const pixel = canvas.current!.getContext('2d')!.getImageData(Math.floor(p.x), Math.floor(p.y), 1, 1).data;
-      setColor('#' + [pixel[0], pixel[1], pixel[2]].map((value) => value.toString(16).padStart(2, '0')).join(''));
+      const pixel = canvas
+        .current!.getContext('2d')!
+        .getImageData(Math.floor(p.x), Math.floor(p.y), 1, 1).data;
+      setColor(
+        '#' +
+          [pixel[0], pixel[1], pixel[2]]
+            .map((value) => value.toString(16).padStart(2, '0'))
+            .join(''),
+      );
       setNotice('Color sampled from image');
       return;
     }
@@ -1481,7 +1673,11 @@ export default function Home() {
       return;
     }
     if (tool === 'fill') {
-      if (layerIsLocked(f, layer) || !layer.visible || layer.kind !== 'raster') {
+      if (
+        layerIsLocked(f, layer) ||
+        !layer.visible ||
+        layer.kind !== 'raster'
+      ) {
         setNotice('Select a visible, unlocked raster layer before filling');
         return;
       }
@@ -1494,7 +1690,14 @@ export default function Home() {
           return;
         }
         const asset = addAsset(assets.current, buffer);
-        if (commit({ ...f, layers: f.layers.map((item) => item.id === layer.id ? { ...item, asset } : item) }))
+        if (
+          commit({
+            ...f,
+            layers: f.layers.map((item) =>
+              item.id === layer.id ? { ...item, asset } : item,
+            ),
+          })
+        )
           setNotice('Area filled; undo restores the original pixels');
       } catch {
         setNotice('Could not fill this layer');
@@ -1502,7 +1705,11 @@ export default function Home() {
       return;
     }
     if (tool === 'clone' || tool === 'heal') {
-      if (layerIsLocked(f, layer) || !layer.visible || layer.kind !== 'raster') {
+      if (
+        layerIsLocked(f, layer) ||
+        !layer.visible ||
+        layer.kind !== 'raster'
+      ) {
         setNotice('Select a visible, unlocked raster layer before retouching');
         return;
       }
@@ -1533,8 +1740,14 @@ export default function Home() {
       return;
     }
     if (tool === 'color-replace') {
-      if (layerIsLocked(f, layer) || !layer.visible || layer.kind !== 'raster') {
-        setNotice('Select a visible, unlocked raster layer before replacing colors');
+      if (
+        layerIsLocked(f, layer) ||
+        !layer.visible ||
+        layer.kind !== 'raster'
+      ) {
+        setNotice(
+          'Select a visible, unlocked raster layer before replacing colors',
+        );
         return;
       }
       const g = {
@@ -1549,7 +1762,10 @@ export default function Home() {
       g.pending = (async () => {
         try {
           const sourceImage = await decodeAsset(assets.current[layer.asset]),
-            source = surface(sourceImage.naturalWidth, sourceImage.naturalHeight);
+            source = surface(
+              sourceImage.naturalWidth,
+              sourceImage.naturalHeight,
+            );
           source.getContext('2d')!.drawImage(sourceImage, 0, 0);
           if (gesture.current !== g) return;
           const sample = source
@@ -1587,25 +1803,58 @@ export default function Home() {
       return;
     }
     if (tool === 'gradient') {
-      if (layerIsLocked(f, layer) || !layer.visible || layer.kind !== 'raster') {
-        setNotice('Select a visible, unlocked raster layer before applying a gradient');
+      if (
+        layerIsLocked(f, layer) ||
+        !layer.visible ||
+        layer.kind !== 'raster'
+      ) {
+        setNotice(
+          'Select a visible, unlocked raster layer before applying a gradient',
+        );
         return;
       }
-      gesture.current = { tool, start: local, last: local, frame: f, layer, moved: false };
+      gesture.current = {
+        tool,
+        start: local,
+        last: local,
+        frame: f,
+        layer,
+        moved: false,
+      };
       return;
     }
     if (tool === 'magic-wand') {
-      if (layerIsLocked(f, layer) || !layer.visible || layer.kind !== 'raster') {
-        setNotice('Select a visible, unlocked raster layer before color-selecting');
+      if (
+        layerIsLocked(f, layer) ||
+        !layer.visible ||
+        layer.kind !== 'raster'
+      ) {
+        setNotice(
+          'Select a visible, unlocked raster layer before color-selecting',
+        );
         return;
       }
       try {
-        const source = await renderFrame({ ...f, layers: [layer] }, assets.current),
+        const source = await renderFrame(
+            { ...f, layers: [layer] },
+            assets.current,
+          ),
           mask = colorSelectMask(source, p.x, p.y),
           maskId = addAsset(assets.current, mask);
         if (selectionOperation !== 'replace')
-          setNotice('Color selection currently replaces the active selection; geometric selections support composition');
-        setSelection({ shape: 'rectangle', x: 0, y: 0, w: f.w, h: f.h, feather: 0, inverted: false, mask: maskId });
+          setNotice(
+            'Color selection currently replaces the active selection; geometric selections support composition',
+          );
+        setSelection({
+          shape: 'rectangle',
+          x: 0,
+          y: 0,
+          w: f.w,
+          h: f.h,
+          feather: 0,
+          inverted: false,
+          mask: maskId,
+        });
         setNotice('Color selection created from contiguous pixels');
       } catch {
         setNotice('Could not create a color selection');
@@ -1628,7 +1877,11 @@ export default function Home() {
         feather: 0,
         inverted: false,
       });
-      setNotice(row ? 'Single row selection created' : 'Single column selection created');
+      setNotice(
+        row
+          ? 'Single row selection created'
+          : 'Single column selection created',
+      );
       return;
     }
     if (tool === 'text') {
@@ -1646,15 +1899,37 @@ export default function Home() {
       return;
     }
     if (tool === 'select' || tool === 'ellipse-select' || tool === 'lasso') {
-      gesture.current = { tool, start: p, last: p, frame: f, moved: false, points: [p] };
+      gesture.current = {
+        tool,
+        start: p,
+        last: p,
+        frame: f,
+        moved: false,
+        points: [p],
+      };
       return;
     }
     if (tool === 'polygonal-lasso') {
-      gesture.current = { tool, start: p, last: p, frame: f, moved: false, points: [p] };
-      setNotice('Polygonal lasso: click to place points, click the first point to close');
+      gesture.current = {
+        tool,
+        start: p,
+        last: p,
+        frame: f,
+        moved: false,
+        points: [p],
+      };
+      setNotice(
+        'Polygonal lasso: click to place points, click the first point to close',
+      );
       return;
     }
-    if (tool === 'rectangle' || tool === 'ellipse' || tool === 'crop') {
+    if (
+      tool === 'rectangle' ||
+      tool === 'ellipse' ||
+      tool === 'line' ||
+      tool === 'polygon' ||
+      tool === 'crop'
+    ) {
       gesture.current = { tool, start: p, last: p, frame: f, moved: false };
       return;
     }
@@ -1662,7 +1937,10 @@ export default function Home() {
       setNotice('Select a visible, unlocked layer');
       return;
     }
-    if ((tool === 'brush' || tool === 'pencil' || tool === 'eraser') && layer.kind !== 'raster') {
+    if (
+      (tool === 'brush' || tool === 'pencil' || tool === 'eraser') &&
+      layer.kind !== 'raster'
+    ) {
       setNotice('Add a paint layer, or rasterize this layer before painting');
       return;
     }
@@ -1690,10 +1968,18 @@ export default function Home() {
           x.globalCompositeOperation =
             tool === 'eraser' ? 'destination-out' : 'source-over';
           const pointPressure = pressure(e),
-            radius = Math.max(0.5, (localSize(layer.matrix, size) * pointPressure) / 2),
-            softness = tool === 'pencil' ? 0 : Math.max(0, Math.min(1, (100 - hardness) / 100));
+            radius = Math.max(
+              0.5,
+              (localSize(layer.matrix, size) * pointPressure) / 2,
+            ),
+            softness =
+              tool === 'pencil'
+                ? 0
+                : Math.max(0, Math.min(1, (100 - hardness) / 100));
           x.globalAlpha = (brushOpacity / 100) * pointPressure;
-          x.filter = softness ? `blur(${Math.max(0.1, radius * softness)}px)` : 'none';
+          x.filter = softness
+            ? `blur(${Math.max(0.1, radius * softness)}px)`
+            : 'none';
           x.beginPath();
           x.arc(local.x, local.y, radius, 0, Math.PI * 2);
           x.fill();
@@ -1730,24 +2016,57 @@ export default function Home() {
       g.last = p;
       return;
     }
-    if ((g.tool === 'brush' || g.tool === 'pencil' || g.tool === 'eraser') && !g.buffer)
+    if (
+      (g.tool === 'brush' || g.tool === 'pencil' || g.tool === 'eraser') &&
+      !g.buffer
+    )
       g.queued?.push(local);
-    if ((g.tool === 'clone' || g.tool === 'heal') && g.buffer && g.source && cloneSource) {
-      const x = g.buffer.getContext('2d')!, radius = Math.max(0.5, (localSize(g.layer!.matrix, size) * pressure(e)) / 2);
-      const dx = local.x - g.start.x, dy = local.y - g.start.y;
+    if (
+      (g.tool === 'clone' || g.tool === 'heal') &&
+      g.buffer &&
+      g.source &&
+      cloneSource
+    ) {
+      const x = g.buffer.getContext('2d')!,
+        radius = Math.max(
+          0.5,
+          (localSize(g.layer!.matrix, size) * pressure(e)) / 2,
+        );
+      const dx = local.x - g.start.x,
+        dy = local.y - g.start.y;
       x.save();
-      x.globalAlpha = (g.tool === 'heal' ? 0.65 : 1) * (brushOpacity / 100) * pressure(e);
-      x.filter = g.tool === 'heal' || hardness < 100 ? `blur(${g.tool === 'heal' ? 1 : Math.max(0.1, radius * (100 - hardness) / 100)}px)` : 'none';
+      x.globalAlpha =
+        (g.tool === 'heal' ? 0.65 : 1) * (brushOpacity / 100) * pressure(e);
+      x.filter =
+        g.tool === 'heal' || hardness < 100
+          ? `blur(${g.tool === 'heal' ? 1 : Math.max(0.1, (radius * (100 - hardness)) / 100)}px)`
+          : 'none';
       x.beginPath();
       x.arc(local.x, local.y, radius, 0, Math.PI * 2);
       x.clip();
-      x.drawImage(g.source, cloneSource.x + dx - radius, cloneSource.y + dy - radius, radius * 2, radius * 2, local.x - radius, local.y - radius, radius * 2, radius * 2);
+      x.drawImage(
+        g.source,
+        cloneSource.x + dx - radius,
+        cloneSource.y + dy - radius,
+        radius * 2,
+        radius * 2,
+        local.x - radius,
+        local.y - radius,
+        radius * 2,
+        radius * 2,
+      );
       x.restore();
       void paint(g.frame, { [g.layer!.id]: g.buffer });
       g.last = local;
       return;
     }
-    if (g.tool === 'color-replace' && g.buffer && g.source && g.replaceTarget && g.layer) {
+    if (
+      g.tool === 'color-replace' &&
+      g.buffer &&
+      g.source &&
+      g.replaceTarget &&
+      g.layer
+    ) {
       replaceColorStroke(
         g.source,
         g.buffer,
@@ -1775,13 +2094,21 @@ export default function Home() {
           l.id === g.layer!.id ? { ...l, matrix } : l,
         ),
       });
-    } else if ((g.tool === 'brush' || g.tool === 'pencil' || g.tool === 'eraser') && g.buffer && g.layer) {
+    } else if (
+      (g.tool === 'brush' || g.tool === 'pencil' || g.tool === 'eraser') &&
+      g.buffer &&
+      g.layer
+    ) {
       const x = g.buffer.getContext('2d')!;
       x.strokeStyle = color;
       x.globalAlpha = (brushOpacity / 100) * pressure(e);
       const diameter = localSize(g.layer.matrix, size) * pressure(e);
-      x.filter = g.tool === 'pencil' || hardness >= 100 ? 'none' : `blur(${Math.max(0.1, (diameter / 2) * (100 - hardness) / 100)}px)`;
-      x.lineWidth = g.tool === 'pencil' ? Math.max(1, Math.round(diameter)) : diameter;
+      x.filter =
+        g.tool === 'pencil' || hardness >= 100
+          ? 'none'
+          : `blur(${Math.max(0.1, ((diameter / 2) * (100 - hardness)) / 100)}px)`;
+      x.lineWidth =
+        g.tool === 'pencil' ? Math.max(1, Math.round(diameter)) : diameter;
       x.lineCap = 'round';
       x.lineJoin = 'round';
       x.beginPath();
@@ -1789,40 +2116,122 @@ export default function Home() {
       x.lineTo(local.x, local.y);
       x.stroke();
       void paint(g.frame, { [g.layer.id]: g.buffer });
-    } else if (g.tool === 'rectangle' || g.tool === 'ellipse') {
+    } else if (
+      g.tool === 'rectangle' ||
+      g.tool === 'ellipse' ||
+      g.tool === 'line' ||
+      g.tool === 'polygon'
+    ) {
       const width = Math.abs(p.x - g.start.x),
         height = Math.abs(p.y - g.start.y);
-      const layer: Layer = {
-        ...commonLayer('Shape'),
-        kind: g.tool === 'ellipse' ? 'ellipse' : 'rectangle',
-        width: Math.max(1, width),
-        height: Math.max(1, height),
-        stroke: Math.max(1, size / 3),
-        color,
-        fill: false,
-        matrix: [
-          1,
+      const layer: Layer =
+        g.tool === 'line'
+          ? {
+              ...commonLayer('Line'),
+              kind: 'line',
+              width: Math.max(1, width),
+              height: Math.max(1, height),
+              stroke: Math.max(1, size / 3),
+              color,
+              matrix: [
+                1,
+                0,
+                0,
+                1,
+                Math.min(p.x, g.start.x),
+                Math.min(p.y, g.start.y),
+              ],
+            }
+          : ({
+              ...commonLayer(g.tool === 'polygon' ? 'Polygon' : 'Shape'),
+              kind:
+                g.tool === 'ellipse'
+                  ? 'ellipse'
+                  : g.tool === 'polygon'
+                    ? 'polygon'
+                    : 'rectangle',
+              width: Math.max(1, width),
+              height: Math.max(1, height),
+              stroke: Math.max(1, size / 3),
+              color,
+              ...(g.tool === 'polygon' ? { sides: 5 } : { fill: false }),
+              matrix: [
+                1,
+                0,
+                0,
+                1,
+                Math.min(p.x, g.start.x),
+                Math.min(p.y, g.start.y),
+              ],
+            } as Layer);
+      const context = canvas.current!.getContext('2d')!;
+      context.save();
+      context.strokeStyle = color;
+      context.lineWidth = Math.max(1, size / 3);
+      context.setLineDash([8, 5]);
+      context.beginPath();
+      if (g.tool === 'line') {
+        context.moveTo(g.start.x, g.start.y);
+        context.lineTo(p.x, p.y);
+      } else if (g.tool === 'polygon') {
+        const left = Math.min(g.start.x, p.x),
+          top = Math.min(g.start.y, p.y),
+          cx = left + width / 2,
+          cy = top + height / 2,
+          rx = Math.max(1, width / 2),
+          ry = Math.max(1, height / 2);
+        for (let i = 0; i < 5; i += 1) {
+          const angle = -Math.PI / 2 + (i * Math.PI * 2) / 5,
+            x = cx + Math.cos(angle) * rx,
+            y = cy + Math.sin(angle) * ry;
+          if (i === 0) context.moveTo(x, y);
+          else context.lineTo(x, y);
+        }
+        context.closePath();
+      } else if (g.tool === 'ellipse') {
+        context.ellipse(
+          Math.min(p.x, g.start.x) + width / 2,
+          Math.min(p.y, g.start.y) + height / 2,
+          width / 2,
+          height / 2,
           0,
           0,
-          1,
+          Math.PI * 2,
+        );
+      } else
+        context.rect(
           Math.min(p.x, g.start.x),
           Math.min(p.y, g.start.y),
-        ],
-      };
+          width,
+          height,
+        );
+      context.stroke();
+      context.restore();
       void paint({ ...g.frame, layers: [...g.frame.layers, layer] });
     } else if (g.tool === 'select' || g.tool === 'ellipse-select') {
       void paint(g.frame).then(() => {
         if (gesture.current !== g) return;
-        const c = canvas.current!, x = c.getContext('2d')!;
+        const c = canvas.current!,
+          x = c.getContext('2d')!;
         x.save();
         x.strokeStyle = '#fff';
         x.lineWidth = 2;
         x.setLineDash([8, 5]);
-        const left = Math.min(g.start.x, p.x), top = Math.min(g.start.y, p.y),
-          width = Math.abs(p.x - g.start.x), height = Math.abs(p.y - g.start.y);
+        const left = Math.min(g.start.x, p.x),
+          top = Math.min(g.start.y, p.y),
+          width = Math.abs(p.x - g.start.x),
+          height = Math.abs(p.y - g.start.y);
         if (g.tool === 'ellipse-select') {
           x.beginPath();
-          x.ellipse(left + width / 2, top + height / 2, width / 2, height / 2, 0, 0, Math.PI * 2);
+          x.ellipse(
+            left + width / 2,
+            top + height / 2,
+            width / 2,
+            height / 2,
+            0,
+            0,
+            Math.PI * 2,
+          );
           x.stroke();
         } else x.strokeRect(left, top, width, height);
         x.restore();
@@ -1910,11 +2319,18 @@ export default function Home() {
         ),
       });
       if (changed) setNotice('Layer moved');
-    } else if ((g.tool === 'brush' || g.tool === 'pencil' || g.tool === 'eraser') && g.buffer && g.layer) {
+    } else if (
+      (g.tool === 'brush' || g.tool === 'pencil' || g.tool === 'eraser') &&
+      g.buffer &&
+      g.layer
+    ) {
       const x = g.buffer.getContext('2d')!;
       x.globalAlpha = (brushOpacity / 100) * pressure(e);
       const diameter = localSize(g.layer.matrix, size) * pressure(e);
-      x.filter = g.tool === 'pencil' || hardness >= 100 ? 'none' : `blur(${Math.max(0.1, (diameter / 2) * (100 - hardness) / 100)}px)`;
+      x.filter =
+        g.tool === 'pencil' || hardness >= 100
+          ? 'none'
+          : `blur(${Math.max(0.1, ((diameter / 2) * (100 - hardness)) / 100)}px)`;
       x.beginPath();
       x.moveTo(g.last.x, g.last.y);
       x.lineTo(local.x, local.y);
@@ -1923,37 +2339,76 @@ export default function Home() {
       const changed = commit({
         ...f,
         layers: f.layers.map((l) =>
-          l.id === g.layer!.id
-            ? ({ ...l, kind: 'raster', asset } as Layer)
-            : l,
+          l.id === g.layer!.id ? ({ ...l, kind: 'raster', asset } as Layer) : l,
         ),
       });
       if (changed) setNotice('Paint layer updated');
-    } else if ((g.tool === 'rectangle' || g.tool === 'ellipse') && g.moved) {
-      addLayer({
-        ...commonLayer('Shape ' + f.layers.length),
-        kind: g.tool === 'ellipse' ? 'ellipse' : 'rectangle',
-        width: Math.max(1, Math.round(Math.abs(p.x - g.start.x))),
-        height: Math.max(1, Math.round(Math.abs(p.y - g.start.y))),
-        stroke: Math.max(1, size / 3),
-        color,
-        fill: false,
-        matrix: [
+    } else if (
+      (g.tool === 'rectangle' ||
+        g.tool === 'ellipse' ||
+        g.tool === 'line' ||
+        g.tool === 'polygon') &&
+      g.moved
+    ) {
+      const width = Math.max(1, Math.round(Math.abs(p.x - g.start.x))),
+        height = Math.max(1, Math.round(Math.abs(p.y - g.start.y))),
+        matrix = [
           1,
           0,
           0,
           1,
           Math.min(p.x, g.start.x),
           Math.min(p.y, g.start.y),
-        ],
-      });
-    } else if ((g.tool === 'select' || g.tool === 'ellipse-select') && g.moved) {
+        ] as Matrix;
+      addLayer(
+        g.tool === 'line'
+          ? {
+              ...commonLayer('Line ' + f.layers.length),
+              kind: 'line',
+              width,
+              height,
+              stroke: Math.max(1, size / 3),
+              color,
+              matrix,
+            }
+          : ({
+              ...commonLayer(
+                (g.tool === 'polygon' ? 'Polygon ' : 'Shape ') +
+                  f.layers.length,
+              ),
+              kind:
+                g.tool === 'ellipse'
+                  ? 'ellipse'
+                  : g.tool === 'polygon'
+                    ? 'polygon'
+                    : 'rectangle',
+              width,
+              height,
+              stroke: Math.max(1, size / 3),
+              color,
+              fill: false,
+              ...(g.tool === 'polygon' ? { sides: 5 } : {}),
+              matrix,
+            } as Layer),
+      );
+    } else if (
+      (g.tool === 'select' || g.tool === 'ellipse-select') &&
+      g.moved
+    ) {
       const x = Math.max(0, Math.min(g.start.x, p.x)),
         y = Math.max(0, Math.min(g.start.y, p.y)),
         w = Math.min(f.w - x, Math.abs(p.x - g.start.x)),
         h = Math.min(f.h - y, Math.abs(p.y - g.start.y));
       if (w > 0 && h > 0)
-        mergeSelection({ shape: g.tool === 'ellipse-select' ? 'ellipse' : 'rectangle', x, y, w, h, feather: 0, inverted: false });
+        mergeSelection({
+          shape: g.tool === 'ellipse-select' ? 'ellipse' : 'rectangle',
+          x,
+          y,
+          w,
+          h,
+          feather: 0,
+          inverted: false,
+        });
       else void paint(f);
     } else if (g.tool === 'lasso' && g.moved) {
       const points = g.points || [];
@@ -1962,7 +2417,16 @@ export default function Home() {
           y = Math.max(0, Math.min(...points.map((point) => point.y))),
           right = Math.min(f.w, Math.max(...points.map((point) => point.x))),
           bottom = Math.min(f.h, Math.max(...points.map((point) => point.y)));
-        mergeSelection({ shape: 'polygon', x, y, w: right - x, h: bottom - y, points, feather: 0, inverted: false });
+        mergeSelection({
+          shape: 'polygon',
+          x,
+          y,
+          w: right - x,
+          h: bottom - y,
+          points,
+          feather: 0,
+          inverted: false,
+        });
       } else void paint(f);
     } else if (g.tool === 'crop' && g.moved) {
       const left = Math.max(0, Math.floor(Math.min(p.x, g.start.x))),
@@ -1970,7 +2434,17 @@ export default function Home() {
         w = Math.floor(Math.min(f.w - left, Math.abs(p.x - g.start.x))),
         h = Math.floor(Math.min(f.h - top, Math.abs(p.y - g.start.y)));
       if (w > 0 && h > 0) {
-        if (commit(await transformFrameWithMasks(f, [1, 0, 0, 1, -left, -top], assets.current, w, h)))
+        if (
+          commit(
+            await transformFrameWithMasks(
+              f,
+              [1, 0, 0, 1, -left, -top],
+              assets.current,
+              w,
+              h,
+            ),
+          )
+        )
           setNotice('Canvas cropped; layer pixels retained');
       } else void paint(f);
     } else if (g.tool === 'gradient' && g.moved && g.layer) {
@@ -1980,25 +2454,59 @@ export default function Home() {
           buffer = surface(image.naturalWidth, image.naturalHeight);
         buffer.getContext('2d')!.drawImage(image, 0, 0);
         const context = buffer.getContext('2d')!,
-          gradient = context.createLinearGradient(g.start.x, g.start.y, local.x, local.y);
+          gradient = context.createLinearGradient(
+            g.start.x,
+            g.start.y,
+            local.x,
+            local.y,
+          );
         gradient.addColorStop(0, color);
         gradient.addColorStop(1, '#ffffff00');
         context.fillStyle = gradient;
         context.fillRect(0, 0, buffer.width, buffer.height);
         const asset = addAsset(assets.current, buffer);
-        if (commit({ ...f, layers: f.layers.map((item) => item.id === g.layer!.id ? { ...item, asset } : item) }))
+        if (
+          commit({
+            ...f,
+            layers: f.layers.map((item) =>
+              item.id === g.layer!.id ? { ...item, asset } : item,
+            ),
+          })
+        )
           setNotice('Gradient applied; undo restores the original pixels');
       } catch {
         setNotice('Could not apply gradient');
       }
-    } else if ((g.tool === 'clone' || g.tool === 'heal') && g.buffer && g.layer) {
+    } else if (
+      (g.tool === 'clone' || g.tool === 'heal') &&
+      g.buffer &&
+      g.layer
+    ) {
       const asset = addAsset(assets.current, g.buffer);
-      if (commit({ ...f, layers: f.layers.map((item) => item.id === g.layer!.id ? { ...item, asset } : item) }))
-        setNotice(g.tool === 'heal' ? 'Healing stroke applied' : 'Clone stroke applied');
+      if (
+        commit({
+          ...f,
+          layers: f.layers.map((item) =>
+            item.id === g.layer!.id ? { ...item, asset } : item,
+          ),
+        })
+      )
+        setNotice(
+          g.tool === 'heal' ? 'Healing stroke applied' : 'Clone stroke applied',
+        );
     } else if (g.tool === 'color-replace' && g.buffer && g.layer) {
       const asset = addAsset(assets.current, g.buffer);
-      if (commit({ ...f, layers: f.layers.map((item) => item.id === g.layer!.id ? { ...item, asset } : item) }))
-        setNotice('Color replacement applied; undo restores the original pixels');
+      if (
+        commit({
+          ...f,
+          layers: f.layers.map((item) =>
+            item.id === g.layer!.id ? { ...item, asset } : item,
+          ),
+        })
+      )
+        setNotice(
+          'Color replacement applied; undo restores the original pixels',
+        );
     } else void paint(f);
   };
   const doubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -2010,8 +2518,12 @@ export default function Home() {
     const p = point(e),
       points = g.points || [];
     if (points.length >= 2) {
-      const last = points[points.length - 1], previous = points[points.length - 2];
-      if (Math.hypot(last.x - p.x, last.y - p.y) <= 14 && Math.hypot(last.x - previous.x, last.y - previous.y) <= 1)
+      const last = points[points.length - 1],
+        previous = points[points.length - 2];
+      if (
+        Math.hypot(last.x - p.x, last.y - p.y) <= 14 &&
+        Math.hypot(last.x - previous.x, last.y - previous.y) <= 1
+      )
         points.pop();
     }
     gesture.current = null;
@@ -2070,8 +2582,7 @@ export default function Home() {
           /INPUT|TEXTAREA|SELECT/.test(target.tagName) ||
           target.isContentEditable,
         command = e.ctrlKey || e.metaKey;
-      if (!ready || cloudBusy || document.querySelector('dialog[open]'))
-        return;
+      if (!ready || cloudBusy || document.querySelector('dialog[open]')) return;
       if (e.key === 'Escape' && gesture.current?.tool === 'polygonal-lasso') {
         gesture.current = null;
         void paint(current());
@@ -2092,7 +2603,21 @@ export default function Home() {
       if (command) {
         const k = e.key.toLowerCase();
         if (
-          ['z', 'y', 's', 'o', 'n', 'a', 'd', 'g', 'j', 'i', 'c', 'v', 'x'].includes(k) ||
+          [
+            'z',
+            'y',
+            's',
+            'o',
+            'n',
+            'a',
+            'd',
+            'g',
+            'j',
+            'i',
+            'c',
+            'v',
+            'x',
+          ].includes(k) ||
           (k === 'w' && !e.altKey)
         )
           e.preventDefault();
@@ -2113,7 +2638,8 @@ export default function Home() {
         }
         if (k === 'd') setSelection(undefined);
         if (k === 'i') {
-          if (e.altKey) setResizing({ width: current().w, height: current().h });
+          if (e.altKey)
+            setResizing({ width: current().w, height: current().h });
           else invertSelection();
         }
         if (k === 'g' && !e.altKey) {
@@ -2138,7 +2664,9 @@ export default function Home() {
       }
       if (e.key === '[' || e.key === ']') {
         e.preventDefault();
-        setSize((value) => Math.max(2, Math.min(100, value + (e.key === ']' ? 2 : -2))));
+        setSize((value) =>
+          Math.max(2, Math.min(100, value + (e.key === ']' ? 2 : -2))),
+        );
         return;
       }
       if (e.altKey) return;
@@ -2148,16 +2676,23 @@ export default function Home() {
         e.preventDefault();
         const index = group.indexOf(tool);
         const direction = e.shiftKey ? -1 : 1;
-        const next = group[(index < 0 ? 0 : index + direction + group.length) % group.length];
+        const next =
+          group[
+            (index < 0 ? 0 : index + direction + group.length) % group.length
+          ];
         setTool(next);
-        setNotice(`${TOOLS.find((item) => item.id === next)?.label || next} tool selected`);
+        setNotice(
+          `${TOOLS.find((item) => item.id === next)?.label || next} tool selected`,
+        );
         return;
       }
       const alias = TOOL_ALIASES[lower];
       if (alias) {
         e.preventDefault();
         setTool(alias);
-        setNotice(`${TOOLS.find((item) => item.id === alias)?.label || alias} tool selected`);
+        setNotice(
+          `${TOOLS.find((item) => item.id === alias)?.label || alias} tool selected`,
+        );
         return;
       }
       if (e.key === '0') {
@@ -2215,6 +2750,8 @@ export default function Home() {
     else if (command === 'invert-selection') invertSelection();
     else if (command === 'mask-selection') void createMaskFromSelection();
     else if (command === 'reset') resetAdjustments();
+    else if (command === 'levels')
+      setNotice('Levels controls are available in Adjust selected layer');
     else if (command === 'crop') {
       setTool('crop');
       setNotice('Drag on the image to crop');
@@ -2257,15 +2794,28 @@ export default function Home() {
       case 'delete-layer':
         return !layer || locked || frame.layers.length <= 1;
       case 'group-layer':
-        return !layer || Boolean(layer.groupId) || (frame.groups || []).length >= 32;
+        return (
+          !layer || Boolean(layer.groupId) || (frame.groups || []).length >= 32
+        );
       case 'ungroup-layer':
-        return !layer?.groupId || Boolean(frame.groups?.find((group) => group.id === layer.groupId)?.locked);
+        return (
+          !layer?.groupId ||
+          Boolean(
+            frame.groups?.find((group) => group.id === layer.groupId)?.locked,
+          )
+        );
       case 'mask-selection':
         return !layer || layer.kind !== 'raster' || locked || !frame.selection;
       case 'hide-layer':
         return !layer || Boolean(groupForLayer(frame, layer)?.locked);
       case 'merge-visible':
-        return !frame.layers.some((item) => item.visible && (!item.groupId || frame.groups?.find((group) => group.id === item.groupId)?.visible !== false));
+        return !frame.layers.some(
+          (item) =>
+            item.visible &&
+            (!item.groupId ||
+              frame.groups?.find((group) => group.id === item.groupId)
+                ?.visible !== false),
+        );
       default:
         return false;
     }
@@ -2314,7 +2864,19 @@ export default function Home() {
           apply={resizeImage}
         />
       )}
-      {exporting && <ExportDialog {...exporting} format={exportFormat} quality={exportQuality} setFormat={setExportFormat} setQuality={setExportQuality} close={() => setExporting(null)} downloaded={setNotice} />}
+      {exporting && (
+        <ExportDialog
+          {...exporting}
+          format={exportFormat}
+          quality={exportQuality}
+          targetBytes={exportTargetBytes}
+          setFormat={setExportFormat}
+          setQuality={setExportQuality}
+          setTargetBytes={setExportTargetBytes}
+          close={() => setExporting(null)}
+          downloaded={setNotice}
+        />
+      )}
       <input
         ref={file}
         data-testid="file-input"
@@ -2346,23 +2908,29 @@ export default function Home() {
                   role="menu"
                   aria-label={`${menuName} menu`}
                 >
-                  {MENU_DEFS[menuName].map((item, index) => item.separator ? (
-                    <hr key={`separator-${menuName}-${index}`} />
-                  ) : (
-                    <button
-                      key={`${item.label}-${index}`}
-                      role="menuitem"
-                      disabled={menuItemDisabled(item)}
-                      title={item.disabled ? 'Planned for a later roadmap stage' : undefined}
-                      onClick={() => {
-                        setActiveMenu(null);
-                        runCommand(item.command);
-                      }}
-                    >
-                      <span>{item.label}</span>
-                      {item.shortcut && <kbd>{item.shortcut}</kbd>}
-                    </button>
-                  ))}
+                  {MENU_DEFS[menuName].map((item, index) =>
+                    item.separator ? (
+                      <hr key={`separator-${menuName}-${index}`} />
+                    ) : (
+                      <button
+                        key={`${item.label}-${index}`}
+                        role="menuitem"
+                        disabled={menuItemDisabled(item)}
+                        title={
+                          item.disabled
+                            ? 'Planned for a later roadmap stage'
+                            : undefined
+                        }
+                        onClick={() => {
+                          setActiveMenu(null);
+                          runCommand(item.command);
+                        }}
+                      >
+                        <span>{item.label}</span>
+                        {item.shortcut && <kbd>{item.shortcut}</kbd>}
+                      </button>
+                    ),
+                  )}
                 </div>
               )}
             </div>
@@ -2573,8 +3141,36 @@ export default function Home() {
               set={setBlur}
               suffix="px"
             />
+            <div className="adjustment-subtitle">Levels (nondestructive)</div>
+            <Slider
+              label="Levels black point"
+              value={levelsBlack}
+              min={0}
+              max={254}
+              set={(value) => setLevelsBlack(Math.min(value, levelsWhite - 1))}
+              suffix=""
+            />
+            <Slider
+              label="Levels white point"
+              value={levelsWhite}
+              min={1}
+              max={255}
+              set={(value) => setLevelsWhite(Math.max(value, levelsBlack + 1))}
+              suffix=""
+            />
+            <Slider
+              label="Levels gamma"
+              value={levelsGamma}
+              min={0.1}
+              max={3}
+              step={0.1}
+              set={setLevelsGamma}
+              suffix=""
+            />
             <p className="adjust-note">
-              Adjustments stay editable on the selected layer.
+              Adjustments stay editable on the selected layer. Levels remaps
+              input black, white and midtone gamma without changing source
+              pixels.
             </p>
           </section>
           <section className="panel">
@@ -2603,7 +3199,16 @@ export default function Home() {
               </button>
             </div>
           </section>
-          {(tool === 'brush' || tool === 'pencil' || tool === 'color-replace' || tool === 'eraser' || tool === 'clone' || tool === 'heal' || tool === 'rectangle' || tool === 'ellipse') && (
+          {(tool === 'brush' ||
+            tool === 'pencil' ||
+            tool === 'color-replace' ||
+            tool === 'eraser' ||
+            tool === 'clone' ||
+            tool === 'heal' ||
+            tool === 'rectangle' ||
+            tool === 'ellipse' ||
+            tool === 'line' ||
+            tool === 'polygon') && (
             <section className="panel">
               <Title icon={Brush} text="Tool options" />
               <Slider
@@ -2614,7 +3219,12 @@ export default function Home() {
                 set={setSize}
                 suffix="px"
               />
-              {(tool === 'brush' || tool === 'pencil' || tool === 'color-replace' || tool === 'eraser' || tool === 'clone' || tool === 'heal') && (
+              {(tool === 'brush' ||
+                tool === 'pencil' ||
+                tool === 'color-replace' ||
+                tool === 'eraser' ||
+                tool === 'clone' ||
+                tool === 'heal') && (
                 <>
                   {tool !== 'pencil' && tool !== 'color-replace' && (
                     <Slider
@@ -2777,6 +3387,7 @@ function Slider({
   max,
   set,
   suffix = '%',
+  step = 1,
 }: {
   label: string;
   value: number;
@@ -2784,6 +3395,7 @@ function Slider({
   max: number;
   set: (n: number) => void;
   suffix?: string;
+  step?: number;
 }) {
   return (
     <label className="slider">
@@ -2799,6 +3411,7 @@ function Slider({
         type="range"
         min={min}
         max={max}
+        step={step}
         value={value}
         onChange={(e) => set(+e.target.value)}
       />
