@@ -28,6 +28,12 @@ import {
   validCurves,
   type Curves,
 } from './curves.ts';
+import {
+  effectiveImageSize,
+  validImageSizeMetadata,
+  type ImageSizeMetadata,
+  type ResampleMethod,
+} from './imageSize.ts';
 
 /** Version 2 stores immutable raster assets once; history contains editable layer metadata. */
 export const BLENDS = [
@@ -196,6 +202,8 @@ export type Selection = {
 export type Frame = {
   w: number;
   h: number;
+  /** Optional print-size metadata; omitted in legacy drafts and defaults to 72 ppi. */
+  imageSize?: ImageSizeMetadata;
   layers: Layer[];
   active: string;
   /** Optional for backwards compatibility with v2 drafts created before folders. */
@@ -347,6 +355,7 @@ export const transformFrame = (
   ...frame,
   w,
   h,
+  imageSize: effectiveImageSize(frame.imageSize),
   selection: undefined,
   previousSelection: undefined,
   // Geometric transforms change the canvas bounds. Named snapshots are
@@ -371,6 +380,7 @@ export async function transformFrameWithMasks(
   assets: Assets,
   w = frame.w,
   h = frame.h,
+  resampleMethod: ResampleMethod = 'automatic',
 ): Promise<Frame> {
   const next = transformFrame(frame, matrix, w, h);
   const layers = await Promise.all(
@@ -381,6 +391,7 @@ export async function transformFrameWithMasks(
       const image = await decodeAsset(mask),
         transformed = surface(w, h),
         context = transformed.getContext('2d')!;
+      context.imageSmoothingEnabled = resampleMethod !== 'nearest';
       context.setTransform(...matrix);
       context.drawImage(image, 0, 0);
       context.setTransform(1, 0, 0, 1, 0, 0);
@@ -400,6 +411,7 @@ export async function transformFrameWithMasks(
           ),
           transformed = surface(w, h),
           context = transformed.getContext('2d')!;
+        context.imageSmoothingEnabled = resampleMethod !== 'nearest';
         context.setTransform(...matrix);
         context.drawImage(original, 0, 0);
         return {
@@ -695,6 +707,8 @@ export function validateFrame(
     !value.layers.length ||
     value.layers.length > 32
   )
+    return fail();
+  if (value.imageSize !== undefined && !validImageSizeMetadata(value.imageSize))
     return fail();
   const ids = new Set<string>();
   if (value.groups !== undefined && !Array.isArray(value.groups)) return fail();

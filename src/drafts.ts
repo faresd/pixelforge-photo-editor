@@ -19,6 +19,7 @@ import {
   type Frame,
   type Adjustments,
 } from './document';
+import { effectiveImageSize } from './imageSize.ts';
 export type Tool =
   | 'move'
   | 'hand'
@@ -186,6 +187,7 @@ export function validateDraft(input: unknown): Draft {
       return {
         w: shot.w,
         h: shot.h,
+        imageSize: { resolution: 72, resolutionUnit: 'ppi' as const },
         active: id,
         layers: [
           {
@@ -227,6 +229,7 @@ export function validateDraft(input: unknown): Draft {
     throw new Error('Invalid project assets');
   const history = value.history.map((frame) => ({
     ...frame,
+    imageSize: effectiveImageSize(frame.imageSize),
     layers: frame.layers.map((layer) =>
       effectiveTextLayer(
         {

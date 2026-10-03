@@ -107,6 +107,7 @@ import {
   type SavedSelectionBook,
 } from '../src/savedSelections';
 import { BrandLockup } from '../src/Brand';
+import { effectiveImageSize, planImageSize, type ImageSizeRequest } from '../src/imageSize';
 type MenuName =
   | 'File'
   | 'Edit'
@@ -597,6 +598,7 @@ export default function Home() {
     [resizing, setResizing] = useState<{
       width: number;
       height: number;
+      imageSize?: Frame['imageSize'];
     } | null>(null);
   const [selectionTransforming, setSelectionTransforming] = useState(false);
   const [quickMasking, setQuickMasking] = useState(false),
@@ -1639,22 +1641,37 @@ export default function Home() {
       if (projectFile.current) projectFile.current.value = '';
     }
   };
-  const resizeImage = async (w: number, h: number) => {
+  const resizeImage = async (request: ImageSizeRequest) => {
     if (quickMasking) {
       setNotice('Exit Quick Mask mode before resizing the document');
       return;
     }
     const f = current();
+    let plan;
+    try {
+      plan = planImageSize(f.w, f.h, f.imageSize, request);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Image Size values are invalid');
+      return;
+    }
+    if (!plan.resample) {
+      if (!commit({ ...f, imageSize: plan.imageSize })) return;
+      setResizing(null);
+      setNotice('Print dimensions updated; pixel dimensions remain unchanged');
+      return;
+    }
     const next = await transformFrameWithMasks(
       f,
-      [w / f.w, 0, 0, h / f.h, 0, 0],
+      [plan.width / f.w, 0, 0, plan.height / f.h, 0, 0],
       assets.current,
-      w,
-      h,
+      plan.width,
+      plan.height,
+      plan.method,
     );
+    next.imageSize = plan.imageSize;
     if (!commit(next)) return;
     setResizing(null);
-    setNotice('Image resized; layers remain editable');
+    setNotice(`Image resized to ${plan.width} × ${plan.height}; layers remain editable`);
   };
   const discard = async () => {
     if (
@@ -3374,7 +3391,7 @@ export default function Home() {
       return;
     }
     if (command === 'resize')
-      setResizing({ width: current().w, height: current().h });
+      setResizing({ width: current().w, height: current().h, imageSize: effectiveImageSize(current().imageSize) });
     else if (command === 'project-save') exportProject();
     else if (command === 'batch-export')
       setBatchExporting({
@@ -3582,6 +3599,7 @@ export default function Home() {
         <ResizeDialog
           width={resizing.width}
           height={resizing.height}
+          imageSize={resizing.imageSize}
           close={() => setResizing(null)}
           apply={resizeImage}
         />
