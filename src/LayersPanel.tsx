@@ -23,6 +23,8 @@ type Props = {
   rasterize: () => void;
   importImage: () => void;
   createMask: () => void;
+  invertMask: () => void;
+  toggleMask: () => void;
   clearMask: () => void;
   clearSelection: () => void;
   invertSelection: () => void;
@@ -44,6 +46,8 @@ export default function LayersPanel({
   rasterize,
   importImage,
   createMask,
+  invertMask,
+  toggleMask,
   clearMask,
   clearSelection,
   invertSelection,
@@ -190,15 +194,47 @@ export default function LayersPanel({
         </label>
         <button
           onClick={createMask}
-          disabled={layer.kind !== 'raster' || !frame.selection}
+          disabled={
+            layer.kind !== 'raster' ||
+            !frame.selection ||
+            layerLocked ||
+            !layer.visible
+          }
         >
           Mask from selection
         </button>
         <button
           onClick={clearMask}
-          disabled={layer.kind !== 'raster' || !layer.mask}
+          disabled={
+            layer.kind !== 'raster' ||
+            !layer.mask ||
+            layerLocked ||
+            !layer.visible
+          }
         >
           Remove mask
+        </button>
+        <button
+          onClick={invertMask}
+          disabled={
+            layer.kind !== 'raster' ||
+            !layer.mask ||
+            layerLocked ||
+            !layer.visible
+          }
+        >
+          {layer.maskInverted ? 'Uninvert mask' : 'Invert mask'}
+        </button>
+        <button
+          onClick={toggleMask}
+          disabled={
+            layer.kind !== 'raster' ||
+            !layer.mask ||
+            layerLocked ||
+            !layer.visible
+          }
+        >
+          {layer.maskEnabled === false ? 'Enable mask' : 'Disable mask'}
         </button>
         <button onClick={invertSelection} disabled={!frame.selection}>
           Invert selection

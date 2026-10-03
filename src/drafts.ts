@@ -4,7 +4,7 @@ import {
   validExportQuality,
   validExportTargetBytes,
   type ExportFormat,
-} from './export';
+} from './export.ts';
 import {
   validAsset,
   validateFrame,
@@ -18,7 +18,7 @@ import {
   type Assets,
   type Frame,
   type Adjustments,
-} from './document';
+} from './document.ts';
 import { effectiveImageSize } from './imageSize.ts';
 import {
   effectiveBrushPressureSettings,
@@ -107,10 +107,39 @@ export type Draft = {
   settings: Settings;
   migrated?: true;
 };
+export const CURRENT_DRAFT_VERSION = 2 as const;
+
+/**
+ * Cloud links are persisted in local drafts, but their values come from a
+ * network response. Keep them opaque while rejecting control characters and
+ * unbounded strings before they reach the IndexedDB record or a request body.
+ */
+export function validCloudLink(value: unknown): value is CloudLink {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as Partial<CloudLink>;
+  const safe = (entry: unknown) =>
+    typeof entry === 'string' &&
+    entry.length >= 1 &&
+    entry.length <= 160 &&
+    !Array.from(entry).some((character) => {
+      const code = character.charCodeAt(0);
+      return code < 32 || code === 127;
+    });
+  return [candidate.id, candidate.generation, candidate.owner].every(safe);
+}
+
+const validRevision = (value: unknown): value is number =>
+  Number.isInteger(value) &&
+  Number(value) >= 0 &&
+  Number(value) <= Number.MAX_SAFE_INTEGER;
+
+const record = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === 'object' && !Array.isArray(value);
 let database: Promise<IDBDatabase> | undefined;
-function validSettings(settings: Settings) {
+function validSettings(settings: unknown): settings is Settings {
+  if (!record(settings)) return false;
+  const candidate = settings as Partial<Settings>;
   if (
-    !settings ||
     ![
       'move',
       'hand',
@@ -145,32 +174,34 @@ function validSettings(settings: Settings) {
       'lasso',
       'polygonal-lasso',
       'magic-wand',
-    ].includes(settings.tool) ||
-    typeof settings.text !== 'string' ||
-    settings.text.length > 10000 ||
-    (settings.exportFormat !== undefined &&
-      !EXPORT_FORMATS.includes(settings.exportFormat)) ||
-    (settings.exportQuality !== undefined &&
-      !validExportQuality(settings.exportQuality)) ||
-    (settings.exportTargetBytes !== undefined &&
-      !validExportTargetBytes(settings.exportTargetBytes)) ||
-    !/^#[a-f\d]{6}$/i.test(settings.color) ||
-    (settings.backgroundColor !== undefined &&
-      !/^#[a-f\d]{6}$/i.test(settings.backgroundColor)) ||
-    !validBrushPressureSettings(settings)
+    ].includes(candidate.tool as Tool) ||
+    typeof candidate.text !== 'string' ||
+    candidate.text.length > 10000 ||
+    (candidate.exportFormat !== undefined &&
+      !EXPORT_FORMATS.includes(candidate.exportFormat)) ||
+    (candidate.exportQuality !== undefined &&
+      !validExportQuality(candidate.exportQuality)) ||
+    (candidate.exportTargetBytes !== undefined &&
+      !validExportTargetBytes(candidate.exportTargetBytes)) ||
+    typeof candidate.color !== 'string' ||
+    !/^#[a-f\d]{6}$/i.test(candidate.color) ||
+    (candidate.backgroundColor !== undefined &&
+      (typeof candidate.backgroundColor !== 'string' ||
+        !/^#[a-f\d]{6}$/i.test(candidate.backgroundColor))) ||
+    !validBrushPressureSettings(candidate)
   )
     return false;
-  const ranges = [
-    [settings.zoom, 20, 140],
-    [settings.size, 2, 100],
-    [settings.fontSize, 16, 160],
+  const ranges: [number, number, number][] = [
+    [candidate.zoom as number, 20, 140],
+    [candidate.size as number, 2, 100],
+    [candidate.fontSize as number, 16, 160],
   ];
-  const brushRanges = [
-    [settings.brushOpacity ?? 100, 1, 100],
-    [settings.hardness ?? 100, 0, 100],
-    [settings.colorTolerance ?? 24, 0, 255],
-    [settings.tonalExposure ?? 50, 1, 100],
-    [settings.spongeVibrance ?? 50, 1, 100],
+  const brushRanges: [number, number, number][] = [
+    [candidate.brushOpacity ?? 100, 1, 100] as [number, number, number],
+    [candidate.hardness ?? 100, 0, 100] as [number, number, number],
+    [candidate.colorTolerance ?? 24, 0, 255] as [number, number, number],
+    [candidate.tonalExposure ?? 50, 1, 100] as [number, number, number],
+    [candidate.spongeVibrance ?? 50, 1, 100] as [number, number, number],
   ];
   return (
     ranges.every(
@@ -181,41 +212,27 @@ function validSettings(settings: Settings) {
       ([value, min, max]) =>
         Number.isFinite(value) && value >= min && value <= max,
     ) &&
-    (settings.pressureSize === undefined || typeof settings.pressureSize === 'boolean') &&
-    (settings.pressureOpacity === undefined || typeof settings.pressureOpacity === 'boolean') &&
-    (settings.tonalRange === undefined || ['shadows', 'midtones', 'highlights'].includes(settings.tonalRange)) &&
-    (settings.spongeMode === undefined || ['saturate', 'desaturate'].includes(settings.spongeMode)) &&
-    validAdjustments(settings)
+    (candidate.pressureSize === undefined ||
+      typeof candidate.pressureSize === 'boolean') &&
+    (candidate.pressureOpacity === undefined ||
+      typeof candidate.pressureOpacity === 'boolean') &&
+    (candidate.tonalRange === undefined ||
+      ['shadows', 'midtones', 'highlights'].includes(candidate.tonalRange)) &&
+    (candidate.spongeMode === undefined ||
+      ['saturate', 'desaturate'].includes(candidate.spongeMode)) &&
+    validAdjustments(candidate as Partial<Adjustments>)
   );
 }
-export function validateDraft(input: unknown): Draft {
-  if (!input || typeof input !== 'object')
-    throw new Error('Invalid project file');
-  const value = input as Draft;
-  // v2 drafts created before Levels shipped omit its three fields. Normalize
-  // them at the persistence boundary so the UI and renderer always receive a
-  // complete adjustment record while keeping old bookmarks importable.
-  const settings =
-    value.settings && typeof value.settings === 'object'
-      ? {
-          ...value.settings,
-          ...effectiveAdjustments(value.settings),
-          ...effectiveBrushPressureSettings(value.settings as BrushPressureSettings),
-        }
-      : value.settings;
-  if (
-    !Array.isArray(value.history) ||
-    !value.history.length ||
-    value.history.length > 24 ||
-    !Number.isInteger(value.index) ||
-    value.index < 0 ||
-    value.index >= value.history.length ||
-    !validSettings(settings) ||
-    typeof value.name !== 'string' ||
-    value.name.length > 160
-  )
-    throw new Error('Saved document is not supported');
-  if ((input as { version: number }).version === 1) {
+type DraftCandidate = Omit<Draft, 'version' | 'settings' | 'history'> & {
+  version: number;
+  settings: unknown;
+  history: unknown;
+};
+type DraftMigration = (value: DraftCandidate, settings: Settings) => Draft;
+
+/** Versioned migration registry; unknown document versions fail closed. */
+export const DRAFT_MIGRATIONS: Readonly<Record<number, DraftMigration>> = {
+  1: (value, settings) => {
     const assets: Assets = {},
       id = crypto.randomUUID();
     const history = (value.history as unknown as Shot[]).map((shot) => {
@@ -238,11 +255,11 @@ export function validateDraft(input: unknown): Draft {
             asset,
             adjustments: {
               ...neutral,
-              brightness: value.settings.brightness,
-              contrast: value.settings.contrast,
-              saturation: value.settings.saturation,
-              blur: value.settings.blur,
-              filter: value.settings.filter,
+              brightness: settings.brightness,
+              contrast: settings.contrast,
+              saturation: settings.saturation,
+              blur: settings.blur,
+              filter: settings.filter,
             },
           },
         ],
@@ -250,15 +267,56 @@ export function validateDraft(input: unknown): Draft {
     });
     return {
       ...value,
-      version: 2,
+      version: CURRENT_DRAFT_VERSION,
       assets,
       history,
-      settings: { ...value.settings, ...neutral, ...effectiveBrushPressureSettings(value.settings) },
+      settings: {
+        ...settings,
+        ...neutral,
+        ...effectiveBrushPressureSettings(settings as BrushPressureSettings),
+      },
       migrated: true,
-    };
-  }
+    } as Draft;
+  },
+};
+export function validateDraft(input: unknown): Draft {
+  if (!record(input)) throw new Error('Invalid project file');
+  const value = input as DraftCandidate;
+  if (value.version !== 1 && value.version !== CURRENT_DRAFT_VERSION)
+    throw new Error('Unsupported project version');
+  // v2 drafts created before Levels shipped omit its three fields. Normalize
+  // them at the persistence boundary so the UI and renderer always receive a
+  // complete adjustment record while keeping old bookmarks importable.
+  const settings =
+    value.settings && typeof value.settings === 'object'
+      ? {
+          ...value.settings,
+          ...effectiveAdjustments(value.settings),
+          ...effectiveBrushPressureSettings(
+            value.settings as BrushPressureSettings,
+          ),
+        }
+      : value.settings;
   if (
-    value.version !== 2 ||
+    !Array.isArray(value.history) ||
+    !value.history.length ||
+    value.history.length > 24 ||
+    !Number.isInteger(value.index) ||
+    value.index < 0 ||
+    value.index >= value.history.length ||
+    !validSettings(settings) ||
+    typeof value.name !== 'string' ||
+    value.name.length > 160
+  )
+    throw new Error('Saved document is not supported');
+  if (value.localRevision !== undefined && !validRevision(value.localRevision))
+    throw new Error('Invalid project revision');
+  if (value.cloud !== undefined && !validCloudLink(value.cloud))
+    throw new Error('Invalid cloud project link');
+  if (value.version !== CURRENT_DRAFT_VERSION)
+    return DRAFT_MIGRATIONS[value.version](value, settings as Settings);
+  if (
+    value.version !== CURRENT_DRAFT_VERSION ||
     !value.assets ||
     typeof value.assets !== 'object' ||
     Array.isArray(value.assets) ||
@@ -268,7 +326,7 @@ export function validateDraft(input: unknown): Draft {
     )
   )
     throw new Error('Invalid project assets');
-  const history = value.history.map((frame) => ({
+  const history = (value.history as Frame[]).map((frame) => ({
     ...frame,
     imageSize: effectiveImageSize(frame.imageSize),
     layers: frame.layers.map((layer) =>
@@ -292,10 +350,16 @@ export function validateDraft(input: unknown): Draft {
     throw new Error('Project assets exceed 64 MB');
   return {
     ...value,
+    version: CURRENT_DRAFT_VERSION,
     history,
     settings: settings as Settings,
     assets: referencedAssets(history, value.assets),
   };
+}
+
+/** Validate and normalize a value immediately before writing it to storage. */
+export function prepareDraftForStorage(value: unknown): Draft {
+  return validateDraft(value);
 }
 function openDatabase() {
   database ??= new Promise<IDBDatabase>((resolve, reject) => {
@@ -344,6 +408,9 @@ export const LOCAL_CONFLICT =
   'This draft changed in another tab. Save a local copy to keep your edits.';
 
 export async function discardDraft(id: string, expectedRevision: number) {
+  if (!validId(id)) throw new Error('Invalid draft ID');
+  if (!validRevision(expectedRevision))
+    throw new Error('Invalid draft revision');
   const db = await openDatabase();
   await new Promise<void>((resolve, reject) => {
     const transaction = db.transaction('drafts', 'readwrite');
@@ -372,6 +439,7 @@ export async function discardDraft(id: string, expectedRevision: number) {
 }
 
 export async function readDraft(id: string): Promise<Draft | undefined> {
+  if (!validId(id)) throw new Error('Invalid draft ID');
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const request = db.transaction('drafts').objectStore('drafts').get(id);
@@ -396,6 +464,10 @@ export async function saveDraft(
   value: Draft,
   expectedRevision = 0,
 ): Promise<number> {
+  if (!validId(id)) throw new Error('Invalid draft ID');
+  if (!validRevision(expectedRevision))
+    throw new Error('Invalid draft revision');
+  const safeValue = prepareDraftForStorage(value);
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction('drafts', 'readwrite');
@@ -409,7 +481,7 @@ export async function saveDraft(
         transaction.abort();
         return;
       }
-      store.put({ ...value, localRevision: revision }, id);
+      store.put({ ...safeValue, localRevision: revision }, id);
     };
     transaction.oncomplete = () => resolve(revision);
     transaction.onabort = () =>
