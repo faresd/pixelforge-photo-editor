@@ -29,6 +29,14 @@ import {
   type Curves,
 } from './curves.ts';
 import {
+  applyAutoAdjustmentsPixels,
+  effectiveAutoAdjustments,
+  isNeutralAuto,
+  neutralAuto,
+  validAutoAdjustments,
+  type AutoAdjustments,
+} from './auto.ts';
+import {
   effectiveImageSize,
   validImageSizeMetadata,
   type ImageSizeMetadata,
@@ -70,6 +78,8 @@ export type Adjustments = {
   sharpenNoise: SharpenNoise;
   /** Editable composite and per-channel curves, retained as control points. */
   curves: Curves;
+  /** Nondestructive deterministic one-click tonal corrections. */
+  auto: AutoAdjustments;
 };
 export const neutral: Adjustments = {
   brightness: 100,
@@ -89,6 +99,7 @@ export const neutral: Adjustments = {
     green: neutralCurves.green,
     blue: neutralCurves.blue,
   },
+  auto: { ...neutralAuto },
 };
 export const FILTER_VALUES = [
   'none',
@@ -476,6 +487,7 @@ export function effectiveAdjustments(value: Partial<Adjustments>): Adjustments {
     colorBalance: effectiveColorBalance(value.colorBalance),
     sharpenNoise: effectiveSharpenNoise(value.sharpenNoise),
     curves: effectiveCurves(value.curves),
+    auto: effectiveAutoAdjustments(value.auto),
   };
 }
 
@@ -570,6 +582,21 @@ export function applyCurves(
   return canvas;
 }
 
+/** Apply deterministic one-click tonal corrections to a rendered surface. */
+export function applyAutoAdjustments(
+  canvas: HTMLCanvasElement,
+  adjustments: Partial<Adjustments>,
+): HTMLCanvasElement {
+  const value = effectiveAdjustments(adjustments).auto;
+  if (isNeutralAuto(value)) return canvas;
+  const context = canvas.getContext('2d')!,
+    image = context.getImageData(0, 0, canvas.width, canvas.height);
+  const result = applyAutoAdjustmentsPixels(image.data, value);
+  image.data.set(result.data);
+  context.putImageData(image, 0, 0);
+  return canvas;
+}
+
 /** Measure one text line including custom tracking in canvas pixels. */
 export function trackedTextWidth(
   context: CanvasRenderingContext2D,
@@ -648,7 +675,8 @@ export function validAdjustments(v: unknown): v is Adjustments {
       Number(v.levelsBlack ?? neutral.levelsBlack) &&
     validColorBalance(v.colorBalance ?? neutral.colorBalance) &&
     validSharpenNoise(v.sharpenNoise ?? neutral.sharpenNoise) &&
-    validCurves(v.curves ?? neutral.curves)
+    validCurves(v.curves ?? neutral.curves) &&
+    validAutoAdjustments(v.auto ?? neutral.auto)
   );
 }
 export function validAsset(value: unknown): value is Asset {
@@ -1170,7 +1198,8 @@ export async function renderFrame(
         !isNeutralSharpenNoise(
           effectiveAdjustments(layer.adjustments).sharpenNoise,
         ) ||
-        !isNeutralCurves(effectiveAdjustments(layer.adjustments).curves))
+        !isNeutralCurves(effectiveAdjustments(layer.adjustments).curves) ||
+        !isNeutralAuto(effectiveAdjustments(layer.adjustments).auto))
     ) {
       // Keep text and shape layers editable: render their existing transform
       // and CSS corrections into an isolated surface, then rotate HSL colour.
@@ -1186,6 +1215,7 @@ export async function renderFrame(
               adjustments: {
                 ...effectiveAdjustments(layer.adjustments),
                 hue: 0,
+                auto: { ...neutralAuto },
               },
             },
           ],
@@ -1198,6 +1228,7 @@ export async function renderFrame(
       applyColorBalance(coloured, layer.adjustments);
       applySharpenNoise(coloured, layer.adjustments);
       applyCurves(coloured, layer.adjustments);
+      applyAutoAdjustments(coloured, layer.adjustments);
       context.save();
       context.globalAlpha = layer.opacity * groupOpacity;
       context.globalCompositeOperation = layer.blend;
@@ -1220,6 +1251,7 @@ export async function renderFrame(
       applyColorBalance(masked, layer.adjustments);
       applySharpenNoise(masked, layer.adjustments);
       applyCurves(masked, layer.adjustments);
+      applyAutoAdjustments(masked, layer.adjustments);
       const maskImage = await decodeAsset(assets[layer.mask]);
       maskContext.save();
       maskContext.globalCompositeOperation = 'destination-in';
@@ -1249,7 +1281,8 @@ export async function renderFrame(
         !isNeutralSharpenNoise(
           effectiveAdjustments(layer.adjustments).sharpenNoise,
         ) ||
-        !isNeutralCurves(effectiveAdjustments(layer.adjustments).curves))
+        !isNeutralCurves(effectiveAdjustments(layer.adjustments).curves) ||
+        !isNeutralAuto(effectiveAdjustments(layer.adjustments).auto))
     ) {
       const leveled = surface(frame.w, frame.h),
         leveledContext = leveled.getContext('2d')!;
@@ -1265,6 +1298,7 @@ export async function renderFrame(
       applyColorBalance(leveled, layer.adjustments);
       applySharpenNoise(leveled, layer.adjustments);
       applyCurves(leveled, layer.adjustments);
+      applyAutoAdjustments(leveled, layer.adjustments);
       context.save();
       context.globalAlpha = layer.opacity * groupOpacity;
       context.globalCompositeOperation = layer.blend;

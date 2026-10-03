@@ -5,7 +5,9 @@ type Project = {
   history: Array<{
     layers: Array<{
       asset?: string;
-      adjustments: { auto?: { tone?: boolean; contrast?: boolean; color?: boolean } };
+      adjustments: {
+        auto?: { tone?: boolean; contrast?: boolean; color?: boolean };
+      };
     }>;
   }>;
   index: number;
@@ -60,11 +62,15 @@ async function importPixels(page: Page, pixels: number[][]) {
 }
 
 async function pixel(page: Page, x: number) {
-  return page.getByTestId('editor-canvas').evaluate(
-    (canvas: HTMLCanvasElement, xCoordinate) =>
-      Array.from(canvas.getContext('2d')!.getImageData(xCoordinate, 0, 1, 1).data),
-    x,
-  );
+  return page
+    .getByTestId('editor-canvas')
+    .evaluate(
+      (canvas: HTMLCanvasElement, xCoordinate) =>
+        Array.from(
+          canvas.getContext('2d')!.getImageData(xCoordinate, 0, 1, 1).data,
+        ),
+      x,
+    );
 }
 
 const saved = (page: Page) =>
@@ -90,7 +96,10 @@ for (const mode of ['tone', 'contrast', 'color'] as const) {
       sourceLayer = beforeFrame.layers.at(-1)!,
       sourceAsset = sourceLayer.asset,
       beforePixel = await pixel(page, 1),
-      command = page.getByRole('menuitem', { name: mode === 'tone' ? /^Auto Tone/ : title, exact: mode !== 'tone' });
+      command = page.getByRole('menuitem', {
+        name: mode === 'tone' ? /^Auto Tone/ : title,
+        exact: mode !== 'tone',
+      });
 
     await page.getByRole('button', { name: 'Image', exact: true }).click();
     await expect(command).toBeEnabled();
@@ -111,13 +120,16 @@ for (const mode of ['tone', 'contrast', 'color'] as const) {
       contrast: mode === 'contrast',
       color: mode === 'color',
     });
+    expect(adjustedLayer.asset).toBe(sourceAsset);
     expect(adjusted.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
 
     await page.getByRole('button', { name: 'Edit', exact: true }).click();
     await page.getByRole('menuitem', { name: /^Undo/ }).click();
     await expect.poll(() => pixel(page, 1)).toEqual(beforePixel);
     const undone = await project(page);
-    expect(undone.history[undone.index].layers.at(-1)!.adjustments.auto).toEqual({
+    expect(
+      undone.history[undone.index].layers.at(-1)!.adjustments.auto,
+    ).toEqual({
       tone: false,
       contrast: false,
       color: false,
@@ -134,12 +146,17 @@ for (const mode of ['tone', 'contrast', 'color'] as const) {
     );
     await expect.poll(() => pixel(page, 1)).not.toEqual(beforePixel);
     const reloaded = await project(page);
-    expect(reloaded.history[reloaded.index].layers.at(-1)!.adjustments.auto).toEqual({
+    expect(
+      reloaded.history[reloaded.index].layers.at(-1)!.adjustments.auto,
+    ).toEqual({
       tone: mode === 'tone',
       contrast: mode === 'contrast',
       color: mode === 'color',
     });
     expect(reloaded.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
+    expect(reloaded.history[reloaded.index].layers.at(-1)!.asset).toBe(
+      sourceAsset,
+    );
   });
 }
 
@@ -150,15 +167,46 @@ test('Auto Tone follows its Photoshop shortcut and disables safely for locked la
   const before = await project(page);
   await page.getByLabel('Lock layer', { exact: true }).check();
   await page.getByRole('button', { name: 'Image', exact: true }).click();
-  await expect(page.getByRole('menuitem', { name: /^Auto Tone/ })).toBeDisabled();
+  await expect(
+    page.getByRole('menuitem', { name: /^Auto Tone/ }),
+  ).toBeDisabled();
   await page.keyboard.press('Escape');
   await page.keyboard.press('Control+Shift+L');
-  await expect(page.getByText('Unlock and show this layer before applying an automatic correction', { exact: true })).toBeVisible();
+  await expect(
+    page.getByText(
+      'Unlock and show this layer before applying an automatic correction',
+      { exact: true },
+    ),
+  ).toBeVisible();
   const after = await project(page);
   expect(after.history.length).toBe(before.history.length + 1);
+
+  await page.getByLabel('Lock layer', { exact: true }).uncheck();
+  await page.getByLabel('Visible', { exact: true }).uncheck();
+  await page.getByRole('button', { name: 'Image', exact: true }).click();
+  await expect(
+    page.getByRole('menuitem', { name: 'Auto Contrast', exact: true }),
+  ).toBeDisabled();
+  await page.keyboard.press('Escape');
+
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page
+    .getByRole('menuitem', { name: 'New transparent document', exact: true })
+    .click();
+  await page.getByRole('button', { name: 'Text tool', exact: true }).click();
+  await page
+    .getByTestId('editor-canvas')
+    .click({ position: { x: 120, y: 120 } });
+  await page.getByLabel('Edit layer text', { exact: true }).fill('Pixel');
+  await page.getByRole('button', { name: 'Image', exact: true }).click();
+  await expect(
+    page.getByRole('menuitem', { name: 'Auto Color', exact: true }),
+  ).toBeDisabled();
 });
 
-test('Auto Tone is an explicit no-op on a flat visible image', async ({ page }) => {
+test('Auto Tone is an explicit no-op on a flat visible image', async ({
+  page,
+}) => {
   await importPixels(page, [
     [90, 110, 130, 255],
     [90, 110, 130, 255],
@@ -168,7 +216,9 @@ test('Auto Tone is an explicit no-op on a flat visible image', async ({ page }) 
   const before = await project(page);
   await page.getByRole('button', { name: 'Image', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Auto Tone/ }).click();
-  await expect(page.getByText('Auto tone found no usable tonal range', { exact: true })).toBeVisible();
+  await expect(
+    page.getByText('Auto tone found no usable tonal range', { exact: true }),
+  ).toBeVisible();
   const after = await project(page);
   expect(after.history.length).toBe(before.history.length);
   expect(await pixel(page, 0)).toEqual([90, 110, 130, 255]);

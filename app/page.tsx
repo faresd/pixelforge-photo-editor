@@ -103,6 +103,7 @@ import {
 } from '../src/canvasSize';
 import CurveEditor from '../src/CurveEditor';
 import { type CurveChannel, type CurvePoints } from '../src/curves';
+import { applyAutoAdjustmentsPixels, type AutoMode } from '../src/auto';
 import { type ExportFormat } from '../src/export';
 import { renderSelection } from '../src/selections';
 import {
@@ -205,6 +206,9 @@ type Command =
   | 'hue-saturation'
   | 'color-balance'
   | 'sharpen-noise'
+  | 'auto-tone'
+  | 'auto-contrast'
+  | 'auto-color'
   | 'crop'
   | 'rotate-left'
   | 'rotate-right'
@@ -394,11 +398,10 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     {
       label: 'Auto Tone',
       shortcut: 'Shift+Ctrl+L',
-      command: 'noop',
-      disabled: true,
+      command: 'auto-tone',
     },
-    { label: 'Auto Contrast', command: 'noop', disabled: true },
-    { label: 'Auto Color', command: 'noop', disabled: true },
+    { label: 'Auto Contrast', command: 'auto-contrast' },
+    { label: 'Auto Color', command: 'auto-color' },
     { label: '', command: 'noop', separator: true },
     { label: 'Image Size…', shortcut: 'Alt+Ctrl+I', command: 'resize' },
     { label: 'Generative Upscale…', command: 'noop', disabled: true },
@@ -1705,6 +1708,61 @@ export default function Home() {
     return editLayer({
       adjustments: { ...effectiveAdjustments(layer.adjustments), ...patch },
     });
+  };
+  const autoCorrect = async (mode: AutoMode) => {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || layer.kind !== 'raster') {
+      setNotice(
+        'Select a raster layer before applying an automatic correction',
+      );
+      return;
+    }
+    if (layerIsLocked(f, layer) || !layer.visible) {
+      setNotice(
+        'Unlock and show this layer before applying an automatic correction',
+      );
+      return;
+    }
+    const currentAuto = effectiveAdjustments(layer.adjustments).auto;
+    if (currentAuto[mode]) {
+      setNotice(`Auto ${mode} is already enabled on this layer`);
+      return;
+    }
+    try {
+      const image = await decodeAsset(assets.current[layer.asset]);
+      const source = surface(image.naturalWidth, image.naturalHeight),
+        sourceContext = source.getContext('2d')!;
+      sourceContext.drawImage(image, 0, 0);
+      const pixels = sourceContext.getImageData(
+        0,
+        0,
+        source.width,
+        source.height,
+      ).data;
+      const result = applyAutoAdjustmentsPixels(pixels, {
+        tone: mode === 'tone',
+        contrast: mode === 'contrast',
+        color: mode === 'color',
+      });
+      if (current() !== f) {
+        setNotice('The document changed while the correction was calculated');
+        return;
+      }
+      if (!result.changed) {
+        setNotice(`Auto ${mode} found no usable tonal range`);
+        return;
+      }
+      const label = mode[0].toUpperCase() + mode.slice(1);
+      if (
+        adjust({
+          auto: { ...currentAuto, [mode]: true },
+        })
+      )
+        setNotice(`Auto ${label} applied; the correction remains editable`);
+    } catch {
+      setNotice(`Auto ${mode} could not be applied to this layer`);
+    }
   };
   const resetAdjustments = () => adjust({ ...neutral });
   const setBrightness = (brightness: number) => adjust({ brightness }),
@@ -4468,6 +4526,11 @@ export default function Home() {
       }
       if (command) {
         const k = e.key.toLowerCase();
+        if (k === 'l' && e.shiftKey && command) {
+          e.preventDefault();
+          void autoCorrect('tone');
+          return;
+        }
         if (
           [
             'z',
@@ -4677,6 +4740,9 @@ export default function Home() {
       setNotice(
         'Sharpen and Noise controls are available in Adjust selected layer',
       );
+    else if (command === 'auto-tone') void autoCorrect('tone');
+    else if (command === 'auto-contrast') void autoCorrect('contrast');
+    else if (command === 'auto-color') void autoCorrect('color');
     else if (command === 'crop') {
       setTool('crop');
       setNotice('Drag on the image to crop');
@@ -4743,6 +4809,10 @@ export default function Home() {
         );
       case 'mask-selection':
         return !layer || layer.kind !== 'raster' || locked || !frame.selection;
+      case 'auto-tone':
+      case 'auto-contrast':
+      case 'auto-color':
+        return !layer || layer.kind !== 'raster' || locked || !layer.visible;
       case 'quick-mask':
         return !frame;
       case 'save-selection':
