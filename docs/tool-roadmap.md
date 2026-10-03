@@ -38,6 +38,8 @@ The active implementation increment adds Hand, Zoom, Eyedropper, Paint Bucket, G
 
 The straight-segment path slice is covered by six pure geometry tests and eight desktop/mobile browser acceptance runs. Those checks include deterministic bounds and serialization, representative fill pixels, Pen `P` activation, Direct Selection `A` node movement, undo/redo, lock rejection, Escape/touch cancellation, reload and project round trips. The full path contract is documented in [`docs/path-tool-contract.md`](./path-tool-contract.md); Bézier handles, freeform/curvature paths and path boolean operations remain staged.
 
+The current release gate records **140/140 pure tests** and **232/234 desktop/mobile browser checks**, with two documented expected touch-gesture skips and no failures. Every shipped tool increment must update this evidence and pass its focused desktop/mobile acceptance suite before merge.
+
 ## Extensive test contract
 
 “Each implemented feature should come with extensive tests” is a release requirement. A feature means a tool, menu command, dialog behavior, persisted setting, import/export path or workspace mode—not only a large toolbar family. Tests should be added with the implementation and name the feature in their title.
