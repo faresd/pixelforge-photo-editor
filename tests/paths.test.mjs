@@ -50,6 +50,13 @@ test('node hit testing is deterministic and stroke hit testing includes closing 
   assert.equal(hitTestPathStroke(validatePath({ ...path, closed: false }), { x: 3, y: 5 }, 0.3), false);
 });
 
+test('node hit testing chooses the lowest index on ties and includes the radius boundary', () => {
+  const path = validatePath(triangle({ nodes: [{ x: 1, y: 2 }, { x: 3, y: 2 }, { x: 1, y: 2 }] }));
+  assert.equal(hitTestPathNode(path, { x: 2, y: 2 }, 1), 0);
+  assert.equal(hitTestPathNode(path, { x: 1, y: 2 }, 0), 0);
+  assert.equal(hitTestPathNode(path, { x: 2, y: 2 }, 0.99), null);
+});
+
 test('moving a node returns an immutable validated path', () => {
   const path = validatePath(triangle());
   const moved = movePathNode(path, 1, 9, 4);

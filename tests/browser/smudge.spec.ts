@@ -165,11 +165,26 @@ test('Smudge selection alpha protects unselected pixels and a stationary tap is 
   await page.mouse.move(box.x + box.width * 0.55, box.y + box.height * 0.85, { steps: 3 });
   await page.mouse.up();
   const selected = await project(page);
+  const activeAsset = (value: Project) => {
+    const frame = value.history[value.index];
+    return value.assets[frame.layers.at(-1)!.asset!]!;
+  };
+  const samplePoints = [{ x: 0.52 }, { x: 0.62 }, { x: 0.15 }];
+  const selectedPixels = await sample(page, activeAsset(selected), samplePoints);
   await page.getByRole('button', { name: 'Smudge tool', exact: true }).click();
   await page.getByLabel('Size', { exact: true }).fill('32');
-  await stroke(page, 0.35, 0.45);
+  await page.getByLabel('Hardness', { exact: true }).fill('100');
+  await page.getByLabel('Flow', { exact: true }).fill('100');
+  // Cross the colour edge and the selection's right boundary. The brush
+  // would smear the blue pixel at .62 without UI selection-mask sampling.
+  await stroke(page, 0.35, 0.67);
   const changed = await project(page);
+  const changedPixels = await sample(page, activeAsset(changed), samplePoints);
   expect(changed.history.length).toBe(selected.history.length + 1);
+  expect(changedPixels[0][0]).toBeGreaterThan(selectedPixels[0][0]);
+  expect(changedPixels[0][3]).toBe(selectedPixels[0][3]);
+  expect(changedPixels[1]).toEqual(selectedPixels[1]);
+  expect(changedPixels[2]).toEqual(selectedPixels[2]);
   await page.getByRole('button', { name: 'Smudge tool', exact: true }).click();
   const point = await canvasPoint(page, 0.8);
   const canvas = page.getByTestId('editor-canvas');

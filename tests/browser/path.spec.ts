@@ -79,17 +79,57 @@ test('Pen P creates a filled editable path and round-trips through reload and pr
   expect(reloaded.matrix).toEqual(path.matrix);
 });
 
-test('Path controls change fill/stroke appearance and representative canvas pixels', async ({ page }) => {
+test('Path Closed, Fill and Stroke controls change pixels and survive undo, redo and reload', async ({ page }) => {
   await closeTriangle(page);
-  await page.getByText('Fill', { exact: true }).last().click();
+  const panel = page.getByRole('region', { name: 'Layers', exact: true });
+  const closed = panel.getByLabel('Closed path', { exact: true });
+  const fill = panel.getByLabel('Fill', { exact: true });
+  const stroke = panel.getByLabel('Stroke', { exact: true });
+  const samplePixel = async () => {
+    await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
+    return page.getByTestId('editor-canvas').evaluate((element, point) => {
+      const canvas = element as HTMLCanvasElement;
+      return Array.from(canvas.getContext('2d')!.getImageData(Math.floor(point.x * canvas.width), Math.floor(point.y * canvas.height), 1, 1).data);
+    }, { x: 0.5, y: 0.42 });
+  };
   await page.getByLabel('Path fill color', { exact: true }).fill('#00ff00');
+  await page.getByLabel('Path stroke color', { exact: true }).fill('#ff0000');
+  await page.getByLabel('Path stroke width', { exact: true }).fill('12');
+  await page.getByLabel('Path stroke width', { exact: true }).press('Enter');
   await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Saved on this device');
-  const pixel = await page.getByTestId('editor-canvas').evaluate((element, point) => {
-    const canvas = element as HTMLCanvasElement;
-    return Array.from(canvas.getContext('2d')!.getImageData(Math.floor(point.x * canvas.width), Math.floor(point.y * canvas.height), 1, 1).data);
-  }, { x: 0.5, y: 0.42 });
-  expect(pixel[1]).toBeGreaterThan(pixel[0]);
-  expect(await project(page)).toMatchObject({ history: expect.any(Array) });
+  const filledPixel = await samplePixel();
+  expect(filledPixel[1]).toBeGreaterThan(filledPixel[0]);
+  expect(activePath(await project(page)).path).toMatchObject({
+    closed: true, fill: true, stroke: true,
+    fillColor: '#00ff00', strokeColor: '#ff0000', strokeWidth: 12,
+  });
+  await fill.uncheck();
+  expect(await samplePixel()).not.toEqual(filledPixel);
+  expect(activePath(await project(page)).path.fill).toBe(false);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  await expect(fill).toBeChecked();
+  expect(await samplePixel()).toEqual(filledPixel);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Redo/ }).click();
+  await expect(fill).not.toBeChecked();
+  await fill.check();
+  await stroke.uncheck();
+  await expect(stroke).not.toBeChecked();
+  expect(await samplePixel()).toEqual(filledPixel);
+  await stroke.check();
+  await closed.uncheck();
+  expect(await samplePixel()).not.toEqual(filledPixel);
+  expect(activePath(await project(page)).path.closed).toBe(false);
+  await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Saved on this device');
+  await page.reload();
+  const reloaded = activePath(await project(page));
+  expect(reloaded.path).toMatchObject({
+    closed: false, fill: true, stroke: true,
+    fillColor: '#00ff00', strokeColor: '#ff0000', strokeWidth: 12,
+  });
+  await expect(page.getByRole('region', { name: 'Layers', exact: true }).getByLabel('Closed path', { exact: true })).not.toBeChecked();
+  expect(await samplePixel()).not.toEqual(filledPixel);
 });
 
 test('Direct Selection A moves a path node with undo/redo and rejects locked paths', async ({ page }) => {

@@ -82,6 +82,21 @@ test('a click with no direction is a deterministic identity with no history chan
   assert.deepEqual(result.pixels, destination);
 });
 
+test('zero flow and an empty selection are exact immutable identities', () => {
+  const source = rgba(opaque(240, 80, 20), opaque(20, 30, 40), opaque(240, 80, 20), opaque(20, 30, 40), opaque(240, 80, 20));
+  const destination = rgba(...Array.from({ length: 5 }, () => opaque(20, 30, 40)));
+  const flowZero = applySmudgeStroke(source, destination, base({ flow: 0 }));
+  const selectionEmpty = applySmudgeStroke(source, destination, base({
+    selectionMask: new Uint8ClampedArray(5),
+  }));
+  assert.equal(flowZero.changed, false);
+  assert.equal(selectionEmpty.changed, false);
+  assert.deepEqual(flowZero.pixels, destination);
+  assert.deepEqual(selectionEmpty.pixels, destination);
+  assert.notEqual(flowZero.pixels, destination);
+  assert.notEqual(selectionEmpty.pixels, destination);
+});
+
 test('out-of-bounds paths are clipped without throwing or changing outside pixels', () => {
   const source = rgba(...Array.from({ length: 5 }, () => opaque(240, 20, 20)));
   const destination = rgba(...Array.from({ length: 5 }, () => opaque(20, 30, 40)));

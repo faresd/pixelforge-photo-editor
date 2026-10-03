@@ -111,7 +111,7 @@ export function hitTestPathNode(path: PathModel, point: PathNode, radius: number
   let match: number | null = null, best = radius;
   valid.nodes.forEach((node, index) => {
     const distance = Math.hypot(point.x - node.x, point.y - node.y);
-    if (distance <= best) { best = distance; match = index; }
+    if (distance < best || (match === null && distance <= best)) { best = distance; match = index; }
   });
   return match;
 }
