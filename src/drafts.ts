@@ -44,7 +44,10 @@ export type Tool =
   | 'dodge'
   | 'burn'
   | 'sponge'
+  | 'smudge'
   | 'text'
+  | 'pen'
+  | 'direct-select'
   | 'rectangle'
   | 'ellipse'
   | 'line'
@@ -127,7 +130,10 @@ function validSettings(settings: Settings) {
       'dodge',
       'burn',
       'sponge',
+      'smudge',
       'text',
+      'pen',
+      'direct-select',
       'rectangle',
       'ellipse',
       'line',

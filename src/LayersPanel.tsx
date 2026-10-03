@@ -75,15 +75,23 @@ export default function LayersPanel({
       rows.push(
         <button
           key={item.id}
-          className={
-            item.id === layer.id ? 'layer-row selected' : 'layer-row'
-          }
+          className={item.id === layer.id ? 'layer-row selected' : 'layer-row'}
           onClick={() => select(item.id)}
           aria-pressed={item.id === layer.id}
           aria-label={`Select layer ${item.name}`}
         >
           <span className="layer-type">
-            {item.kind === 'text' ? 'T' : item.kind === 'raster' ? '▧' : item.kind === 'line' ? '╱' : item.kind === 'polygon' ? '⬠' : '□'}
+            {item.kind === 'text'
+              ? 'T'
+              : item.kind === 'raster'
+                ? '▧'
+                : item.kind === 'line'
+                  ? '╱'
+                  : item.kind === 'polygon'
+                    ? '⬠'
+                    : item.kind === 'path'
+                      ? '⌁'
+                      : '□'}
           </span>
           <span>
             <b>{item.name || 'Untitled layer'}</b>
@@ -123,13 +131,14 @@ export default function LayersPanel({
         <button onClick={groupActive} disabled={Boolean(layer.groupId)}>
           Group active layer
         </button>
-        <button onClick={ungroupActive} disabled={!layer.groupId || Boolean(activeGroup?.locked)}>
+        <button
+          onClick={ungroupActive}
+          disabled={!layer.groupId || Boolean(activeGroup?.locked)}
+        >
           Ungroup active layer
         </button>
       </div>
-      <div className="layer-list">
-        {rows}
-      </div>
+      <div className="layer-list">{rows}</div>
       <div className="layer-toggles">
         <label>
           <input
@@ -169,7 +178,9 @@ export default function LayersPanel({
           <select
             aria-label="Selection mode"
             value={selectionOperation}
-            onChange={(e) => setSelectionOperation(e.target.value as SelectionOperation)}
+            onChange={(e) =>
+              setSelectionOperation(e.target.value as SelectionOperation)
+            }
           >
             <option value="replace">Replace</option>
             <option value="add">Add</option>
@@ -177,10 +188,16 @@ export default function LayersPanel({
             <option value="intersect">Intersect</option>
           </select>
         </label>
-        <button onClick={createMask} disabled={layer.kind !== 'raster' || !frame.selection}>
+        <button
+          onClick={createMask}
+          disabled={layer.kind !== 'raster' || !frame.selection}
+        >
           Mask from selection
         </button>
-        <button onClick={clearMask} disabled={layer.kind !== 'raster' || !layer.mask}>
+        <button
+          onClick={clearMask}
+          disabled={layer.kind !== 'raster' || !layer.mask}
+        >
           Remove mask
         </button>
         <button onClick={invertSelection} disabled={!frame.selection}>
@@ -190,7 +207,9 @@ export default function LayersPanel({
           Clear selection
         </button>
       </div>
-      {layer.kind === 'raster' && layer.mask && <p className="mask-status">Nondestructive mask active</p>}
+      {layer.kind === 'raster' && layer.mask && (
+        <p className="mask-status">Nondestructive mask active</p>
+      )}
       <label className="layer-field">
         Layer name
         <input
@@ -305,7 +324,9 @@ export default function LayersPanel({
               value={layer.textAlign ?? 'left'}
               disabled={layerLocked}
               onChange={(e) =>
-                edit({ textAlign: e.target.value as (typeof TEXT_ALIGNS)[number] })
+                edit({
+                  textAlign: e.target.value as (typeof TEXT_ALIGNS)[number],
+                })
               }
             >
               {TEXT_ALIGNS.map((align) => (
@@ -363,7 +384,9 @@ export default function LayersPanel({
           </label>
         </div>
       )}
-      {(layer.kind === 'rectangle' || layer.kind === 'ellipse' || layer.kind === 'polygon') && (
+      {(layer.kind === 'rectangle' ||
+        layer.kind === 'ellipse' ||
+        layer.kind === 'polygon') && (
         <div className="layer-position">
           <NumberField
             key={layer.id + layer.width}
@@ -441,6 +464,83 @@ export default function LayersPanel({
           />
         </div>
       )}
+      {layer.kind === 'path' && (
+        <div className="layer-position path-fields">
+          <label>
+            <input
+              type="checkbox"
+              checked={layer.path.closed}
+              disabled={layerLocked}
+              onChange={(e) =>
+                edit({ path: { ...layer.path, closed: e.target.checked } })
+              }
+            />
+            Closed path
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={layer.path.fill}
+              disabled={layerLocked}
+              onChange={(e) =>
+                edit({ path: { ...layer.path, fill: e.target.checked } })
+              }
+            />
+            Fill
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={layer.path.stroke}
+              disabled={layerLocked}
+              onChange={(e) =>
+                edit({ path: { ...layer.path, stroke: e.target.checked } })
+              }
+            />
+            Stroke
+          </label>
+          <NumberField
+            key={layer.id + '-path-stroke-' + layer.path.strokeWidth}
+            label="Path stroke width"
+            value={layer.path.strokeWidth}
+            min={0}
+            max={10000}
+            disabled={layerLocked}
+            apply={(strokeWidth) =>
+              edit({ path: { ...layer.path, strokeWidth } })
+            }
+          />
+          <label className="layer-field">
+            Fill color
+            <input
+              type="color"
+              aria-label="Path fill color"
+              value={layer.path.fillColor.slice(0, 7)}
+              disabled={layerLocked}
+              onChange={(e) =>
+                edit({ path: { ...layer.path, fillColor: e.target.value } })
+              }
+            />
+          </label>
+          <label className="layer-field">
+            Stroke color
+            <input
+              type="color"
+              aria-label="Path stroke color"
+              value={layer.path.strokeColor.slice(0, 7)}
+              disabled={layerLocked}
+              onChange={(e) =>
+                edit({ path: { ...layer.path, strokeColor: e.target.value } })
+              }
+            />
+          </label>
+          <small>
+            {layer.path.nodes.length} node
+            {layer.path.nodes.length === 1 ? '' : 's'} · direct-select to move
+            nodes
+          </small>
+        </div>
+      )}
       <div className="layer-actions">
         <button
           onClick={() => reorder(1)}
@@ -501,7 +601,9 @@ function GroupRow({
           type="checkbox"
           aria-label={`Visible group ${group.name}`}
           checked={group.visible}
-          onChange={(event) => editGroup(group.id, { visible: event.target.checked })}
+          onChange={(event) =>
+            editGroup(group.id, { visible: event.target.checked })
+          }
         />
         <span className="sr-only">Visible</span>
       </label>
@@ -510,7 +612,9 @@ function GroupRow({
           type="checkbox"
           aria-label={`Lock group ${group.name}`}
           checked={group.locked}
-          onChange={(event) => editGroup(group.id, { locked: event.target.checked })}
+          onChange={(event) =>
+            editGroup(group.id, { locked: event.target.checked })
+          }
         />
         <span className="sr-only">Locked</span>
       </label>
@@ -521,7 +625,9 @@ function GroupRow({
           maxLength={160}
           value={group.name}
           disabled={group.locked}
-          onChange={(event) => editGroup(group.id, { name: event.target.value })}
+          onChange={(event) =>
+            editGroup(group.id, { name: event.target.value })
+          }
         />
       </label>
       <label className="group-opacity">

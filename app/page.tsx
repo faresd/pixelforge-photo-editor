@@ -92,7 +92,15 @@ import BatchExportDialog from '../src/BatchExportDialog';
 import SelectionTransformDialog from '../src/SelectionTransformDialog';
 import CanvasSizeDialog from '../src/CanvasSizeDialog';
 import TrimDialog from '../src/TrimDialog';
-import { measuredTextLayerBounds, planCanvasSize, planRevealAll, trimBounds, type CanvasSizeRequest, type TrimMode, type TrimSides } from '../src/canvasSize';
+import {
+  measuredTextLayerBounds,
+  planCanvasSize,
+  planRevealAll,
+  trimBounds,
+  type CanvasSizeRequest,
+  type TrimMode,
+  type TrimSides,
+} from '../src/canvasSize';
 import CurveEditor from '../src/CurveEditor';
 import { type CurveChannel, type CurvePoints } from '../src/curves';
 import { type ExportFormat } from '../src/export';
@@ -113,23 +121,31 @@ import {
   type SavedSelectionBook,
 } from '../src/savedSelections';
 import { BrandLockup } from '../src/Brand';
-import { effectiveImageSize, planImageSize, type ImageSizeRequest } from '../src/imageSize';
+import {
+  effectiveImageSize,
+  planImageSize,
+  type ImageSizeRequest,
+} from '../src/imageSize';
 import {
   applyRadialStamp,
   resolveBrushStamp,
   type BrushColor,
   type BrushMode,
 } from '../src/brush';
-import {
-  eraseBackgroundStroke,
-  eraseMagicRegion,
-} from '../src/erasers';
+import { eraseBackgroundStroke, eraseMagicRegion } from '../src/erasers';
 import {
   applyDodgeBurnStroke,
   applySpongeStroke,
   type TonalRange,
   type SpongeMode,
 } from '../src/tonal';
+import {
+  hitTestPathNode,
+  movePathNode,
+  validatePath,
+  type PathModel,
+} from '../src/paths';
+import { applySmudgeStroke } from '../src/smudge';
 type MenuName =
   | 'File'
   | 'Edit'
@@ -225,11 +241,24 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'pencil', label: 'Pencil', icon: Pencil, key: 'B' },
   { id: 'color-replace', label: 'Color Replace', icon: Palette, key: 'B' },
   { id: 'eraser', label: 'Eraser', icon: Eraser, key: 'E' },
-  { id: 'background-eraser', label: 'Background Eraser', icon: Eraser, key: 'E' },
+  {
+    id: 'background-eraser',
+    label: 'Background Eraser',
+    icon: Eraser,
+    key: 'E',
+  },
   { id: 'magic-eraser', label: 'Magic Eraser', icon: Wand2, key: 'E' },
   { id: 'dodge', label: 'Dodge', icon: Sun, key: 'O' },
   { id: 'burn', label: 'Burn', icon: Moon, key: 'O' },
   { id: 'sponge', label: 'Sponge', icon: Sparkles, key: 'O' },
+  { id: 'smudge', label: 'Smudge', icon: Brush, key: 'R' },
+  { id: 'pen', label: 'Pen', icon: Pencil, key: 'P' },
+  {
+    id: 'direct-select',
+    label: 'Direct Selection',
+    icon: MousePointer2,
+    key: 'A',
+  },
   { id: 'text', label: 'Text', icon: Type, key: 'T' },
   { id: 'rectangle', label: 'Shape', icon: Shapes, key: 'U' },
   { id: 'ellipse', label: 'Ellipse', icon: Shapes, key: 'U' },
@@ -268,12 +297,12 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   l: ['lasso', 'polygonal-lasso'],
   e: ['eraser', 'background-eraser', 'magic-eraser'],
   o: ['dodge', 'burn', 'sponge'],
+  r: ['smudge'],
 };
 /** Existing PixelForge aliases retained while the primary keys follow Photoshop. */
 const TOOL_ALIASES: Record<string, Tool> = {
-  a: 'color-replace',
-  p: 'pencil',
-  r: 'rectangle',
+  a: 'direct-select',
+  p: 'pen',
 };
 const FILTERS = [
   ['Original', 'none', '#315277', '#d59b6c'],
@@ -554,6 +583,10 @@ type Gesture = {
   selectionMask?: Uint8ClampedArray;
   changed?: boolean;
   replaceTarget?: [number, number, number, number];
+  /** Local node index for an in-progress Direct Selection drag. */
+  pathIndex?: number;
+  /** Local path model at pointer-down, used to keep a drag deterministic. */
+  pathOrigin?: PathModel;
   pending?: Promise<void>;
   queued?: Array<{
     x: number;
@@ -596,7 +629,10 @@ type StampCanvasOptions = {
 };
 
 /** Apply one bounded local radial stamp without allocating a full-canvas mask. */
-const stampCanvas = (target: HTMLCanvasElement, options: StampCanvasOptions) => {
+const stampCanvas = (
+  target: HTMLCanvasElement,
+  options: StampCanvasOptions,
+) => {
   const resolved = resolveBrushStamp(options),
     radius = resolved.radius,
     left = Math.max(0, Math.floor(options.x - radius)),
@@ -674,7 +710,10 @@ const stampCanvasSegment = (
       pressureOpacity: options.pressureOpacity,
     }),
     distance = Math.hypot(to.x - from.x, to.y - from.y),
-    steps = Math.max(1, Math.ceil(distance / Math.max(1, resolved.radius * 0.5)));
+    steps = Math.max(
+      1,
+      Math.ceil(distance / Math.max(1, resolved.radius * 0.5)),
+    );
   let changed = false;
   for (let step = 0; step <= steps; step += 1) {
     const t = step / steps,
@@ -720,38 +759,93 @@ const tonalCanvasSegment = (
 ) => {
   const sourceContext = source.getContext('2d')!,
     destinationContext = destination.getContext('2d')!,
-    sourcePixels = sourceContext.getImageData(0, 0, source.width, source.height),
-    destinationPixels = destinationContext.getImageData(0, 0, destination.width, destination.height);
-  const result = options.mode === 'sponge'
-    ? applySpongeStroke(sourcePixels.data, destinationPixels.data, {
-        width: destination.width,
-        height: destination.height,
-        x1: from.x,
-        y1: from.y,
-        x2: to.x,
-        y2: to.y,
-        size: options.size,
-        hardness: options.hardness,
-        amount: options.spongeVibrance / 100,
-        flow: options.flow,
-        mode: options.spongeMode,
-        selectionMask: options.selectionMask,
-      })
-    : applyDodgeBurnStroke(sourcePixels.data, destinationPixels.data, {
-        width: destination.width,
-        height: destination.height,
-        x1: from.x,
-        y1: from.y,
-        x2: to.x,
-        y2: to.y,
-        size: options.size,
-        hardness: options.hardness,
-        exposure: options.exposure / 100,
-        flow: options.flow,
-        range: options.range,
-        mode: options.mode,
-        selectionMask: options.selectionMask,
-      });
+    sourcePixels = sourceContext.getImageData(
+      0,
+      0,
+      source.width,
+      source.height,
+    ),
+    destinationPixels = destinationContext.getImageData(
+      0,
+      0,
+      destination.width,
+      destination.height,
+    );
+  const result =
+    options.mode === 'sponge'
+      ? applySpongeStroke(sourcePixels.data, destinationPixels.data, {
+          width: destination.width,
+          height: destination.height,
+          x1: from.x,
+          y1: from.y,
+          x2: to.x,
+          y2: to.y,
+          size: options.size,
+          hardness: options.hardness,
+          amount: options.spongeVibrance / 100,
+          flow: options.flow,
+          mode: options.spongeMode,
+          selectionMask: options.selectionMask,
+        })
+      : applyDodgeBurnStroke(sourcePixels.data, destinationPixels.data, {
+          width: destination.width,
+          height: destination.height,
+          x1: from.x,
+          y1: from.y,
+          x2: to.x,
+          y2: to.y,
+          size: options.size,
+          hardness: options.hardness,
+          exposure: options.exposure / 100,
+          flow: options.flow,
+          range: options.range,
+          mode: options.mode,
+          selectionMask: options.selectionMask,
+        });
+  destinationPixels.data.set(result.pixels);
+  if (result.changed) destinationContext.putImageData(destinationPixels, 0, 0);
+  return result.changed;
+};
+
+/** Apply one immutable Smudge segment and publish the preview pixels. */
+const smudgeCanvasSegment = (
+  source: HTMLCanvasElement,
+  destination: HTMLCanvasElement,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  options: {
+    size: number;
+    hardness: number;
+    flow: number;
+    selectionMask?: Uint8ClampedArray;
+  },
+) => {
+  const sourceContext = source.getContext('2d')!,
+    destinationContext = destination.getContext('2d')!,
+    sourcePixels = sourceContext.getImageData(
+      0,
+      0,
+      source.width,
+      source.height,
+    ),
+    destinationPixels = destinationContext.getImageData(
+      0,
+      0,
+      destination.width,
+      destination.height,
+    ),
+    result = applySmudgeStroke(sourcePixels.data, destinationPixels.data, {
+      width: destination.width,
+      height: destination.height,
+      x1: from.x,
+      y1: from.y,
+      x2: to.x,
+      y2: to.y,
+      size: options.size,
+      hardness: options.hardness,
+      flow: options.flow,
+      selectionMask: options.selectionMask,
+    });
   destinationPixels.data.set(result.pixels);
   if (result.changed) destinationContext.putImageData(destinationPixels, 0, 0);
   return result.changed;
@@ -773,8 +867,13 @@ const selectionMaskForLayer = async (
 ): Promise<Uint8ClampedArray | undefined> => {
   if (!selection) return undefined;
   const rendered = await renderSelection(selection, frame.w, frame.h, assets),
-    frameData = rendered.getContext('2d')!.getImageData(0, 0, frame.w, frame.h).data,
-    asset = assetWidth && assetHeight ? undefined : await decodeAsset(assets[layer.asset]),
+    frameData = rendered
+      .getContext('2d')!
+      .getImageData(0, 0, frame.w, frame.h).data,
+    asset =
+      assetWidth && assetHeight
+        ? undefined
+        : await decodeAsset(assets[layer.asset]),
     width = assetWidth ?? asset!.naturalWidth,
     height = assetHeight ?? asset!.naturalHeight,
     mask = new Uint8ClampedArray(width * height),
@@ -1949,7 +2048,11 @@ export default function Home() {
     try {
       plan = planImageSize(f.w, f.h, f.imageSize, request);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Image Size values are invalid');
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : 'Image Size values are invalid',
+      );
       return;
     }
     if (!plan.resample) {
@@ -1969,8 +2072,9 @@ export default function Home() {
     next.imageSize = plan.imageSize;
     if (!commit(next)) return;
     setResizing(null);
-    setNotice(`Image resized to ${plan.width} × ${plan.height}; layers remain editable`);
-
+    setNotice(
+      `Image resized to ${plan.width} × ${plan.height}; layers remain editable`,
+    );
   };
   const resizeCanvas = async (request: CanvasSizeRequest) => {
     if (quickMasking) {
@@ -1994,14 +2098,22 @@ export default function Home() {
       );
       if (current() !== f) {
         setCanvasSizing(null);
-        setNotice('Canvas changed while the operation was running; nothing was overwritten');
+        setNotice(
+          'Canvas changed while the operation was running; nothing was overwritten',
+        );
         return;
       }
       if (!commit(next)) return;
       setCanvasSizing(null);
-      setNotice(`Canvas changed to ${plan.width} × ${plan.height}; layer pixels remain unchanged`);
+      setNotice(
+        `Canvas changed to ${plan.width} × ${plan.height}; layer pixels remain unchanged`,
+      );
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Canvas Size values are invalid');
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : 'Canvas Size values are invalid',
+      );
     }
   };
   const trimDocument = async (mode: TrimMode, sides: TrimSides) => {
@@ -2012,9 +2124,12 @@ export default function Home() {
     const f = current();
     try {
       const rendered = await renderFrame(f, assets.current);
-      if (current() !== f) throw new Error('Canvas changed while Trim was rendering');
+      if (current() !== f)
+        throw new Error('Canvas changed while Trim was rendering');
       const bounds = trimBounds(
-        rendered.getContext('2d')!.getImageData(0, 0, rendered.width, rendered.height).data,
+        rendered
+          .getContext('2d')!
+          .getImageData(0, 0, rendered.width, rendered.height).data,
         rendered.width,
         rendered.height,
         mode,
@@ -2022,7 +2137,12 @@ export default function Home() {
       );
       if (!bounds) throw new Error('Trim would remove the entire image');
       setTrimming(false);
-      if (bounds.left === 0 && bounds.top === 0 && bounds.right === f.w && bounds.bottom === f.h) {
+      if (
+        bounds.left === 0 &&
+        bounds.top === 0 &&
+        bounds.right === f.w &&
+        bounds.bottom === f.h
+      ) {
         setNotice('Canvas already fits the visible artwork');
         return;
       }
@@ -2034,13 +2154,20 @@ export default function Home() {
         bounds.bottom - bounds.top,
       );
       if (current() !== f) {
-        setNotice('Canvas changed while Trim was running; nothing was overwritten');
+        setNotice(
+          'Canvas changed while Trim was running; nothing was overwritten',
+        );
         return;
       }
-      if (commit(next)) setNotice(`Canvas trimmed to ${next.w} × ${next.h}; layer pixels retained`);
+      if (commit(next))
+        setNotice(
+          `Canvas trimmed to ${next.w} × ${next.h}; layer pixels retained`,
+        );
     } catch (error) {
       setTrimming(false);
-      setNotice(error instanceof Error ? error.message : 'Trim could not be applied');
+      setNotice(
+        error instanceof Error ? error.message : 'Trim could not be applied',
+      );
     }
   };
   const revealAll = async () => {
@@ -2054,8 +2181,14 @@ export default function Home() {
       const measureContext = measureSurface.getContext('2d')!;
       const textBounds = Object.fromEntries(
         f.layers
-          .filter((layer): layer is Extract<Layer, { kind: 'text' }> => layer.kind === 'text')
-          .map((layer) => [layer.id, measuredTextLayerBounds(measureContext, layer)]),
+          .filter(
+            (layer): layer is Extract<Layer, { kind: 'text' }> =>
+              layer.kind === 'text',
+          )
+          .map((layer) => [
+            layer.id,
+            measuredTextLayerBounds(measureContext, layer),
+          ]),
       );
       const plan = planRevealAll(f, assets.current, { textBounds });
       if (!plan.changed) {
@@ -2070,14 +2203,20 @@ export default function Home() {
         plan.height,
       );
       if (current() !== f) {
-        setNotice('Canvas changed while Reveal All was running; nothing was overwritten');
+        setNotice(
+          'Canvas changed while Reveal All was running; nothing was overwritten',
+        );
         return;
       }
-      if (commit(next)) setNotice(`All artwork revealed in a ${next.w} × ${next.h} canvas`);
+      if (commit(next))
+        setNotice(`All artwork revealed in a ${next.w} × ${next.h} canvas`);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Reveal All could not be applied');
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : 'Reveal All could not be applied',
+      );
     }
-
   };
   const discard = async () => {
     if (
@@ -2558,6 +2697,63 @@ export default function Home() {
     e.pressure <= 1
       ? e.pressure
       : 1;
+  const drawPathOverlay = (
+    path: PathModel,
+    matrix: Matrix = [1, 0, 0, 1, 0, 0],
+    selectedIndex: number | null = null,
+    dashed = false,
+  ) => {
+    const context = canvas.current?.getContext('2d');
+    if (!context || !path.nodes.length) return;
+    const transformed = path.nodes.map(({ x, y }) => ({
+      x: matrix[0] * x + matrix[2] * y + matrix[4],
+      y: matrix[1] * x + matrix[3] * y + matrix[5],
+    }));
+    context.save();
+    context.strokeStyle = '#38bdf8';
+    context.fillStyle = 'rgba(56,189,248,.14)';
+    context.lineWidth = 1.5;
+    context.setLineDash(dashed ? [7, 5] : []);
+    context.beginPath();
+    context.moveTo(transformed[0].x, transformed[0].y);
+    for (const node of transformed.slice(1)) context.lineTo(node.x, node.y);
+    if (path.closed) context.closePath();
+    context.stroke();
+    if (path.closed && path.fill) context.fill();
+    context.setLineDash([]);
+    for (const [index, node] of transformed.entries()) {
+      context.beginPath();
+      context.fillStyle = index === selectedIndex ? '#fbbf24' : '#ffffff';
+      context.strokeStyle = '#0f172a';
+      context.arc(
+        node.x,
+        node.y,
+        index === selectedIndex ? 6 : 4,
+        0,
+        Math.PI * 2,
+      );
+      context.fill();
+      context.stroke();
+    }
+    context.restore();
+  };
+  const previewPenPath = (g: Gesture) => {
+    const points = g.points || [];
+    if (!points.length) return;
+    const preview: PathModel = {
+      nodes: points,
+      closed: false,
+      fill: false,
+      stroke: true,
+      strokeWidth: Math.max(1, size / 3),
+      fillColor: color,
+      strokeColor: color,
+    };
+    void paint(g.frame).then(() => {
+      if (gesture.current === g)
+        drawPathOverlay(preview, [1, 0, 0, 1, 0, 0], null, true);
+    });
+  };
   const pointerDown = async (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (quickMasking && quickMaskRef.current) {
       if (gesture.current || quickMaskGesture.current || doc.rendering) return;
@@ -2617,6 +2813,71 @@ export default function Home() {
       }
       return;
     }
+    // Pen is a click-to-place straight-segment workflow. Keep this gesture
+    // alive between clicks so it works consistently with mouse, pen and touch.
+    if (gesture.current?.tool === 'pen') {
+      const g = gesture.current,
+        p = point(e),
+        points = g.points || (g.points = []),
+        first = points[0];
+      if (
+        first &&
+        points.length >= 3 &&
+        Math.hypot(p.x - first.x, p.y - first.y) <= 14
+      ) {
+        const nodes = points.map((node) => ({ x: node.x, y: node.y }));
+        gesture.current = null;
+        const path: PathModel = {
+          nodes,
+          closed: true,
+          fill: true,
+          stroke: true,
+          strokeWidth: Math.max(1, size / 3),
+          fillColor: color,
+          strokeColor: color,
+        };
+        if (validatePath(path)) {
+          const added = addLayer({
+            ...commonLayer('Path ' + g.frame.layers.length),
+            kind: 'path',
+            path,
+          });
+          if (added) setNotice('Editable path layer added');
+        }
+      } else {
+        points.push({
+          x: Math.max(0, Math.min(g.frame.w, p.x)),
+          y: Math.max(0, Math.min(g.frame.h, p.y)),
+        });
+        g.last = p;
+        g.moved = points.length > 1;
+        previewPenPath(g);
+      }
+      return;
+    }
+    if (tool === 'pen') {
+      if (doc.rendering || !frame) return;
+      const f = current(),
+        p = point(e);
+      canvas.current!.setPointerCapture(e.pointerId);
+      const g: Gesture = {
+        tool,
+        start: p,
+        last: p,
+        frame: f,
+        points: [
+          {
+            x: Math.max(0, Math.min(f.w, p.x)),
+            y: Math.max(0, Math.min(f.h, p.y)),
+          },
+        ],
+        moved: false,
+      };
+      gesture.current = g;
+      previewPenPath(g);
+      setNotice('Pen: click to place points, click the first point to close');
+      return;
+    }
     if (gesture.current || doc.rendering || !frame) return;
     const f = current(),
       layer = f.layers.find((l) => l.id === f.active)!,
@@ -2624,6 +2885,42 @@ export default function Home() {
     const local =
       layer.kind === 'raster' ? inversePoint(layer.matrix, p) || p : p;
     canvas.current!.setPointerCapture(e.pointerId);
+    if (tool === 'direct-select') {
+      if (layerIsLocked(f, layer) || !layer.visible || layer.kind !== 'path') {
+        setNotice(
+          'Select a visible, unlocked path layer before selecting nodes',
+        );
+        return;
+      }
+      const localPoint = inversePoint(layer.matrix, p);
+      if (!localPoint) {
+        setNotice('This path transform cannot be edited');
+        return;
+      }
+      const scale = Math.max(
+        Math.hypot(layer.matrix[0], layer.matrix[1]),
+        Math.hypot(layer.matrix[2], layer.matrix[3]),
+        0.0001,
+      );
+      const pathIndex = hitTestPathNode(layer.path, localPoint, 10 / scale);
+      if (pathIndex === null) {
+        setNotice('Click a path node to select it');
+        return;
+      }
+      const g: Gesture = {
+        tool,
+        start: p,
+        last: p,
+        frame: f,
+        layer,
+        pathIndex,
+        pathOrigin: validatePath(layer.path),
+        moved: false,
+      };
+      gesture.current = g;
+      drawPathOverlay(layer.path, layer.matrix, pathIndex);
+      return;
+    }
     if (tool === 'zoom') {
       setZoom((value) => Math.min(140, value + 10));
       setNotice('Zoomed in');
@@ -2728,7 +3025,9 @@ export default function Home() {
         lastPressure: pressure(e),
         pointerType: e.pointerType,
         moved: false,
-        queued: [{ ...local, pressure: pressure(e), pointerType: e.pointerType }],
+        queued: [
+          { ...local, pressure: pressure(e), pointerType: e.pointerType },
+        ],
       } as Gesture;
       gesture.current = g;
       g.pending = (async () => {
@@ -2751,7 +3050,13 @@ export default function Home() {
           g.buffer = buffer;
           g.replaceTarget = [sample[0], sample[1], sample[2], sample[3]];
           let from = g.start;
-          for (const point of g.queued || [{ ...g.start, pressure: g.lastPressure, pointerType: g.pointerType }]) {
+          for (const point of g.queued || [
+            {
+              ...g.start,
+              pressure: g.lastPressure,
+              pointerType: g.pointerType,
+            },
+          ]) {
             eraseBackgroundStroke(
               source,
               buffer,
@@ -2776,13 +3081,13 @@ export default function Home() {
       await g.pending;
       return;
     }
-    if (tool === 'dodge' || tool === 'burn' || tool === 'sponge') {
+    if (tool === 'smudge') {
       if (
         layerIsLocked(f, layer) ||
         !layer.visible ||
         layer.kind !== 'raster'
       ) {
-        setNotice('Select a visible, unlocked raster layer before toning');
+        setNotice('Select a visible, unlocked raster layer before smudging');
         return;
       }
       const g = {
@@ -2794,7 +3099,9 @@ export default function Home() {
         lastPressure: pressure(e),
         pointerType: e.pointerType,
         moved: false,
-        queued: [{ ...local, pressure: pressure(e), pointerType: e.pointerType }],
+        queued: [
+          { ...local, pressure: pressure(e), pointerType: e.pointerType },
+        ],
       } as Gesture;
       gesture.current = g;
       g.pending = (async () => {
@@ -2819,7 +3126,78 @@ export default function Home() {
           g.source = source;
           g.buffer = buffer;
           let from = g.start;
-          for (const queued of g.queued || [{ ...g.start, pressure: g.lastPressure, pointerType: g.pointerType }]) {
+          for (const queued of g.queued || []) {
+            const changed = smudgeCanvasSegment(source, buffer, from, queued, {
+              size: localSize(layer.matrix, size),
+              hardness,
+              flow: brushOpacity / 100,
+              selectionMask: g.selectionMask,
+            });
+            from = queued;
+            g.changed = Boolean(g.changed || changed);
+          }
+          g.queued = undefined;
+          void paint(f, { [layer.id]: buffer });
+        } catch {
+          gesture.current = null;
+          setNotice('Could not prepare Smudge tool');
+        }
+      })();
+      await g.pending;
+      return;
+    }
+    if (tool === 'dodge' || tool === 'burn' || tool === 'sponge') {
+      if (
+        layerIsLocked(f, layer) ||
+        !layer.visible ||
+        layer.kind !== 'raster'
+      ) {
+        setNotice('Select a visible, unlocked raster layer before toning');
+        return;
+      }
+      const g = {
+        tool,
+        start: local,
+        last: local,
+        frame: f,
+        layer,
+        lastPressure: pressure(e),
+        pointerType: e.pointerType,
+        moved: false,
+        queued: [
+          { ...local, pressure: pressure(e), pointerType: e.pointerType },
+        ],
+      } as Gesture;
+      gesture.current = g;
+      g.pending = (async () => {
+        try {
+          const image = await decodeAsset(assets.current[layer.asset]),
+            source = surface(image.naturalWidth, image.naturalHeight),
+            buffer = surface(image.naturalWidth, image.naturalHeight),
+            sourceContext = source.getContext('2d')!,
+            bufferContext = buffer.getContext('2d')!;
+          sourceContext.drawImage(image, 0, 0);
+          bufferContext.drawImage(image, 0, 0);
+          if (gesture.current !== g) return;
+          g.selectionMask = await selectionMaskForLayer(
+            f.selection,
+            f,
+            layer,
+            assets.current,
+            image.naturalWidth,
+            image.naturalHeight,
+          );
+          if (gesture.current !== g) return;
+          g.source = source;
+          g.buffer = buffer;
+          let from = g.start;
+          for (const queued of g.queued || [
+            {
+              ...g.start,
+              pressure: g.lastPressure,
+              pointerType: g.pointerType,
+            },
+          ]) {
             const changed = tonalCanvasSegment(source, buffer, from, queued, {
               size: localSize(layer.matrix, size),
               hardness,
@@ -2867,7 +3245,9 @@ export default function Home() {
         lastPressure: pressure(e),
         pointerType: e.pointerType,
         moved: false,
-        queued: [{ ...local, pressure: pressure(e), pointerType: e.pointerType }],
+        queued: [
+          { ...local, pressure: pressure(e), pointerType: e.pointerType },
+        ],
       } as Gesture;
       const sourceAnchor = cloneSource;
       gesture.current = g;
@@ -2880,7 +3260,9 @@ export default function Home() {
         g.buffer = surface(source.width, source.height);
         g.buffer.getContext('2d')!.drawImage(source, 0, 0);
         let from = g.start;
-        for (const point of g.queued || [{ ...g.start, pressure: g.lastPressure, pointerType: g.pointerType }]) {
+        for (const point of g.queued || [
+          { ...g.start, pressure: g.lastPressure, pointerType: g.pointerType },
+        ]) {
           stampCanvasSegment(g.buffer, from, point, {
             size: localSize(layer.matrix, size),
             hardness,
@@ -3133,7 +3515,9 @@ export default function Home() {
           if (gesture.current !== g) return;
           g.buffer = buffer;
           let from = local;
-          for (const point of g.queued || [{ ...local, pressure: g.lastPressure, pointerType: g.pointerType }]) {
+          for (const point of g.queued || [
+            { ...local, pressure: g.lastPressure, pointerType: g.pointerType },
+          ]) {
             stampCanvasSegment(buffer, from, point, {
               size: localSize(layer.matrix, size),
               hardness: tool === 'pencil' ? 100 : hardness,
@@ -3169,7 +3553,9 @@ export default function Home() {
     if (!g) return;
     const p = point(e);
     const local =
-      g.layer?.kind === 'raster' ? inversePoint(g.layer.matrix, p) || p : p;
+      g.layer?.kind === 'raster' || g.layer?.kind === 'path'
+        ? inversePoint(g.layer.matrix, p) || p
+        : p;
     g.lastPressure = pressure(e);
     g.pointerType = e.pointerType;
     g.moved = true;
@@ -3182,10 +3568,34 @@ export default function Home() {
       return;
     }
     if (
+      g.tool === 'direct-select' &&
+      g.layer?.kind === 'path' &&
+      g.pathIndex !== undefined &&
+      g.pathOrigin
+    ) {
+      const moved = movePathNode(g.pathOrigin, g.pathIndex, local.x, local.y);
+      g.moved = true;
+      void paint({
+        ...g.frame,
+        layers: g.frame.layers.map((item) =>
+          item.id === g.layer!.id ? { ...item, path: moved } : item,
+        ),
+      }).then(() => {
+        if (gesture.current === g)
+          drawPathOverlay(moved, g.layer!.matrix, g.pathIndex!);
+      });
+      g.last = p;
+      return;
+    }
+    if (
       (g.tool === 'brush' || g.tool === 'pencil' || g.tool === 'eraser') &&
       !g.buffer
     )
-      g.queued?.push({ ...local, pressure: g.lastPressure, pointerType: g.pointerType });
+      g.queued?.push({
+        ...local,
+        pressure: g.lastPressure,
+        pointerType: g.pointerType,
+      });
     if (
       (g.tool === 'clone' || g.tool === 'heal') &&
       g.buffer &&
@@ -3231,6 +3641,25 @@ export default function Home() {
       g.last = local;
       return;
     }
+    if (g.tool === 'smudge' && !g.buffer) {
+      (g.queued || (g.queued = [])).push({
+        ...local,
+        pressure: g.lastPressure,
+        pointerType: g.pointerType,
+      });
+    }
+    if (g.tool === 'smudge' && g.buffer && g.source) {
+      const changed = smudgeCanvasSegment(g.source, g.buffer, g.last, local, {
+        size: localSize(g.layer!.matrix, size),
+        hardness,
+        flow: brushOpacity / 100,
+        selectionMask: g.selectionMask,
+      });
+      g.changed = Boolean(g.changed || changed);
+      void paint(g.frame, { [g.layer!.id]: g.buffer });
+      g.last = local;
+      return;
+    }
     if (g.tool === 'background-eraser' && !g.buffer) {
       (g.queued || (g.queued = [])).push({
         ...local,
@@ -3238,7 +3667,10 @@ export default function Home() {
         pointerType: g.pointerType,
       });
     }
-    if ((g.tool === 'dodge' || g.tool === 'burn' || g.tool === 'sponge') && !g.buffer) {
+    if (
+      (g.tool === 'dodge' || g.tool === 'burn' || g.tool === 'sponge') &&
+      !g.buffer
+    ) {
       (g.queued || (g.queued = [])).push({
         ...local,
         pressure: g.lastPressure,
@@ -3267,7 +3699,11 @@ export default function Home() {
       return;
     }
     if ((g.tool === 'clone' || g.tool === 'heal') && !g.buffer) {
-      (g.queued || (g.queued = [])).push({ ...local, pressure: g.lastPressure, pointerType: g.pointerType });
+      (g.queued || (g.queued = [])).push({
+        ...local,
+        pressure: g.lastPressure,
+        pointerType: g.pointerType,
+      });
     }
     if (
       g.tool === 'color-replace' &&
@@ -3485,7 +3921,7 @@ export default function Home() {
         x.restore();
       });
     }
-    g.last = g.layer?.kind === 'raster' ? local : p;
+    g.last = g.layer?.kind === 'raster' || g.layer?.kind === 'path' ? local : p;
   };
   const pointerUp = async (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (quickMaskGesture.current) {
@@ -3523,10 +3959,24 @@ export default function Home() {
       // clicking its first vertex or by the double-click handler below.
       return;
     }
+    if (g.tool === 'pen') {
+      if (e.type === 'pointercancel') {
+        gesture.current = null;
+        void paint(current());
+        setNotice('Pen path cancelled');
+      } else if (g.points?.length) {
+        // A pointer-up ends one click, while the path remains active until the
+        // first node is clicked again or Escape is pressed.
+        previewPenPath(g);
+      }
+      return;
+    }
     const p = point(e),
       f = g.frame;
     const local =
-      g.layer?.kind === 'raster' ? inversePoint(g.layer.matrix, p) || p : p;
+      g.layer?.kind === 'raster' || g.layer?.kind === 'path'
+        ? inversePoint(g.layer.matrix, p) || p
+        : p;
     await g.pending;
     if (gesture.current !== g) return;
     gesture.current = null;
@@ -3544,7 +3994,27 @@ export default function Home() {
       setNotice('Gesture cancelled');
       return;
     }
-    if (g.tool === 'move' && g.layer && g.moved) {
+    if (
+      g.tool === 'direct-select' &&
+      g.layer?.kind === 'path' &&
+      g.pathIndex !== undefined &&
+      g.pathOrigin
+    ) {
+      if (!g.moved) {
+        void paint(f);
+        return;
+      }
+      const moved = movePathNode(g.pathOrigin, g.pathIndex, local.x, local.y);
+      if (
+        commit({
+          ...f,
+          layers: f.layers.map((item) =>
+            item.id === g.layer!.id ? { ...item, path: moved } : item,
+          ),
+        })
+      )
+        setNotice('Path node moved');
+    } else if (g.tool === 'move' && g.layer && g.moved) {
       const matrix = [...g.layer.matrix] as Matrix;
       matrix[4] += p.x - g.start.x;
       matrix[5] += p.y - g.start.y;
@@ -3762,6 +4232,31 @@ export default function Home() {
         })
       )
         setNotice('Background Eraser stroke applied');
+    } else if (g.tool === 'smudge' && g.buffer && g.layer) {
+      let changed = Boolean(g.changed);
+      if (g.moved && g.source && (g.last.x !== local.x || g.last.y !== local.y))
+        changed =
+          smudgeCanvasSegment(g.source, g.buffer, g.last, local, {
+            size: localSize(g.layer.matrix, size),
+            hardness,
+            flow: brushOpacity / 100,
+            selectionMask: g.selectionMask,
+          }) || changed;
+      if (!changed) {
+        void paint(f);
+        setNotice('No Smudge change applied');
+        return;
+      }
+      const asset = addAsset(assets.current, g.buffer);
+      if (
+        commit({
+          ...f,
+          layers: f.layers.map((item) =>
+            item.id === g.layer!.id ? { ...item, asset } : item,
+          ),
+        })
+      )
+        setNotice('Smudge stroke applied');
     } else if (
       (g.tool === 'dodge' || g.tool === 'burn' || g.tool === 'sponge') &&
       g.buffer &&
@@ -3769,17 +4264,18 @@ export default function Home() {
     ) {
       let changed = Boolean(g.changed);
       if (g.moved && g.source && (g.last.x !== local.x || g.last.y !== local.y))
-        changed = tonalCanvasSegment(g.source, g.buffer, g.last, local, {
-          size: localSize(g.layer.matrix, size),
-          hardness,
-          exposure: tonalExposure,
-          flow: brushOpacity / 100,
-          range: tonalRange,
-          mode: g.tool,
-          spongeMode,
-          spongeVibrance,
-          selectionMask: g.selectionMask,
-        }) || changed;
+        changed =
+          tonalCanvasSegment(g.source, g.buffer, g.last, local, {
+            size: localSize(g.layer.matrix, size),
+            hardness,
+            exposure: tonalExposure,
+            flow: brushOpacity / 100,
+            range: tonalRange,
+            mode: g.tool,
+            spongeMode,
+            spongeVibrance,
+            selectionMask: g.selectionMask,
+          }) || changed;
       if (!changed) {
         void paint(f);
         setNotice('No tonal change applied');
@@ -3794,7 +4290,9 @@ export default function Home() {
           ),
         })
       )
-        setNotice(`${g.tool === 'sponge' ? 'Sponge' : g.tool === 'dodge' ? 'Dodge' : 'Burn'} stroke applied`);
+        setNotice(
+          `${g.tool === 'sponge' ? 'Sponge' : g.tool === 'dodge' ? 'Dodge' : 'Burn'} stroke applied`,
+        );
     } else if (g.tool === 'color-replace' && g.buffer && g.layer) {
       const asset = addAsset(assets.current, g.buffer);
       if (
@@ -3916,6 +4414,21 @@ export default function Home() {
         gesture.current = null;
         void paint(current());
         setNotice('Polygonal lasso cancelled');
+        return;
+      }
+      if (
+        e.key === 'Escape' &&
+        (gesture.current?.tool === 'pen' ||
+          gesture.current?.tool === 'direct-select')
+      ) {
+        const canceledTool = gesture.current.tool;
+        gesture.current = null;
+        void paint(current());
+        setNotice(
+          canceledTool === 'pen'
+            ? 'Pen path cancelled'
+            : 'Path node selection cancelled',
+        );
         return;
       }
       if (e.key === 'Escape' && quickMasking) {
@@ -4090,13 +4603,15 @@ export default function Home() {
       return;
     }
     if (command === 'resize')
-      setResizing({ width: current().w, height: current().h, imageSize: effectiveImageSize(current().imageSize) });
-
+      setResizing({
+        width: current().w,
+        height: current().h,
+        imageSize: effectiveImageSize(current().imageSize),
+      });
     else if (command === 'canvas-size')
       setCanvasSizing({ width: current().w, height: current().h });
     else if (command === 'trim') setTrimming(true);
     else if (command === 'reveal-all') void revealAll();
-
     else if (command === 'project-save') exportProject();
     else if (command === 'batch-export')
       setBatchExporting({
@@ -4318,10 +4833,7 @@ export default function Home() {
         />
       )}
       {trimming && (
-        <TrimDialog
-          close={() => setTrimming(false)}
-          apply={trimDocument}
-        />
+        <TrimDialog close={() => setTrimming(false)} apply={trimDocument} />
       )}
       {transformSelectionValue && (
         <SelectionTransformDialog
@@ -4963,6 +5475,7 @@ export default function Home() {
             tool === 'dodge' ||
             tool === 'burn' ||
             tool === 'sponge' ||
+            tool === 'smudge' ||
             tool === 'clone' ||
             tool === 'heal' ||
             tool === 'rectangle' ||
@@ -4990,22 +5503,32 @@ export default function Home() {
                 tool === 'dodge' ||
                 tool === 'burn' ||
                 tool === 'sponge' ||
+                tool === 'smudge' ||
                 tool === 'clone' ||
                 tool === 'heal') && (
                 <>
-                  {tool !== 'pencil' && tool !== 'color-replace' && tool !== 'magic-eraser' && (
-                    <Slider
-                      label="Hardness"
-                      value={hardness}
-                      min={0}
-                      max={100}
-                      set={setHardness}
-                      suffix="%"
-                    />
-                  )}
+                  {tool !== 'pencil' &&
+                    tool !== 'color-replace' &&
+                    tool !== 'magic-eraser' && (
+                      <Slider
+                        label="Hardness"
+                        value={hardness}
+                        min={0}
+                        max={100}
+                        set={setHardness}
+                        suffix="%"
+                      />
+                    )}
                   {tool !== 'magic-eraser' && (
                     <Slider
-                      label={tool === 'dodge' || tool === 'burn' || tool === 'sponge' ? 'Flow' : 'Opacity'}
+                      label={
+                        tool === 'dodge' ||
+                        tool === 'burn' ||
+                        tool === 'sponge' ||
+                        tool === 'smudge'
+                          ? 'Flow'
+                          : 'Opacity'
+                      }
                       value={brushOpacity}
                       min={1}
                       max={100}
@@ -5013,30 +5536,46 @@ export default function Home() {
                       suffix="%"
                     />
                   )}
-                  {tool !== 'pencil' && tool !== 'color-replace' && tool !== 'magic-eraser' && tool !== 'dodge' && tool !== 'burn' && tool !== 'sponge' && (
-                    <>
-                      <label className="check-row">
-                        <input
-                          aria-label="Pressure affects size"
-                          type="checkbox"
-                          checked={pressureSize}
-                          onChange={(event) => setPressureSize(event.target.checked)}
-                        />
-                        Pressure affects size
-                      </label>
-                      <label className="check-row">
-                        <input
-                          aria-label="Pressure affects opacity"
-                          type="checkbox"
-                          checked={pressureOpacity}
-                          onChange={(event) => setPressureOpacity(event.target.checked)}
-                        />
-                        Pressure affects opacity
-                      </label>
-                      <p className="adjust-note">Pressure mapping is off by default. Pen and touch inputs use full size and opacity until each option is enabled.</p>
-                    </>
-                  )}
-                  {(tool === 'color-replace' || tool === 'background-eraser' || tool === 'magic-eraser') && (
+                  {tool !== 'pencil' &&
+                    tool !== 'color-replace' &&
+                    tool !== 'magic-eraser' &&
+                    tool !== 'dodge' &&
+                    tool !== 'burn' &&
+                    tool !== 'sponge' &&
+                    tool !== 'smudge' && (
+                      <>
+                        <label className="check-row">
+                          <input
+                            aria-label="Pressure affects size"
+                            type="checkbox"
+                            checked={pressureSize}
+                            onChange={(event) =>
+                              setPressureSize(event.target.checked)
+                            }
+                          />
+                          Pressure affects size
+                        </label>
+                        <label className="check-row">
+                          <input
+                            aria-label="Pressure affects opacity"
+                            type="checkbox"
+                            checked={pressureOpacity}
+                            onChange={(event) =>
+                              setPressureOpacity(event.target.checked)
+                            }
+                          />
+                          Pressure affects opacity
+                        </label>
+                        <p className="adjust-note">
+                          Pressure mapping is off by default. Pen and touch
+                          inputs use full size and opacity until each option is
+                          enabled.
+                        </p>
+                      </>
+                    )}
+                  {(tool === 'color-replace' ||
+                    tool === 'background-eraser' ||
+                    tool === 'magic-eraser') && (
                     <Slider
                       label="Color tolerance"
                       value={colorTolerance}
@@ -5061,7 +5600,9 @@ export default function Home() {
                         <select
                           aria-label="Tonal range"
                           value={tonalRange}
-                          onChange={(event) => setTonalRange(event.target.value as TonalRange)}
+                          onChange={(event) =>
+                            setTonalRange(event.target.value as TonalRange)
+                          }
                         >
                           <option value="shadows">Shadows</option>
                           <option value="midtones">Midtones</option>
@@ -5085,7 +5626,9 @@ export default function Home() {
                         <select
                           aria-label="Sponge mode"
                           value={spongeMode}
-                          onChange={(event) => setSpongeMode(event.target.value as SpongeMode)}
+                          onChange={(event) =>
+                            setSpongeMode(event.target.value as SpongeMode)
+                          }
                         >
                           <option value="saturate">Saturate</option>
                           <option value="desaturate">Desaturate</option>
