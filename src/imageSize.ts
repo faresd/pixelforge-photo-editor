@@ -154,6 +154,10 @@ export function planImageSize(
   )
     throw new Error('Image Size values are invalid');
 
+  const width = Math.round(imageSizeToPixels(request.width, request.widthUnit, requestedMetadata));
+  const height = Math.round(imageSizeToPixels(request.height, request.heightUnit, requestedMetadata));
+  if (!validPixels(width) || !validPixels(height) || width * height > MAX_IMAGE_PIXELS)
+    throw new Error('Choose dimensions up to 16,000 pixels and 16 megapixels total');
   if (!request.resample)
     return {
       width: currentWidth,
@@ -162,11 +166,6 @@ export function planImageSize(
       resample: false,
       method: request.method,
     };
-
-  const width = Math.round(imageSizeToPixels(request.width, request.widthUnit, requestedMetadata));
-  const height = Math.round(imageSizeToPixels(request.height, request.heightUnit, requestedMetadata));
-  if (!validPixels(width) || !validPixels(height) || width * height > MAX_IMAGE_PIXELS)
-    throw new Error('Choose dimensions up to 16,000 pixels and 16 megapixels total');
   return { width, height, imageSize: requestedMetadata, resample: true, method: request.method };
 }
 
