@@ -16,6 +16,12 @@ export type Adjustments = {
   saturation: number;
   blur: number;
   filter: string;
+  /** Input black point for a nondestructive levels correction (0-254). */
+  levelsBlack: number;
+  /** Input white point for a nondestructive levels correction (1-255). */
+  levelsWhite: number;
+  /** Midtone gamma for a nondestructive levels correction (0.1-3). */
+  levelsGamma: number;
 };
 export const neutral: Adjustments = {
   brightness: 100,
@@ -23,6 +29,9 @@ export const neutral: Adjustments = {
   saturation: 100,
   blur: 0,
   filter: 'none',
+  levelsBlack: 0,
+  levelsWhite: 255,
+  levelsGamma: 1,
 };
 export const FILTER_VALUES = [
   'none',
@@ -71,6 +80,24 @@ export type Layer = Common &
         color: string;
         stroke: number;
         fill: boolean;
+      }
+    | {
+        /** A parametric segment from the layer origin to width/height. */
+        kind: 'line';
+        width: number;
+        height: number;
+        color: string;
+        stroke: number;
+      }
+    | {
+        /** A regular polygon inscribed in the layer's width/height box. */
+        kind: 'polygon';
+        width: number;
+        height: number;
+        color: string;
+        stroke: number;
+        fill: boolean;
+        sides: number;
       }
   );
 /** A persisted, editable layer folder. Layers keep their own order in Frame.layers. */
@@ -208,6 +235,54 @@ export function localSize(matrix: Matrix, diameter: number): number {
 }
 export const filterCSS = (a: Adjustments) =>
   `${a.filter === 'none' ? '' : a.filter} brightness(${a.brightness}%) contrast(${a.contrast}%) saturate(${a.saturation}%) blur(${a.blur}px)`;
+
+/** Fill in adjustment fields introduced after the v2 document format.
+ *
+ * Older v2 drafts did not contain levels values. Keeping this helper at the
+ * rendering boundary lets those documents open safely while every new edit
+ * writes the complete adjustment model back to history.
+ */
+export function effectiveAdjustments(value: Partial<Adjustments>): Adjustments {
+  return {
+    ...neutral,
+    ...value,
+  };
+}
+
+/** Convert one 8-bit channel through an input-levels correction. */
+export function levelsChannel(
+  value: number,
+  black: number,
+  white: number,
+  gamma: number,
+): number {
+  const span = Math.max(1, white - black),
+    normalized = Math.max(0, Math.min(1, (value - black) / span)),
+    corrected = Math.pow(normalized, 1 / Math.max(0.1, gamma));
+  return Math.max(0, Math.min(255, Math.round(corrected * 255)));
+}
+
+/** Apply input levels in-place while preserving alpha and source pixels. */
+export function applyLevels(
+  canvas: HTMLCanvasElement,
+  adjustments: Partial<Adjustments>,
+): HTMLCanvasElement {
+  const a = effectiveAdjustments(adjustments),
+    black = Math.max(0, Math.min(254, a.levelsBlack)),
+    white = Math.max(black + 1, Math.min(255, a.levelsWhite)),
+    gamma = Math.max(0.1, Math.min(3, a.levelsGamma));
+  if (black === 0 && white === 255 && gamma === 1) return canvas;
+  const context = canvas.getContext('2d')!,
+    image = context.getImageData(0, 0, canvas.width, canvas.height),
+    data = image.data;
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = levelsChannel(data[i], black, white, gamma);
+    data[i + 1] = levelsChannel(data[i + 1], black, white, gamma);
+    data[i + 2] = levelsChannel(data[i + 2], black, white, gamma);
+  }
+  context.putImageData(image, 0, 0);
+  return canvas;
+}
 const record = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === 'object' && !Array.isArray(v);
 const number = (v: unknown, min: number, max: number) =>
@@ -226,7 +301,14 @@ export function validAdjustments(v: unknown): v is Adjustments {
     number(v.saturation, 0, 200) &&
     number(v.blur, 0, 20) &&
     typeof v.filter === 'string' &&
-    FILTER_VALUES.includes(v.filter)
+    FILTER_VALUES.includes(v.filter) &&
+    // v2 drafts may omit these fields; validateDraft normalizes them before
+    // validating frames, while direct callers still receive strict ranges.
+    number(v.levelsBlack ?? neutral.levelsBlack, 0, 254) &&
+    number(v.levelsWhite ?? neutral.levelsWhite, 1, 255) &&
+    number(v.levelsGamma ?? neutral.levelsGamma, 0.1, 3) &&
+    Number(v.levelsWhite ?? neutral.levelsWhite) >
+      Number(v.levelsBlack ?? neutral.levelsBlack)
   );
 }
 export function validAsset(value: unknown): value is Asset {
@@ -335,13 +417,19 @@ export function validateFrame(
         typeof layer.bold !== 'boolean'
       )
         return fail();
-    } else if (layer.kind === 'rectangle' || layer.kind === 'ellipse') {
+    } else if (
+      layer.kind === 'rectangle' ||
+      layer.kind === 'ellipse' ||
+      layer.kind === 'line' ||
+      layer.kind === 'polygon'
+    ) {
       if (
         !number(layer.width, 1, 16000) ||
         !number(layer.height, 1, 16000) ||
         !number(layer.stroke, 1, 100) ||
         !/^#[a-f\d]{6}$/i.test(String(layer.color)) ||
-        typeof layer.fill !== 'boolean'
+        (layer.kind !== 'line' && typeof layer.fill !== 'boolean') ||
+        (layer.kind === 'polygon' && !integer(layer.sides, 3, 32))
       )
         return fail();
     } else return fail();
@@ -663,6 +751,7 @@ export async function renderFrame(
       maskContext.filter = filterCSS(layer.adjustments);
       maskContext.drawImage(rasterSource, 0, 0);
       maskContext.restore();
+      applyLevels(masked, layer.adjustments);
       const maskImage = await decodeAsset(assets[layer.mask]);
       maskContext.save();
       maskContext.globalCompositeOperation = 'destination-in';
@@ -673,6 +762,33 @@ export async function renderFrame(
       context.globalAlpha = layer.opacity * groupOpacity;
       context.globalCompositeOperation = layer.blend;
       context.drawImage(masked, 0, 0);
+      context.restore();
+      continue;
+    }
+    // Canvas 2D has no levels filter. Render raster layers into a frame-space
+    // buffer first, apply the input-levels LUT, then composite the result so
+    // transforms, blend modes and opacity remain nondestructive metadata.
+    if (
+      layer.kind === 'raster' &&
+      rasterSource &&
+      (layer.adjustments.levelsBlack !== neutral.levelsBlack ||
+        layer.adjustments.levelsWhite !== neutral.levelsWhite ||
+        layer.adjustments.levelsGamma !== neutral.levelsGamma)
+    ) {
+      const leveled = surface(frame.w, frame.h),
+        leveledContext = leveled.getContext('2d')!;
+      leveledContext.save();
+      leveledContext.setTransform(...layer.matrix);
+      leveledContext.globalAlpha = 1;
+      leveledContext.globalCompositeOperation = 'source-over';
+      leveledContext.filter = filterCSS(layer.adjustments);
+      leveledContext.drawImage(rasterSource, 0, 0);
+      leveledContext.restore();
+      applyLevels(leveled, layer.adjustments);
+      context.save();
+      context.globalAlpha = layer.opacity * groupOpacity;
+      context.globalCompositeOperation = layer.blend;
+      context.drawImage(leveled, 0, 0);
       context.restore();
       continue;
     }
@@ -710,6 +826,35 @@ export async function renderFrame(
       context.lineWidth = layer.stroke;
       context.beginPath();
       context.ellipse(layer.width / 2, layer.height / 2, layer.width / 2, layer.height / 2, 0, 0, Math.PI * 2);
+      if (layer.fill) context.fill();
+      else context.stroke();
+    }
+    if (layer.kind === 'line') {
+      context.strokeStyle = layer.color;
+      context.lineWidth = layer.stroke;
+      context.lineCap = 'round';
+      context.beginPath();
+      context.moveTo(0, 0);
+      context.lineTo(layer.width, layer.height);
+      context.stroke();
+    }
+    if (layer.kind === 'polygon') {
+      context.fillStyle = layer.color;
+      context.strokeStyle = layer.color;
+      context.lineWidth = layer.stroke;
+      context.beginPath();
+      const cx = layer.width / 2,
+        cy = layer.height / 2,
+        rx = Math.max(0.5, layer.width / 2 - layer.stroke / 2),
+        ry = Math.max(0.5, layer.height / 2 - layer.stroke / 2);
+      for (let i = 0; i < layer.sides; i += 1) {
+        const angle = -Math.PI / 2 + (i * Math.PI * 2) / layer.sides,
+          x = cx + Math.cos(angle) * rx,
+          y = cy + Math.sin(angle) * ry;
+        if (i === 0) context.moveTo(x, y);
+        else context.lineTo(x, y);
+      }
+      context.closePath();
       if (layer.fill) context.fill();
       else context.stroke();
     }

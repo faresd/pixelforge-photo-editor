@@ -1,17 +1,48 @@
 import type { CloudLink } from './cloud';
-import { EXPORT_FORMATS, validExportQuality, type ExportFormat } from './export';
+import {
+  EXPORT_FORMATS,
+  validExportQuality,
+  validExportTargetBytes,
+  type ExportFormat,
+} from './export';
 import {
   validAsset,
   validateFrame,
   validAdjustments,
   referencedAssets,
   commonLayer,
+  effectiveAdjustments,
   neutral,
   validId,
   type Assets,
   type Frame,
 } from './document';
-export type Tool = 'move' | 'hand' | 'zoom' | 'eyedropper' | 'fill' | 'gradient' | 'clone' | 'heal' | 'crop' | 'brush' | 'pencil' | 'color-replace' | 'eraser' | 'text' | 'rectangle' | 'ellipse' | 'select' | 'ellipse-select' | 'row-select' | 'column-select' | 'lasso' | 'polygonal-lasso' | 'magic-wand';
+export type Tool =
+  | 'move'
+  | 'hand'
+  | 'zoom'
+  | 'eyedropper'
+  | 'fill'
+  | 'gradient'
+  | 'clone'
+  | 'heal'
+  | 'crop'
+  | 'brush'
+  | 'pencil'
+  | 'color-replace'
+  | 'eraser'
+  | 'text'
+  | 'rectangle'
+  | 'ellipse'
+  | 'line'
+  | 'polygon'
+  | 'select'
+  | 'ellipse-select'
+  | 'row-select'
+  | 'column-select'
+  | 'lasso'
+  | 'polygonal-lasso'
+  | 'magic-wand';
 export type Shot = { url: string; w: number; h: number };
 export type Settings = {
   tool: Tool;
@@ -25,6 +56,8 @@ export type Settings = {
   colorTolerance?: number;
   exportFormat?: ExportFormat;
   exportQuality?: number;
+  /** Optional lossy-export target in bytes; absent means manual quality mode. */
+  exportTargetBytes?: number;
   text: string;
   fontSize: number;
   brightness: number;
@@ -48,15 +81,44 @@ let database: Promise<IDBDatabase> | undefined;
 function validSettings(settings: Settings) {
   if (
     !settings ||
-    !['move', 'hand', 'zoom', 'eyedropper', 'fill', 'gradient', 'clone', 'heal', 'crop', 'brush', 'pencil', 'color-replace', 'eraser', 'text', 'rectangle', 'ellipse', 'select', 'ellipse-select', 'row-select', 'column-select', 'lasso', 'polygonal-lasso', 'magic-wand'].includes(
-      settings.tool,
-    ) ||
+    ![
+      'move',
+      'hand',
+      'zoom',
+      'eyedropper',
+      'fill',
+      'gradient',
+      'clone',
+      'heal',
+      'crop',
+      'brush',
+      'pencil',
+      'color-replace',
+      'eraser',
+      'text',
+      'rectangle',
+      'ellipse',
+      'line',
+      'polygon',
+      'select',
+      'ellipse-select',
+      'row-select',
+      'column-select',
+      'lasso',
+      'polygonal-lasso',
+      'magic-wand',
+    ].includes(settings.tool) ||
     typeof settings.text !== 'string' ||
     settings.text.length > 10000 ||
-    (settings.exportFormat !== undefined && !EXPORT_FORMATS.includes(settings.exportFormat)) ||
-    (settings.exportQuality !== undefined && !validExportQuality(settings.exportQuality)) ||
+    (settings.exportFormat !== undefined &&
+      !EXPORT_FORMATS.includes(settings.exportFormat)) ||
+    (settings.exportQuality !== undefined &&
+      !validExportQuality(settings.exportQuality)) ||
+    (settings.exportTargetBytes !== undefined &&
+      !validExportTargetBytes(settings.exportTargetBytes)) ||
     !/^#[a-f\d]{6}$/i.test(settings.color) ||
-    (settings.backgroundColor !== undefined && !/^#[a-f\d]{6}$/i.test(settings.backgroundColor))
+    (settings.backgroundColor !== undefined &&
+      !/^#[a-f\d]{6}$/i.test(settings.backgroundColor))
   )
     return false;
   const ranges = [
@@ -85,6 +147,13 @@ export function validateDraft(input: unknown): Draft {
   if (!input || typeof input !== 'object')
     throw new Error('Invalid project file');
   const value = input as Draft;
+  // v2 drafts created before Levels shipped omit its three fields. Normalize
+  // them at the persistence boundary so the UI and renderer always receive a
+  // complete adjustment record while keeping old bookmarks importable.
+  const settings =
+    value.settings && typeof value.settings === 'object'
+      ? { ...value.settings, ...effectiveAdjustments(value.settings) }
+      : value.settings;
   if (
     !Array.isArray(value.history) ||
     !value.history.length ||
@@ -92,7 +161,7 @@ export function validateDraft(input: unknown): Draft {
     !Number.isInteger(value.index) ||
     value.index < 0 ||
     value.index >= value.history.length ||
-    !validSettings(value.settings) ||
+    !validSettings(settings) ||
     typeof value.name !== 'string' ||
     value.name.length > 160
   )
@@ -118,6 +187,7 @@ export function validateDraft(input: unknown): Draft {
             kind: 'raster' as const,
             asset,
             adjustments: {
+              ...neutral,
               brightness: value.settings.brightness,
               contrast: value.settings.contrast,
               saturation: value.settings.saturation,
@@ -148,7 +218,14 @@ export function validateDraft(input: unknown): Draft {
     )
   )
     throw new Error('Invalid project assets');
-  value.history.forEach((frame) => validateFrame(frame, value.assets));
+  const history = value.history.map((frame) => ({
+    ...frame,
+    layers: frame.layers.map((layer) => ({
+      ...layer,
+      adjustments: effectiveAdjustments(layer.adjustments),
+    })),
+  }));
+  history.forEach((frame) => validateFrame(frame, value.assets));
   if (
     Object.values(value.assets).reduce(
       (total, asset) => total + asset.url.length,
@@ -157,7 +234,12 @@ export function validateDraft(input: unknown): Draft {
     64 * 1024 * 1024
   )
     throw new Error('Project assets exceed 64 MB');
-  return { ...value, assets: referencedAssets(value.history, value.assets) };
+  return {
+    ...value,
+    history,
+    settings: settings as Settings,
+    assets: referencedAssets(history, value.assets),
+  };
 }
 function openDatabase() {
   database ??= new Promise<IDBDatabase>((resolve, reject) => {

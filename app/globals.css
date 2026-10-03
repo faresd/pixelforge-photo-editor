@@ -51,6 +51,7 @@
 .layer-field input[type=range] { width:100%; accent-color:#8b5cf6; }
 .layer-position { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
 .layers-panel p,.adjust-note { color:#aeb8c8; font-size:11px; line-height:1.5; margin:9px 0 0; }
+.adjustment-subtitle{margin:12px 0 2px;color:#7f8795;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.08em}
 .layer-typography textarea { min-height:70px; resize:vertical; }
 .canvas-wrap { background: repeating-conic-gradient(#e4e4e7 0% 25%,#ffffff 0% 50%) 50% / 16px 16px; }
 .tool-move { cursor: move; }

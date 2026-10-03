@@ -578,6 +578,67 @@ test('ellipse layers stay vector-editable through export and reload', async ({
   });
 });
 
+test('polygon layers render filled pixels, keep editable sides, and round-trip with undo', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
+  await page.getByLabel('Drawing color', { exact: true }).fill('#ff0000');
+  await page.getByRole('button', { name: 'Polygon tool', exact: true }).click();
+  const canvas = page.getByTestId('editor-canvas'), box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.55, box.y + box.height * 0.55, { steps: 5 });
+  await page.mouse.up();
+  await expect(page.getByLabel('Polygon sides', { exact: true })).toBeVisible();
+  await page.getByLabel('Filled shape', { exact: true }).check();
+  await page.getByLabel('Polygon sides', { exact: true }).fill('6');
+  await page.getByLabel('Polygon sides', { exact: true }).press('Enter');
+  await saved(page);
+  const exported = await project(page), polygon = exported.value.history[exported.value.index].layers[1];
+  expect(polygon).toMatchObject({ kind: 'polygon', sides: 6, fill: true, color: '#ff0000' });
+  const center = { x: Math.round(polygon.matrix[4] + polygon.width / 2), y: Math.round(polygon.matrix[5] + polygon.height / 2) };
+  await expect.poll(() => canvas.evaluate((item: HTMLCanvasElement, p) => Array.from(item.getContext('2d')!.getImageData(p.x, p.y, 1, 1).data), center)).toEqual([255, 0, 0, 255]);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  await expect(page.getByLabel('Polygon sides', { exact: true })).toHaveValue('5');
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Redo/ }).click();
+  await expect(page.getByLabel('Polygon sides', { exact: true })).toHaveValue('6');
+  await page.reload();
+  await expect(page.getByLabel('Polygon sides', { exact: true })).toHaveValue('6');
+  const reloaded = await project(page);
+  expect(reloaded.value.history[reloaded.value.index].layers[1]).toMatchObject({ kind: 'polygon', sides: 6, fill: true });
+});
+
+test('line layers preserve stroke pixels and geometry through reload', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
+  await page.getByLabel('Drawing color', { exact: true }).fill('#00ff00');
+  await page.getByRole('button', { name: 'Line tool', exact: true }).click();
+  const canvas = page.getByTestId('editor-canvas'), box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.25);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.65, { steps: 5 });
+  await page.mouse.up();
+  await expect(page.getByLabel('Line length', { exact: true })).toBeVisible();
+  const exported = await project(page), line = exported.value.history[exported.value.index].layers[1];
+  expect(line).toMatchObject({ kind: 'line', color: '#00ff00' });
+  const sample = { x: Math.round(line.matrix[4] + line.width / 2), y: Math.round(line.matrix[5] + line.height / 2) };
+  await expect.poll(() => canvas.evaluate((item: HTMLCanvasElement, p) => Array.from(item.getContext('2d')!.getImageData(p.x, p.y, 1, 1).data), sample)).toEqual([0, 255, 0, 255]);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  await expect(page.getByLabel('Line length', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Redo/ }).click();
+  await expect(page.getByLabel('Line length', { exact: true })).toBeVisible();
+  await page.reload();
+  const reloaded = await project(page);
+  expect(reloaded.value.history[reloaded.value.index].layers[1]).toMatchObject({ kind: 'line', color: '#00ff00', width: line.width, height: line.height });
+});
+
 test('paint bucket fills a contiguous raster region and is undoable', async ({
   page,
 }) => {
