@@ -119,7 +119,9 @@ test('Reveal All handles rotated/vector/text layers and returns a no-op when con
   const contained = planRevealAll({ w: 200, h: 200, layers: [shape, text] }, {});
   assert.equal(contained.changed, false);
   assert.deepEqual(layerLocalBounds(text, {}), { x: 0, y: 0, width: 40, height: 60 });
-  assert.deepEqual(layerBounds(shape, {}), { x: 79.5, y: 9.5, width: 11, height: 21 });
+  assert.deepEqual(layerBounds(shape, {}), { x: 80, y: 10, width: 10, height: 20 });
+  const outlined = { ...shape, fill: false };
+  assert.deepEqual(layerBounds(outlined, {}), { x: 79.5, y: 9.5, width: 11, height: 21 });
 });
 
 test('Reveal All enforces canvas limits and validates missing raster assets', () => {

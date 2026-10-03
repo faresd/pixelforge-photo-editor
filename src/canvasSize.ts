@@ -300,7 +300,8 @@ export function layerLocalBounds(layer: Layer, assets: Assets): PixelBounds {
       height: Math.max(1, lines * layer.fontSize * lineHeight),
     };
   }
-  const stroke = Math.max(1, layer.stroke || 1);
+  // Filled rectangle/ellipse layers do not call stroke in the renderer.
+  const stroke = layer.kind !== 'line' && layer.fill ? 0 : Math.max(1, layer.stroke || 1);
   return {
     x: -stroke / 2,
     y: -stroke / 2,
