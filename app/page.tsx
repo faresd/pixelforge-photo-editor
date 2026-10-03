@@ -84,6 +84,7 @@ import { useDocument } from '../src/useDocument';
 import LayersPanel from '../src/LayersPanel';
 import ResizeDialog from '../src/ResizeDialog';
 import ExportDialog from '../src/ExportDialog';
+import BatchExportDialog from '../src/BatchExportDialog';
 import SelectionTransformDialog from '../src/SelectionTransformDialog';
 import { type ExportFormat } from '../src/export';
 import { renderSelection } from '../src/selections';
@@ -102,6 +103,7 @@ type Command =
   | 'noop'
   | 'resize'
   | 'project-save'
+  | 'batch-export'
   | 'project-open'
   | 'new-white'
   | 'new-transparent'
@@ -228,6 +230,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
   File: [
     { label: 'Open project…', command: 'project-open' },
     { label: 'Download project file', command: 'project-save' },
+    { label: 'Batch export history…', command: 'batch-export' },
     { label: 'New white document', shortcut: 'Ctrl+N', command: 'new-white' },
     { label: 'New transparent document', command: 'new-transparent' },
     { label: 'Open image…', shortcut: 'Ctrl+O', command: 'open' },
@@ -554,6 +557,11 @@ export default function Home() {
   const [activeMenu, setActiveMenu] = useState<MenuName | null>(null),
     [exporting, setExporting] = useState<{
       frame: Frame;
+      assets: typeof assets.current;
+      name: string;
+    } | null>(null),
+    [batchExporting, setBatchExporting] = useState<{
+      history: Frame[];
       assets: typeof assets.current;
       name: string;
     } | null>(null),
@@ -2854,6 +2862,12 @@ export default function Home() {
     if (command === 'resize')
       setResizing({ width: current().w, height: current().h });
     else if (command === 'project-save') exportProject();
+    else if (command === 'batch-export')
+      setBatchExporting({
+        history: history.current.slice(),
+        assets: { ...assets.current },
+        name,
+      });
     else if (command === 'project-open') projectFile.current?.click();
     else if (command === 'new-white') newDocument(false);
     else if (command === 'new-transparent') newDocument(true);
@@ -3033,6 +3047,13 @@ export default function Home() {
           setQuality={setExportQuality}
           setTargetBytes={setExportTargetBytes}
           close={() => setExporting(null)}
+          downloaded={setNotice}
+        />
+      )}
+      {batchExporting && (
+        <BatchExportDialog
+          {...batchExporting}
+          close={() => setBatchExporting(null)}
           downloaded={setNotice}
         />
       )}
