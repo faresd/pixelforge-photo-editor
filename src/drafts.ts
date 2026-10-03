@@ -41,6 +41,9 @@ export type Tool =
   | 'eraser'
   | 'background-eraser'
   | 'magic-eraser'
+  | 'dodge'
+  | 'burn'
+  | 'sponge'
   | 'text'
   | 'rectangle'
   | 'ellipse'
@@ -68,6 +71,11 @@ export type Settings = {
   /** Opt-in pen/touch pressure mapping for brush alpha. */
   pressureOpacity?: boolean;
   colorTolerance?: number;
+  /** Tonal retouch settings persisted with the active tool. */
+  tonalExposure?: number;
+  tonalRange?: 'shadows' | 'midtones' | 'highlights';
+  spongeMode?: 'saturate' | 'desaturate';
+  spongeVibrance?: number;
   exportFormat?: ExportFormat;
   exportQuality?: number;
   /** Optional lossy-export target in bytes; absent means manual quality mode. */
@@ -116,6 +124,9 @@ function validSettings(settings: Settings) {
       'eraser',
       'background-eraser',
       'magic-eraser',
+      'dodge',
+      'burn',
+      'sponge',
       'text',
       'rectangle',
       'ellipse',
@@ -152,6 +163,8 @@ function validSettings(settings: Settings) {
     [settings.brushOpacity ?? 100, 1, 100],
     [settings.hardness ?? 100, 0, 100],
     [settings.colorTolerance ?? 24, 0, 255],
+    [settings.tonalExposure ?? 50, 1, 100],
+    [settings.spongeVibrance ?? 50, 1, 100],
   ];
   return (
     ranges.every(
@@ -164,6 +177,8 @@ function validSettings(settings: Settings) {
     ) &&
     (settings.pressureSize === undefined || typeof settings.pressureSize === 'boolean') &&
     (settings.pressureOpacity === undefined || typeof settings.pressureOpacity === 'boolean') &&
+    (settings.tonalRange === undefined || ['shadows', 'midtones', 'highlights'].includes(settings.tonalRange)) &&
+    (settings.spongeMode === undefined || ['saturate', 'desaturate'].includes(settings.spongeMode)) &&
     validAdjustments(settings)
   );
 }
