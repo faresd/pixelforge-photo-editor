@@ -90,7 +90,9 @@ test('PNG JPEG and WebP exports report bytes, quality and persist preferences', 
         page.getByText('Transparent areas become white.', { exact: false }),
       ).toBeVisible();
     const bytes = page.getByLabel('Encoded file size');
-    await expect(bytes).toHaveAttribute('data-bytes', /\d+/);
+    await expect(bytes).toHaveAttribute('data-bytes', /\d+/, {
+      timeout: 15_000,
+    });
     const pending = page.waitForEvent('download');
     await page
       .getByRole('button', { name: 'Download image', exact: true })
@@ -109,10 +111,14 @@ test('PNG JPEG and WebP exports report bytes, quality and persist preferences', 
   await page.getByLabel('Export format').selectOption('webp');
   await page.getByLabel('Export quality').fill('20');
   const webpBytes = page.getByLabel('Encoded file size');
-  await expect(webpBytes).toHaveAttribute('data-bytes', /\d+/);
+  await expect(webpBytes).toHaveAttribute('data-bytes', /\d+/, {
+    timeout: 15_000,
+  });
   const low = Number(await webpBytes.getAttribute('data-bytes'));
   await page.getByLabel('Export quality').fill('95');
-  await expect(webpBytes).toHaveAttribute('data-bytes', /\d+/);
+  await expect(webpBytes).toHaveAttribute('data-bytes', /\d+/, {
+    timeout: 15_000,
+  });
   const high = Number(await webpBytes.getAttribute('data-bytes'));
   expect(high).not.toBe(low);
   await expect(

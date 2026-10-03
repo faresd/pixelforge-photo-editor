@@ -5135,7 +5135,7 @@ export default function Home() {
         </div>
       </section>
       <div className="workspace">
-        <aside className="toolbar" aria-label="Tools">
+        <aside className="toolbar" aria-label="Tools" data-testid="tool-palette">
           {TOOLS.map(({ id, label, icon: Icon, key }) => (
             <button
               key={id}
