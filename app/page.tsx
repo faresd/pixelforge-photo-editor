@@ -87,6 +87,9 @@ import ResizeDialog from '../src/ResizeDialog';
 import ExportDialog from '../src/ExportDialog';
 import BatchExportDialog from '../src/BatchExportDialog';
 import SelectionTransformDialog from '../src/SelectionTransformDialog';
+import CanvasSizeDialog from '../src/CanvasSizeDialog';
+import TrimDialog from '../src/TrimDialog';
+import { planCanvasSize, planRevealAll, trimBounds, type CanvasSizeRequest, type TrimMode, type TrimSides } from '../src/canvasSize';
 import CurveEditor from '../src/CurveEditor';
 import { type CurveChannel, type CurvePoints } from '../src/curves';
 import { type ExportFormat } from '../src/export';
@@ -121,6 +124,9 @@ type MenuName =
 type Command =
   | 'noop'
   | 'resize'
+  | 'canvas-size'
+  | 'trim'
+  | 'reveal-all'
   | 'project-save'
   | 'batch-export'
   | 'project-open'
@@ -342,7 +348,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: '', command: 'noop', separator: true },
     { label: 'Image Size…', shortcut: 'Alt+Ctrl+I', command: 'resize' },
     { label: 'Generative Upscale…', command: 'noop', disabled: true },
-    { label: 'Canvas Size…', command: 'noop', disabled: true },
+    { label: 'Canvas Size…', command: 'canvas-size' },
     { label: 'Image Rotation', command: 'noop', disabled: true },
     { label: 'Resize image…', command: 'resize' },
     { label: 'Crop', shortcut: 'C', command: 'crop' },
@@ -350,8 +356,8 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Rotate right', command: 'rotate-right' },
     { label: 'Flip horizontal', command: 'flip-h' },
     { label: 'Flip vertical', command: 'flip-v' },
-    { label: 'Trim…', command: 'noop', disabled: true },
-    { label: 'Reveal All', command: 'noop', disabled: true },
+    { label: 'Trim…', command: 'trim' },
+    { label: 'Reveal All', command: 'reveal-all' },
     { label: '', command: 'noop', separator: true },
     { label: 'Duplicate…', command: 'noop', disabled: true },
     { label: 'Apply Image…', command: 'noop', disabled: true },
@@ -600,6 +606,11 @@ export default function Home() {
       height: number;
       imageSize?: Frame['imageSize'];
     } | null>(null);
+  const [canvasSizing, setCanvasSizing] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
+  const [trimming, setTrimming] = useState(false);
   const [selectionTransforming, setSelectionTransforming] = useState(false);
   const [quickMasking, setQuickMasking] = useState(false),
     [quickMask, setQuickMask] = useState<QuickMask | null>(null),
@@ -1672,6 +1683,93 @@ export default function Home() {
     if (!commit(next)) return;
     setResizing(null);
     setNotice(`Image resized to ${plan.width} × ${plan.height}; layers remain editable`);
+  };
+  const resizeCanvas = async (request: CanvasSizeRequest) => {
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before changing the canvas');
+      return;
+    }
+    const f = current();
+    try {
+      const plan = planCanvasSize(f.w, f.h, request);
+      if (!plan.changed) {
+        setCanvasSizing(null);
+        setNotice('Canvas already has those dimensions');
+        return;
+      }
+      const next = await transformFrameWithMasks(
+        f,
+        [1, 0, 0, 1, plan.offsetX, plan.offsetY],
+        assets.current,
+        plan.width,
+        plan.height,
+      );
+      if (!commit(next)) return;
+      setCanvasSizing(null);
+      setNotice(`Canvas changed to ${plan.width} × ${plan.height}; layer pixels remain unchanged`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Canvas Size values are invalid');
+    }
+  };
+  const trimDocument = async (mode: TrimMode, sides: TrimSides) => {
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before trimming the canvas');
+      return;
+    }
+    const f = current();
+    const rendered = await renderFrame(f, assets.current);
+    let bounds;
+    try {
+      bounds = trimBounds(
+        rendered.getContext('2d')!.getImageData(0, 0, rendered.width, rendered.height).data,
+        rendered.width,
+        rendered.height,
+        mode,
+        sides,
+      );
+      if (!bounds) throw new Error('Trim would remove the entire image');
+    } catch (error) {
+      setTrimming(false);
+      setNotice(error instanceof Error ? error.message : 'Trim could not be applied');
+      return;
+    }
+    setTrimming(false);
+    if (bounds.left === 0 && bounds.top === 0 && bounds.right === f.w && bounds.bottom === f.h) {
+      setNotice('Canvas already fits the visible artwork');
+      return;
+    }
+    const next = await transformFrameWithMasks(
+      f,
+      [1, 0, 0, 1, -bounds.left, -bounds.top],
+      assets.current,
+      bounds.right - bounds.left,
+      bounds.bottom - bounds.top,
+    );
+    if (commit(next)) setNotice(`Canvas trimmed to ${next.w} × ${next.h}; layer pixels retained`);
+  };
+  const revealAll = async () => {
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before revealing all artwork');
+      return;
+    }
+    const f = current();
+    try {
+      const plan = planRevealAll(f, assets.current);
+      if (!plan.changed) {
+        setNotice('Canvas already reveals all artwork');
+        return;
+      }
+      const next = await transformFrameWithMasks(
+        f,
+        plan.matrix,
+        assets.current,
+        plan.width,
+        plan.height,
+      );
+      if (commit(next)) setNotice(`All artwork revealed in a ${next.w} × ${next.h} canvas`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Reveal All could not be applied');
+    }
   };
   const discard = async () => {
     if (
@@ -3392,6 +3490,10 @@ export default function Home() {
     }
     if (command === 'resize')
       setResizing({ width: current().w, height: current().h, imageSize: effectiveImageSize(current().imageSize) });
+    else if (command === 'canvas-size')
+      setCanvasSizing({ width: current().w, height: current().h });
+    else if (command === 'trim') setTrimming(true);
+    else if (command === 'reveal-all') void revealAll();
     else if (command === 'project-save') exportProject();
     else if (command === 'batch-export')
       setBatchExporting({
@@ -3602,6 +3704,20 @@ export default function Home() {
           imageSize={resizing.imageSize}
           close={() => setResizing(null)}
           apply={resizeImage}
+        />
+      )}
+      {canvasSizing && (
+        <CanvasSizeDialog
+          width={canvasSizing.width}
+          height={canvasSizing.height}
+          close={() => setCanvasSizing(null)}
+          apply={resizeCanvas}
+        />
+      )}
+      {trimming && (
+        <TrimDialog
+          close={() => setTrimming(false)}
+          apply={trimDocument}
         />
       )}
       {transformSelectionValue && (
