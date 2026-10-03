@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import {
   DEFAULT_TILE_SIZE,
   TILE_MAX_DIMENSION,
-  TILE_MAX_PIXELS,
   TILE_MAX_COUNT,
   TILE_MAX_SIZE,
   TILE_MIN_SIZE,
