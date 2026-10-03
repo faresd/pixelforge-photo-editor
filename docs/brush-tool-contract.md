@@ -8,18 +8,21 @@ immutable PNG asset and remains undoable.
 ## Current implementation audit
 
 The editor exposes `size`, `hardness` and `brushOpacity` for Brush, Pencil, Eraser,
-Clone and Healing. Each stroke uses a full-canvas raster buffer; mouse events
-use a pressure fallback of `1`, while pen and touch pressure currently scale
-both the stamp diameter and opacity. Brush and Eraser use Canvas 2D blur to
-approximate a soft edge, and Clone/Healing retain the explicit source point.
-Healing adds a fixed `0.65` blend and one-pixel blur. A pointer move publishes
-a preview and pointer-up commits one PNG asset to the selected raster layer.
+Clone and Healing. All four raster paths now use the same bounded local radial
+stamp primitive; no full-canvas mask is allocated for an individual pointer
+event. Mouse and unusable pen/touch pressure use a deterministic fallback of
+`1`. Pen and touch pressure affect diameter and opacity only when their separate
+opt-in controls are enabled. Brush and Eraser use radial alpha coverage,
+Clone keeps a fixed source offset, and Healing uses the same mask with its
+bounded `0.65` blend. A pointer move publishes a preview and pointer-up commits
+one PNG asset to the selected raster layer.
 
-Pencil uses an integer hard edge and hides the softness control while sharing
-the same undoable raster path. This satisfies persistence, mouse/pen/touch fallback and basic configurable
-opacity/hardness coverage. The blur-based softness and always-on pressure
-mapping remain intentionally bounded approximations until the shared radial
-stamp primitive and opt-in pressure controls are implemented.
+Pencil uses an integer hard edge and hides the softness and pressure controls
+while sharing the same undoable raster path. Clone and Healing queue early
+pointer points until their source buffer is ready, then replay them through the
+same stamp contract. The pure model suite covers 11 brush cases and the
+desktop/mobile browser suite covers settings migration, pressure fallback and
+mapping, hardness, eraser undo, clone/healing commits, and touch cancellation.
 
 ## Persisted tool state
 
@@ -38,10 +41,9 @@ fallback of `1`, so a normal mouse stroke is not unexpectedly faint. Pressure
 values are transient input events and must never be serialized into a project
 file.
 
-The current validation uses a minimum hardness of `1`; change that to `0`
-before exposing a fully soft brush. Keep the existing size limits until a
-bounded large-image budget is measured; increasing the maximum size is a
-separate performance change.
+Hardness validation accepts `0` for a fully soft edge. Keep the existing size
+limits until a bounded large-image budget is measured; increasing the maximum
+size is a separate performance change.
 
 ## Stamp algorithm
 
@@ -64,9 +66,9 @@ Use one shared stamp primitive for Brush, Eraser, Clone and Healing:
    Healing uses the same mask and a bounded blend/blur operation; it must not
    mutate the source asset while a preview is being drawn.
 
-The implementation may use an offscreen mask canvas or an `ImageData` alpha
-operation. It must avoid creating an unbounded canvas per pointer event and
-must retain the existing last-render-wins behavior while the pointer is down.
+The implementation uses a clipped `ImageData` mask and avoids creating an
+unbounded canvas per pointer event. It retains the existing last-render-wins
+behavior while the pointer is down.
 Pointer capture and `touch-action: none` remain required for touch and pen
 strokes; `pointercancel` must discard the preview without committing pixels.
 
@@ -122,7 +124,7 @@ status before reading pixels.
   re-rendered when a setting changes, and the original asset must stay
   recoverable through undo and project export.
 
-The milestone is complete only when the UI controls, validated persistence,
-shared stamp implementation, desktop/mobile tests, and protected CI/live
-revision evidence all pass. It does not claim Photoshop-equivalent brush
-simulation, mixer behavior, or pressure curves.
+The radial stamp milestone is complete when the UI controls, validated
+persistence, shared stamp implementation, desktop/mobile tests, and protected
+CI/live revision evidence all pass. It does not claim Photoshop-equivalent
+brush simulation, mixer behavior, wet-media behavior, or pressure curves.
