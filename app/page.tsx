@@ -66,6 +66,7 @@ import {
   effectiveAdjustments,
   inversePoint,
   localSize,
+  multiply,
   neutral,
   rasterFrame,
   replaceColorStroke,
@@ -86,6 +87,7 @@ import {
   type Assets,
 } from '../src/document';
 import { useDocument } from '../src/useDocument';
+import { beginPerformanceSpan, type PerformanceSpan } from '../src/performanceMarks';
 import LayersPanel from '../src/LayersPanel';
 import ResizeDialog from '../src/ResizeDialog';
 import ExportDialog from '../src/ExportDialog';
@@ -95,12 +97,16 @@ import type { BatchImageSource } from '../src/imageBatch';
 import AccountMenu from '../src/AccountMenu';
 import ReleaseStatus from '../src/ReleaseStatusView';
 import SelectionTransformDialog from '../src/SelectionTransformDialog';
+import LayerTransformDialog, {
+  type LayerTransformBounds,
+} from '../src/LayerTransformDialog';
 import SelectionModifyDialog from '../src/SelectionModifyDialog';
 import CanvasSizeDialog from '../src/CanvasSizeDialog';
 import TrimDialog from '../src/TrimDialog';
 import {
   measuredTextLayerBounds,
   planCanvasSize,
+  layerLocalBounds,
   planRevealAll,
   trimBounds,
   type CanvasSizeRequest,
@@ -112,6 +118,10 @@ import { type CurveChannel, type CurvePoints } from '../src/curves';
 import { applyAutoAdjustmentsPixels, type AutoMode } from '../src/auto';
 import { createBackgroundMask } from '../src/backgroundRemoval';
 import { type ExportFormat } from '../src/export';
+import {
+  describeImportFormat,
+  importFailureMessage,
+} from '../src/importFormats';
 import { renderSelection } from '../src/selections';
 import {
   refineSelectionAlpha,
@@ -217,6 +227,7 @@ type Command =
   | 'invert-layer-mask'
   | 'toggle-layer-mask'
   | 'remove-layer-mask'
+  | 'free-transform'
   | 'quick-mask'
   | 'save-selection'
   | 'load-selection'
@@ -392,8 +403,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     {
       label: 'Free Transform',
       shortcut: 'Ctrl+T',
-      command: 'noop',
-      disabled: true,
+      command: 'free-transform',
     },
     { label: 'Transform', command: 'noop', disabled: true },
     { label: 'Perspective Warp', command: 'noop', disabled: true },
@@ -1006,6 +1016,7 @@ export default function Home() {
   } | null>(null);
   const [trimming, setTrimming] = useState(false);
   const [selectionTransforming, setSelectionTransforming] = useState(false);
+  const [layerTransforming, setLayerTransforming] = useState(false);
   const [selectionRefining, setSelectionRefining] = useState<SelectionRefineMode | null>(null);
   const [quickMasking, setQuickMasking] = useState(false),
     [quickMask, setQuickMask] = useState<QuickMask | null>(null),
@@ -1099,6 +1110,7 @@ export default function Home() {
     canUndo = index.current > 0,
     canRedo = index.current < history.current.length - 1;
   const gesture = useRef<Gesture | null>(null);
+  const paintSpan = useRef<PerformanceSpan | null>(null);
   const settings = (): Settings => ({
     tool,
     zoom,
@@ -1164,6 +1176,17 @@ export default function Home() {
   const transformSelectionValue = selectionTransforming
     ? current().selection
     : undefined;
+  const layerTransformValue = (() => {
+    if (!layerTransforming || !active) return undefined;
+    try {
+      return {
+        layer: active,
+        bounds: layerLocalBounds(active, assets.current) as LayerTransformBounds,
+      };
+    } catch {
+      return undefined;
+    }
+  })();
   const selectionRefineValue = selectionRefining && current().selection
     ? selectionRefining
     : null;
@@ -1634,6 +1657,64 @@ export default function Home() {
       );
     } finally {
       setSelectionTransforming(false);
+    }
+  };
+  const beginLayerTransform = () => {
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before transforming a layer');
+      return;
+    }
+    const f = current();
+    const layer = f.layers.find((item) => item.id === f.active);
+    if (!layer) {
+      setNotice('Select a layer before transforming it');
+      return;
+    }
+    if (layerIsLocked(f, layer)) {
+      setNotice('Unlock this layer before transforming it');
+      return;
+    }
+    try {
+      layerLocalBounds(layer, assets.current);
+      setLayerTransforming(true);
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : 'Layer bounds could not be measured',
+      );
+    }
+  };
+  const applyLayerTransform = (matrix: Matrix) => {
+    const f = current();
+    const layer = f.layers.find((item) => item.id === f.active);
+    if (!layer) {
+      setLayerTransforming(false);
+      setNotice('Select a layer before transforming it');
+      return;
+    }
+    if (layerIsLocked(f, layer)) {
+      setLayerTransforming(false);
+      setNotice('Unlock this layer before transforming it');
+      return;
+    }
+    try {
+      const nextMatrix = multiply(matrix, layer.matrix);
+      if (
+        commit({
+          ...f,
+          layers: f.layers.map((item) =>
+            item.id === layer.id ? { ...item, matrix: nextMatrix } : item,
+          ),
+        })
+      )
+        setNotice('Free transform applied');
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : 'Free transform failed',
+      );
+    } finally {
+      setLayerTransforming(false);
     }
   };
   const applySelectionRefinement = async (radius: number) => {
@@ -2929,8 +3010,13 @@ export default function Home() {
       setNotice('Exit Quick Mask mode before opening an image');
       return;
     }
-    if (!selected?.type.startsWith('image/')) {
-      setNotice('Choose an image file');
+    const importInfo = selected
+      ? describeImportFormat(selected.name, selected.type)
+      : null;
+    if (!selected || !importInfo?.tryDecode) {
+      setNotice(importInfo?.disclosure || 'Choose a browser-readable image file');
+      if (file.current) file.current.value = '';
+      if (layerFile.current) layerFile.current.value = '';
       return;
     }
     const original = current();
@@ -2968,11 +3054,19 @@ export default function Home() {
         !startRaster(c, selected.name.replace(/\.[^/.]+$/, '').slice(0, 160))
       )
         return;
-      setNotice(asLayer ? 'Image layer added' : 'Photo opened');
+      setNotice(
+        importInfo.format === 'heic'
+          ? `HEIC/HEIF imported as a flattened raster${asLayer ? ' layer' : ''}; source metadata omitted`
+          : asLayer
+            ? 'Image layer added'
+            : 'Photo opened as a flattened raster; source metadata omitted',
+      );
     } catch (error) {
       setNotice(
-        error instanceof Error
-          ? error.message
+        importInfo.format === 'heic'
+          ? importFailureMessage(importInfo)
+          : error instanceof Error
+            ? error.message
           : 'This image could not be opened',
       );
     } finally {
@@ -3056,6 +3150,8 @@ export default function Home() {
   const pointerDown = async (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (quickMasking && quickMaskRef.current) {
       if (gesture.current || quickMaskGesture.current || doc.rendering) return;
+      paintSpan.current?.cancel();
+      paintSpan.current = beginPerformanceSpan('paint');
       const p = point(e);
       canvas.current?.setPointerCapture(e.pointerId);
       quickMaskGesture.current = {
@@ -3178,6 +3274,27 @@ export default function Home() {
       return;
     }
     if (gesture.current || doc.rendering || !frame) return;
+    if (
+      quickMasking ||
+      [
+        'brush',
+        'pencil',
+        'color-replace',
+        'eraser',
+        'background-eraser',
+        'magic-eraser',
+        'clone',
+        'heal',
+        'smudge',
+        'dodge',
+        'burn',
+        'sponge',
+        'gradient',
+      ].includes(tool)
+    ) {
+      paintSpan.current?.cancel();
+      paintSpan.current = beginPerformanceSpan('paint');
+    }
     const f = current(),
       layer = f.layers.find((l) => l.id === f.active)!,
       p = point(e);
@@ -4224,6 +4341,9 @@ export default function Home() {
     g.last = g.layer?.kind === 'raster' || g.layer?.kind === 'path' ? local : p;
   };
   const pointerUp = async (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const completedPaint = paintSpan.current;
+    paintSpan.current = null;
+    completedPaint?.finish();
     if (quickMaskGesture.current) {
       const mask = quickMaskRef.current;
       const canceledGesture = quickMaskGesture.current;
@@ -4788,6 +4908,7 @@ export default function Home() {
             'c',
             'v',
             'x',
+            't',
           ].includes(k) ||
           (k === 'w' && !e.altKey)
         )
@@ -4821,6 +4942,7 @@ export default function Home() {
         if (k === 'c' && !e.shiftKey) copyLayer();
         if (k === 'x' && !e.shiftKey) cutLayer();
         if (k === 'v' && !e.shiftKey) pasteLayer();
+        if (k === 't') beginLayerTransform();
         return;
       }
       if (e.key.toLowerCase() === 'd') {
@@ -4972,6 +5094,7 @@ export default function Home() {
       else setNotice('Create a selection before refining it');
     } else if (command === 'mask-selection') void createMaskFromSelection();
     else if (command === 'remove-background') void removeBackground();
+    else if (command === 'free-transform') beginLayerTransform();
     else if (command === 'invert-layer-mask') invertLayerMask();
     else if (command === 'toggle-layer-mask') toggleLayerMask();
     else if (command === 'remove-layer-mask') clearMask();
@@ -5087,6 +5210,8 @@ export default function Home() {
         return Boolean(frame.selection) || !frame.previousSelection;
       case 'transform-selection':
         return !frame.selection;
+      case 'free-transform':
+        return !layer || locked;
       case 'grow-selection':
       case 'contract-selection':
         return !frame.selection;
@@ -5135,7 +5260,7 @@ export default function Home() {
         data-testid="layer-input"
         className="hidden"
         type="file"
-        accept="image/*"
+        accept="image/*,.heic,.heif,.heics,.heifs,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
         onChange={(e) => void load(e.target.files?.[0], true)}
       />
       <input
@@ -5159,7 +5284,7 @@ export default function Home() {
         data-testid="batch-image-input"
         className="hidden"
         type="file"
-        accept="image/*"
+        accept="image/*,.heic,.heif,.heics,.heifs,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
         multiple
         onChange={(event) => {
           const files = Array.from(event.target.files || []);
@@ -5192,6 +5317,14 @@ export default function Home() {
           selection={transformSelectionValue}
           close={() => setSelectionTransforming(false)}
           apply={applySelectionTransform}
+        />
+      )}
+      {layerTransformValue && (
+        <LayerTransformDialog
+          bounds={layerTransformValue.bounds}
+          layerMatrix={layerTransformValue.layer.matrix}
+          close={() => setLayerTransforming(false)}
+          apply={applyLayerTransform}
         />
       )}
       {selectionRefineValue && (
@@ -5233,7 +5366,7 @@ export default function Home() {
         data-testid="file-input"
         className="hidden"
         type="file"
-        accept="image/*"
+        accept="image/*,.heic,.heif,.heics,.heifs,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
         onChange={(e) => load(e.target.files?.[0])}
       />
       <header className="topbar">

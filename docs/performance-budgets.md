@@ -76,10 +76,16 @@ each supported device class:
 | 16 MP first render/import | ≤ 2 s | ≤ 4 s | Future worker/tile benchmark; no current evidence |
 
 The stroke target is intentionally separated from the current CI sample's
-input-dispatch overhead. The app does not currently expose a production
-pointer-to-paint mark, so this test cannot prove a 250 ms frame budget. Do not
-raise the limits or publish these targets as support guarantees until physical
-device samples and memory traces exist.
+input-dispatch overhead. The app now exposes best-effort operation marks for
+pointer-to-paint, render completion, export and IndexedDB save. Each operation
+has a unique start/end pair and a stable `pixelforge.<operation>.latest` mark;
+the browser acceptance suite verifies `performance.measure` entries named
+`pixelforge.paint`, `pixelforge.render`, `pixelforge.export` and
+`pixelforge.save` after a real edit. These marks remain local to the browser's
+Performance Timeline; they do not include pixels, filenames or user data and
+instrumentation failure never interrupts editing. They still cannot prove a
+250 ms frame budget. Do not raise the limits or publish these targets as
+support guarantees until physical device samples and memory traces exist.
 
 ## Required scale work before larger documents
 
@@ -95,9 +101,11 @@ industrial-scale, the implementation needs:
    and other neighborhood operations) from batch encoding into document
    rendering so one edit does not allocate several full-size surfaces. Tile
    cache size and eviction must be measured on desktop and mobile.
-3. Operation-level marks for pointer-to-paint, render completion, export and
-   IndexedDB save, plus p50/p95 reports on physical devices. A browser
-   `toDataURL` benchmark alone is insufficient.
+3. Repeat the operation-level marks for pointer-to-paint, render completion,
+   export and IndexedDB save as p50/p95 reports on physical devices. The first
+   local instrumentation slice is active and covered by the focused desktop
+   and mobile acceptance test; a browser `toDataURL` benchmark alone remains
+   insufficient.
 4. Memory-pressure tests for 16 MP imports, multi-layer compositions and undo
    trimming. A failed allocation must preserve the prior draft and offer an
    export path.
