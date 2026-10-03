@@ -77,6 +77,7 @@ import {
   type Selection,
   type SelectionOperation,
   type SelectionPart,
+  type TextAlign,
 } from '../src/document';
 import { useDocument } from '../src/useDocument';
 import LayersPanel from '../src/LayersPanel';
@@ -122,6 +123,9 @@ type Command =
   | 'merge-visible'
   | 'flatten'
   | 'text-tool'
+  | 'text-align-left'
+  | 'text-align-center'
+  | 'text-align-right'
   | 'select-all'
   | 'deselect'
   | 'invert-selection'
@@ -357,6 +361,9 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
   ],
   Type: [
     { label: 'Text Tool', shortcut: 'T', command: 'text-tool' },
+    { label: 'Align Left', command: 'text-align-left' },
+    { label: 'Align Center', command: 'text-align-center' },
+    { label: 'Align Right', command: 'text-align-right' },
     { label: 'Panels', command: 'noop', disabled: true },
     { label: 'Anti-Alias', command: 'noop', disabled: true },
     { label: 'Orientation', command: 'noop', disabled: true },
@@ -488,7 +495,16 @@ export default function Home() {
     layerFile = useRef<HTMLInputElement>(null),
     projectFile = useRef<HTMLInputElement>(null),
     stage = useRef<HTMLElement>(null),
-    menuArea = useRef<HTMLElement>(null);
+    menuArea = useRef<HTMLElement>(null),
+    menuButtonRefs = useRef<Record<MenuName, HTMLButtonElement | null>>(
+      {} as Record<MenuName, HTMLButtonElement | null>,
+    ),
+    menuItemRefs = useRef<Record<MenuName, Array<HTMLButtonElement | null>>>(
+      {} as Record<MenuName, Array<HTMLButtonElement | null>>,
+    ),
+    pendingMenuFocus = useRef<Record<MenuName, 'first' | 'last' | undefined>>(
+      {} as Record<MenuName, 'first' | 'last' | undefined>,
+    );
   const [notice, setNotice] = useState('Ready'),
     [ready, setReady] = useState(false),
     [name, setName] = useState('coastline-edit');
@@ -540,6 +556,51 @@ export default function Home() {
       width: number;
       height: number;
     } | null>(null);
+
+  /**
+   * Menus use a small roving-focus model rather than relying on browser tab
+   * order. This keeps long Photoshop-style menus usable on keyboard and touch
+   * devices while ensuring Escape returns focus to the menu trigger.
+   */
+  const openMenu = (menu: MenuName, focus: 'first' | 'last' = 'first') => {
+    pendingMenuFocus.current[menu] = focus;
+    setActiveMenu(menu);
+  };
+  const closeMenu = (restoreFocus = false) => {
+    const menu = activeMenu;
+    setActiveMenu(null);
+    if (restoreFocus && menu)
+      requestAnimationFrame(() => menuButtonRefs.current[menu]?.focus());
+  };
+  const handleMenuKeyDown = (
+    event: React.KeyboardEvent<HTMLDivElement>,
+    menu: MenuName,
+  ) => {
+    const buttons = (menuItemRefs.current[menu] || []).filter(
+      (button): button is HTMLButtonElement => button !== null && !button.disabled,
+    );
+    if (!buttons.length) return;
+    const currentIndex = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      event.stopPropagation();
+      const direction = event.key === 'ArrowDown' ? 1 : -1;
+      const next = (currentIndex + direction + buttons.length) % buttons.length;
+      buttons[next]?.focus();
+    } else if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault();
+      event.stopPropagation();
+      buttons[event.key === 'Home' ? 0 : buttons.length - 1]?.focus();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      closeMenu(true);
+    } else if (event.key === 'Tab') {
+      // Let the browser move focus out of the menu, but close the popup so a
+      // subsequent Tab never lands in an invisible menu.
+      setActiveMenu(null);
+    }
+  };
   const [draftId, setDraftId] = useState(initialDraftId),
     openingDraftId = useRef(draftId),
     [saveStatus, setSaveStatus] = useState('Opening saved document…');
@@ -692,6 +753,15 @@ export default function Home() {
       return true;
     }
     return false;
+  };
+  const alignText = (textAlign: TextAlign) => {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || layer.kind !== 'text') {
+      setNotice('Select a text layer before changing alignment');
+      return;
+    }
+    editLayer({ textAlign });
   };
   const editGroup = (id: string, patch: Partial<Group>) => {
     const f = current(),
@@ -1893,6 +1963,10 @@ export default function Home() {
         fontFamily: 'Arial',
         bold: true,
         color,
+        boxWidth: Math.max(1, f.w - p.x),
+        textAlign: 'left',
+        lineHeight: 1.2,
+        letterSpacing: 0,
         matrix: [1, 0, 0, 1, p.x, p.y],
       });
       if (added) setNotice('Editable text layer added');
@@ -2576,6 +2650,21 @@ export default function Home() {
     return () => window.removeEventListener('pointerdown', close);
   }, []);
   useEffect(() => {
+    if (!activeMenu) return;
+    const focus = pendingMenuFocus.current[activeMenu] || 'first';
+    delete pendingMenuFocus.current[activeMenu];
+    const focusMenuItem = () => {
+      const buttons = (menuItemRefs.current[activeMenu] || []).filter(
+        (button): button is HTMLButtonElement => button !== null && !button.disabled,
+      );
+      buttons[focus === 'last' ? buttons.length - 1 : 0]?.focus();
+    };
+    // The popup is inserted after the state update. A frame also gives mobile
+    // browsers a stable focus target after the virtual keyboard settles.
+    const frame = requestAnimationFrame(focusMenuItem);
+    return () => cancelAnimationFrame(frame);
+  }, [activeMenu]);
+  useEffect(() => {
     const key = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement,
         typing =
@@ -2591,7 +2680,7 @@ export default function Home() {
       }
       if (gesture.current) return;
       if (e.key === 'Escape') {
-        setActiveMenu(null);
+        closeMenu(true);
         return;
       }
       if (typing) return;
@@ -2745,7 +2834,10 @@ export default function Home() {
     else if (command === 'text-tool') {
       setTool('text');
       setNotice('Text tool selected');
-    } else if (command === 'select-all') selectAll();
+    } else if (command === 'text-align-left') alignText('left');
+    else if (command === 'text-align-center') alignText('center');
+    else if (command === 'text-align-right') alignText('right');
+    else if (command === 'select-all') selectAll();
     else if (command === 'deselect') setSelection(undefined);
     else if (command === 'invert-selection') invertSelection();
     else if (command === 'mask-selection') void createMaskFromSelection();
@@ -2808,6 +2900,10 @@ export default function Home() {
         return !layer || layer.kind !== 'raster' || locked || !frame.selection;
       case 'hide-layer':
         return !layer || Boolean(groupForLayer(frame, layer)?.locked);
+      case 'text-align-left':
+      case 'text-align-center':
+      case 'text-align-right':
+        return !layer || layer.kind !== 'text' || locked;
       case 'merge-visible':
         return !frame.layers.some(
           (item) =>
@@ -2891,14 +2987,23 @@ export default function Home() {
           {(Object.keys(MENU_DEFS) as MenuName[]).map((menuName) => (
             <div className="menu" key={menuName}>
               <button
+                ref={(element) => {
+                  menuButtonRefs.current[menuName] = element;
+                }}
                 className={activeMenu === menuName ? 'menu-active' : ''}
                 aria-haspopup="menu"
                 aria-expanded={activeMenu === menuName}
                 onClick={() =>
-                  setActiveMenu((current) =>
-                    current === menuName ? null : menuName,
-                  )
+                  activeMenu === menuName
+                    ? closeMenu(true)
+                    : openMenu(menuName)
                 }
+                onKeyDown={(event) => {
+                  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                    event.preventDefault();
+                    openMenu(menuName, event.key === 'ArrowUp' ? 'last' : 'first');
+                  }
+                }}
               >
                 {menuName}
               </button>
@@ -2907,6 +3012,8 @@ export default function Home() {
                   className="menu-popup"
                   role="menu"
                   aria-label={`${menuName} menu`}
+                  tabIndex={-1}
+                  onKeyDown={(event) => handleMenuKeyDown(event, menuName)}
                 >
                   {MENU_DEFS[menuName].map((item, index) =>
                     item.separator ? (
@@ -2914,7 +3021,13 @@ export default function Home() {
                     ) : (
                       <button
                         key={`${item.label}-${index}`}
+                        ref={(element) => {
+                          const items = menuItemRefs.current[menuName] || [];
+                          items[index] = element;
+                          menuItemRefs.current[menuName] = items;
+                        }}
                         role="menuitem"
+                        tabIndex={-1}
                         disabled={menuItemDisabled(item)}
                         title={
                           item.disabled

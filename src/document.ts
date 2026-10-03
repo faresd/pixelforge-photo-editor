@@ -9,6 +9,8 @@ export const BLENDS = [
   'difference',
 ] as const;
 export const FONTS = ['Arial', 'Georgia', 'Courier New', 'Verdana'] as const;
+export const TEXT_ALIGNS = ['left', 'center', 'right'] as const;
+export type TextAlign = (typeof TEXT_ALIGNS)[number];
 export type Matrix = [number, number, number, number, number, number];
 export type Adjustments = {
   brightness: number;
@@ -64,6 +66,13 @@ export type Layer = Common &
         fontSize: number;
         fontFamily: (typeof FONTS)[number];
         bold: boolean;
+        /** Width of the editable text box used for alignment. */
+        boxWidth: number;
+        textAlign: TextAlign;
+        /** Multiplier applied to font size between baselines. */
+        lineHeight: number;
+        /** Extra advance in pixels between glyphs. */
+        letterSpacing: number;
       }
     | {
         kind: 'rectangle';
@@ -283,6 +292,55 @@ export function applyLevels(
   context.putImageData(image, 0, 0);
   return canvas;
 }
+
+/** Measure one text line including custom tracking in canvas pixels. */
+export function trackedTextWidth(
+  context: CanvasRenderingContext2D,
+  text: string,
+  letterSpacing: number,
+): number {
+  const spacing = Number.isFinite(letterSpacing) ? letterSpacing : 0;
+  return Math.max(
+    0,
+    context.measureText(text).width + Math.max(0, Array.from(text).length - 1) * spacing,
+  );
+}
+
+/** Return the x offset for a line inside an editable text box. */
+export function alignedTextOffset(
+  width: number,
+  boxWidth: number,
+  align: TextAlign,
+): number {
+  if (align === 'center') return (boxWidth - width) / 2;
+  if (align === 'right') return boxWidth - width;
+  return 0;
+}
+
+/** Draw an editable text layer while retaining alignment and tracking metadata. */
+export function drawTextLayer(
+  context: CanvasRenderingContext2D,
+  layer: Extract<Layer, { kind: 'text' }>,
+): void {
+  const boxWidth = Math.max(1, layer.boxWidth ?? 640),
+    align = layer.textAlign ?? 'left',
+    lineHeight = Math.max(0.5, layer.lineHeight ?? 1.2),
+    spacing = layer.letterSpacing ?? 0;
+  for (const [lineIndex, line] of layer.text.split('\n').entries()) {
+    const width = trackedTextWidth(context, line, spacing),
+      start = alignedTextOffset(width, boxWidth, align),
+      y = lineIndex * layer.fontSize * lineHeight;
+    if (spacing === 0) {
+      context.fillText(line, start, y);
+      continue;
+    }
+    let x = start;
+    for (const glyph of Array.from(line)) {
+      context.fillText(glyph, x, y);
+      x += context.measureText(glyph).width + spacing;
+    }
+  }
+}
 const record = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === 'object' && !Array.isArray(v);
 const number = (v: unknown, min: number, max: number) =>
@@ -336,6 +394,23 @@ export function validAsset(value: unknown): value is Asset {
   } catch {
     return false;
   }
+}
+
+/**
+ * Normalize text presentation fields introduced after the initial text-layer
+ * contract. Keeping this at the persistence boundary lets older bookmarks
+ * open without changing their left-aligned, 1.2x-spaced rendering.
+ */
+export function effectiveTextLayer<T extends Layer>(layer: T, frameWidth?: number): T {
+  if (layer.kind !== 'text') return layer;
+  const value = layer as T & Partial<Extract<Layer, { kind: 'text' }>>;
+  return {
+    ...layer,
+    boxWidth: value.boxWidth ?? Math.max(1, frameWidth ?? 640),
+    textAlign: value.textAlign ?? 'left',
+    lineHeight: value.lineHeight ?? 1.2,
+    letterSpacing: value.letterSpacing ?? 0,
+  } as T;
 }
 export function validateFrame(
   value: unknown,
@@ -414,7 +489,13 @@ export function validateFrame(
         !/^#[a-f\d]{6}$/i.test(String(layer.color)) ||
         !number(layer.fontSize, 1, 1000) ||
         !FONTS.includes(layer.fontFamily as (typeof FONTS)[number]) ||
-        typeof layer.bold !== 'boolean'
+        typeof layer.bold !== 'boolean' ||
+        !number(layer.boxWidth ?? 640, 1, 16000) ||
+        !TEXT_ALIGNS.includes(
+          (layer.textAlign ?? 'left') as TextAlign,
+        ) ||
+        !number(layer.lineHeight ?? 1.2, 0.5, 4) ||
+        !number(layer.letterSpacing ?? 0, -100, 100)
       )
         return fail();
     } else if (
@@ -807,11 +888,7 @@ export async function renderFrame(
       context.fillStyle = layer.color;
       context.font = `${layer.bold ? '700' : '400'} ${layer.fontSize}px "${layer.fontFamily}"`;
       context.textBaseline = 'top';
-      layer.text
-        .split('\n')
-        .forEach((line, i) =>
-          context.fillText(line, 0, i * layer.fontSize * 1.2),
-        );
+      drawTextLayer(context, layer);
     }
     if (layer.kind === 'rectangle') {
       context.fillStyle = layer.color;
