@@ -104,6 +104,7 @@ import {
 import CurveEditor from '../src/CurveEditor';
 import { type CurveChannel, type CurvePoints } from '../src/curves';
 import { applyAutoAdjustmentsPixels, type AutoMode } from '../src/auto';
+import { createBackgroundMask } from '../src/backgroundRemoval';
 import { type ExportFormat } from '../src/export';
 import { renderSelection } from '../src/selections';
 import {
@@ -197,6 +198,7 @@ type Command =
   | 'invert-selection'
   | 'transform-selection'
   | 'mask-selection'
+  | 'remove-background'
   | 'invert-layer-mask'
   | 'toggle-layer-mask'
   | 'remove-layer-mask'
@@ -369,6 +371,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Generative Fill…', command: 'noop', disabled: true },
     { label: 'Generate Image…', command: 'noop', disabled: true },
     { label: 'Reflection Removal…', command: 'noop', disabled: true },
+    { label: 'Remove Background…', command: 'remove-background' },
     { label: '', command: 'noop', separator: true },
     {
       label: 'Free Transform',
@@ -1764,6 +1767,42 @@ export default function Home() {
       })
     )
       setNotice('Layer mask removed; source pixels kept');
+  };
+  const removeBackground = async () => {
+    const f = current();
+    const layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || layer.kind !== 'raster' || !layer.visible) {
+      setNotice('Select a visible raster layer before removing its background');
+      return;
+    }
+    if (layerIsLocked(f, layer)) {
+      setNotice('Unlock this layer before removing its background');
+      return;
+    }
+    try {
+      const image = await decodeAsset(assets.current[layer.asset]);
+      const source = surface(f.w, f.h);
+      const context = source.getContext('2d');
+      if (!context) throw new Error('Background removal canvas is unavailable');
+      context.save();
+      context.setTransform(...layer.matrix);
+      context.drawImage(image, 0, 0);
+      context.restore();
+      const result = createBackgroundMask(source, colorTolerance);
+      const mask = addAsset(assets.current, result.canvas);
+      if (editLayer({ mask, maskEnabled: true, maskInverted: false })) {
+        const removed = Math.round(
+          (result.removedPixels / result.totalPixels) * 100,
+        );
+        setNotice(`Background removed nondestructively (${removed}% edge pixels)`);
+      }
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : 'Background removal could not be applied',
+      );
+    }
   };
   const adjust = (patch: Partial<Adjustments>) => {
     const layer = current().layers.find((l) => l.id === current().active)!;
@@ -4785,6 +4824,7 @@ export default function Home() {
       if (current().selection) setSelectionTransforming(true);
       else setNotice('Create a selection before transforming it');
     } else if (command === 'mask-selection') void createMaskFromSelection();
+    else if (command === 'remove-background') void removeBackground();
     else if (command === 'invert-layer-mask') invertLayerMask();
     else if (command === 'toggle-layer-mask') toggleLayerMask();
     else if (command === 'remove-layer-mask') clearMask();
@@ -4874,6 +4914,8 @@ export default function Home() {
         );
       case 'mask-selection':
         return !layer || layer.kind !== 'raster' || locked || !frame.selection;
+      case 'remove-background':
+        return !layer || layer.kind !== 'raster' || locked || !layer.visible;
       case 'invert-layer-mask':
       case 'toggle-layer-mask':
       case 'remove-layer-mask':
