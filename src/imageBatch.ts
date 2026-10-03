@@ -1,0 +1,243 @@
+import {
+  MAX_BATCH_EXPORT_BYTES,
+  createZip,
+  encodeImage,
+  safeBatchStem,
+  type ExportFormat,
+  type ZipEntry,
+} from './export.ts';
+
+/** Keep anonymous multi-file work bounded on memory-constrained devices. */
+export const MAX_BATCH_INPUTS = 64;
+export const MAX_BATCH_INPUT_BYTES = 64 * 1024 * 1024;
+export const MAX_BATCH_PIXELS = 16 * 1024 * 1024;
+
+export type BatchImageSource = {
+  /** The browser File name. It is used only for a sanitized output label. */
+  name: string;
+  file: Blob;
+};
+
+export type BatchImageEntry = {
+  file: string;
+  source: string;
+  width: number;
+  height: number;
+  bytes: number;
+};
+
+export type BatchImageFailure = {
+  source: string;
+  reason: string;
+};
+
+export type BatchImageManifest = {
+  application: 'pixelforge-photo-editor';
+  kind: 'multi-input-image-export';
+  format: ExportFormat;
+  quality: number;
+  sourceCount: number;
+  exportedCount: number;
+  failedCount: number;
+  generatedAt: string;
+  /** Rendered pixels only; source metadata and source bytes never enter the ZIP. */
+  metadata: 'rendered pixels only; source EXIF, GPS and color profiles omitted';
+  entries: BatchImageEntry[];
+  failures: BatchImageFailure[];
+};
+
+export type BatchImageExportResult = {
+  blob: Blob;
+  manifest: BatchImageManifest;
+};
+
+export type BatchImageProgress = {
+  completed: number;
+  total: number;
+  source: string;
+  status: 'exported' | 'failed';
+};
+
+export type BatchImageExportOptions = {
+  sources: BatchImageSource[];
+  format: ExportFormat;
+  quality: number;
+  onProgress?: (progress: BatchImageProgress) => void;
+  signal?: AbortSignal;
+  /** Dependency injection makes the contract deterministic in pure tests. */
+  decode?: (source: BatchImageSource) => Promise<HTMLCanvasElement>;
+  encode?: (
+    image: HTMLCanvasElement,
+    format: ExportFormat,
+    quality: number,
+  ) => Promise<Blob>;
+};
+
+const PRIVACY_METADATA =
+  'rendered pixels only; source EXIF, GPS and color profiles omitted' as const;
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    const error = new DOMException('Batch export cancelled', 'AbortError');
+    throw error;
+  }
+}
+
+function sourceStem(name: string): string {
+  const basename = name.replaceAll('\\', '/').split('/').pop() || 'image';
+  return safeBatchStem(basename.replace(/\.[^.]+$/, ''));
+}
+
+/** Normalize an individual failure without leaking browser/file implementation text. */
+function failureReason(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) return error.message.trim();
+  return 'The image could not be decoded or encoded.';
+}
+
+/**
+ * Decode a local image into an untainted canvas. No network fetch is used.
+ * The object URL path is retained for browsers without createImageBitmap.
+ */
+export async function decodeBatchImage(source: BatchImageSource): Promise<HTMLCanvasElement> {
+  if (!(source.file instanceof Blob)) throw new Error('The selected item is not a file.');
+  if (source.file.size > MAX_BATCH_INPUT_BYTES)
+    throw new Error('The selected file exceeds the 64 MB safety limit.');
+  const imageBitmapFactory = globalThis.createImageBitmap;
+  if (typeof imageBitmapFactory === 'function') {
+    const bitmap = await imageBitmapFactory(source.file);
+    try {
+      if (!bitmap.width || !bitmap.height || bitmap.width * bitmap.height > MAX_BATCH_PIXELS)
+        throw new Error('The selected image exceeds the 16 megapixel safety limit.');
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Image decoding is unavailable in this browser.');
+      context.drawImage(bitmap, 0, 0);
+      return canvas;
+    } finally {
+      bitmap.close();
+    }
+  }
+
+  const url = URL.createObjectURL(source.file);
+  try {
+    const image = new Image();
+    image.decoding = 'async';
+    image.src = url;
+    await image.decode();
+    if (!image.naturalWidth || !image.naturalHeight || image.naturalWidth * image.naturalHeight > MAX_BATCH_PIXELS)
+      throw new Error('The selected image exceeds the 16 megapixel safety limit.');
+    const canvas = document.createElement('canvas');
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Image decoding is unavailable in this browser.');
+    context.drawImage(image, 0, 0);
+    return canvas;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/**
+ * Export several independent local images to a privacy-safe ZIP.
+ * Failed files are reported in the manifest while successful files remain
+ * downloadable. The source File objects and metadata are never archived.
+ */
+export async function buildImageBatchExport(
+  options: BatchImageExportOptions,
+): Promise<BatchImageExportResult> {
+  const { sources, format, quality, onProgress, signal } = options;
+  if (!sources.length) throw new Error('Select at least one image for batch export.');
+  if (sources.length > MAX_BATCH_INPUTS)
+    throw new Error(`Batch export supports at most ${MAX_BATCH_INPUTS} images.`);
+  if (!Number.isInteger(quality) || quality < 1 || quality > 100)
+    throw new Error('Choose a valid export quality from 1 to 100.');
+  throwIfAborted(signal);
+
+  const decode = options.decode || decodeBatchImage;
+  const encode = options.encode || encodeImage;
+  const extension = format === 'jpeg' ? 'jpg' : format;
+  const entries: ZipEntry[] = [];
+  const manifestEntries: BatchImageEntry[] = [];
+  const failures: BatchImageFailure[] = [];
+  const usedNames = new Set<string>();
+  let totalBytes = 0;
+
+  for (let index = 0; index < sources.length; index += 1) {
+    const source = sources[index];
+    throwIfAborted(signal);
+    const displayName = source.name || `image-${index + 1}`;
+    try {
+      const image = await decode(source);
+      throwIfAborted(signal);
+      if (!image.width || !image.height || image.width * image.height > MAX_BATCH_PIXELS)
+        throw new Error('The selected image exceeds the 16 megapixel safety limit.');
+      const encoded = await encode(image, format, quality);
+      throwIfAborted(signal);
+      if (!(encoded instanceof Blob) || !encoded.size)
+        throw new Error('The image encoder returned an empty file.');
+      totalBytes += encoded.size;
+      if (totalBytes > MAX_BATCH_EXPORT_BYTES)
+        throw new Error('Batch export exceeds the 256 MB safety limit. Export fewer images.');
+      const stem = sourceStem(displayName);
+      let file = `${stem}-${String(index + 1).padStart(3, '0')}.${extension}`;
+      let suffix = 2;
+      while (usedNames.has(file)) {
+        file = `${stem}-${String(index + 1).padStart(3, '0')}-${suffix}.${extension}`;
+        suffix += 1;
+      }
+      usedNames.add(file);
+      entries.push({ name: file, data: encoded });
+      manifestEntries.push({
+        file,
+        source: displayName,
+        width: image.width,
+        height: image.height,
+        bytes: encoded.size,
+      });
+      onProgress?.({
+        completed: index + 1,
+        total: sources.length,
+        source: displayName,
+        status: 'exported',
+      });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error;
+      failures.push({ source: displayName, reason: failureReason(error) });
+      onProgress?.({
+        completed: index + 1,
+        total: sources.length,
+        source: displayName,
+        status: 'failed',
+      });
+    }
+  }
+
+  throwIfAborted(signal);
+  if (!manifestEntries.length) {
+    const detail = failures[0]?.reason || 'No image was exported.';
+    throw new Error(`Batch export produced no usable images. ${detail}`);
+  }
+  const manifest: BatchImageManifest = {
+    application: 'pixelforge-photo-editor',
+    kind: 'multi-input-image-export',
+    format,
+    quality,
+    sourceCount: sources.length,
+    exportedCount: manifestEntries.length,
+    failedCount: failures.length,
+    generatedAt: new Date().toISOString(),
+    metadata: PRIVACY_METADATA,
+    entries: manifestEntries,
+    failures,
+  };
+  entries.push({
+    name: 'pixelforge-batch-manifest.json',
+    data: JSON.stringify(manifest, null, 2),
+  });
+  const blob = await createZip(entries);
+  throwIfAborted(signal);
+  return { blob, manifest };
+}

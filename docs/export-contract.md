@@ -28,4 +28,14 @@ when the limit or an encoder fails.
 
 The desktop/mobile browser tests export all three formats and check PNG, JPEG and WebP signatures, check that WebP quality changes the encoded byte count, check the transparency disclosure, exercise the JPEG/WebP target-size search against actual downloaded bytes, assert the target preference survives reload, and check that rendered exports contain no EXIF/GPS marker. Batch tests create multiple history states, inspect the ZIP entries and manifest, verify dimensions/byte counts and assert that source data URLs are absent. Pure tests cover CRC-32, archive entry order and path-traversal/duplicate-name rejection. A browser that cannot encode WebP receives an explicit unsupported-format message rather than a corrupt download.
 
+## Multi-input batch export
+
+The local multi-input contract is documented separately in
+[`image-batch-contract.md`](./image-batch-contract.md). Its implementation is
+kept separate from history export so each selected source can fail without
+discarding successful outputs. The editor integration remains gated on desktop
+and mobile selection, cancellation, mixed-result and no-network acceptance
+tests; this module does not claim HEIC/RAW/PSD compatibility or background
+removal quality for arbitrary batches.
+
 This contract does not claim metadata editing, ICC color management, HEIC/PSD output or Photoshop compatibility. Those remain later production-workflow milestones.

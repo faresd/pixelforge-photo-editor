@@ -6,7 +6,7 @@ This digest covers the supplied Edit, Image, Layer, Type and Select screenshots 
 
 “Implemented” below describes available branch code, subject to the release gates. It does not establish deployment. The existing menu shell covers only a subset of this inventory. A disabled menu entry records future work; an inventory item without a menu entry is still part of the roadmap.
 
-The File menu now includes **Batch export history…**. It renders retained editable history snapshots locally into a ZIP containing flattened PNG/JPEG/WebP files and a dimensions/byte-size privacy manifest; source assets, EXIF/GPS metadata and color profiles are excluded. This is history-snapshot export, not yet multi-input batch processing or a replacement for editable project files.
+The File menu now includes **Batch export history…**. It renders retained editable history snapshots locally into a ZIP containing flattened PNG/JPEG/WebP files and a dimensions/byte-size privacy manifest; source assets, EXIF/GPS metadata and color profiles are excluded. A tested local multi-input exporter now provides the processing contract for selected image files with per-file failures, cancellation/progress, safe names and bounded output; the editor menu integration remains gated on desktop/mobile acceptance coverage. Neither workflow replaces editable project files.
 
 ## Menu taxonomy extracted from the references
 
