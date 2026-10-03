@@ -111,6 +111,12 @@ import {
 } from '../src/savedSelections';
 import { BrandLockup } from '../src/Brand';
 import { effectiveImageSize, planImageSize, type ImageSizeRequest } from '../src/imageSize';
+import {
+  applyRadialStamp,
+  resolveBrushStamp,
+  type BrushColor,
+  type BrushMode,
+} from '../src/brush';
 type MenuName =
   | 'File'
   | 'Edit'
@@ -529,7 +535,142 @@ type Gesture = {
   pending?: Promise<void>;
   queued?: { x: number; y: number }[];
   points?: { x: number; y: number }[];
+  lastPressure?: number;
+  pointerType?: string;
   moved: boolean;
+};
+
+const brushColor = (value: string): BrushColor => {
+  const match = value.match(/^#([a-f\d]{6})$/i);
+  if (!match) return [0, 0, 0, 255];
+  return [
+    parseInt(match[1].slice(0, 2), 16),
+    parseInt(match[1].slice(2, 4), 16),
+    parseInt(match[1].slice(4, 6), 16),
+    255,
+  ];
+};
+
+type StampCanvasOptions = {
+  x: number;
+  y: number;
+  size: number;
+  hardness: number;
+  opacity: number;
+  pointerType?: string;
+  pressure?: number;
+  pressureSize?: boolean;
+  pressureOpacity?: boolean;
+  mode: BrushMode;
+  color?: BrushColor;
+  source?: HTMLCanvasElement;
+  sourceX?: number;
+  sourceY?: number;
+};
+
+/** Apply one bounded local radial stamp without allocating a full-canvas mask. */
+const stampCanvas = (target: HTMLCanvasElement, options: StampCanvasOptions) => {
+  const resolved = resolveBrushStamp(options),
+    radius = resolved.radius,
+    left = Math.max(0, Math.floor(options.x - radius)),
+    top = Math.max(0, Math.floor(options.y - radius)),
+    right = Math.min(target.width, Math.floor(options.x + radius) + 1),
+    bottom = Math.min(target.height, Math.floor(options.y + radius) + 1),
+    width = Math.max(0, right - left),
+    height = Math.max(0, bottom - top);
+  if (!width || !height) return false;
+  const context = target.getContext('2d')!,
+    image = context.getImageData(left, top, width, height);
+  let source: Uint8ClampedArray | undefined,
+    sourceX = options.sourceX,
+    sourceY = options.sourceY;
+  if (options.source) {
+    const sourceLeft = Math.max(
+        0,
+        Math.min(
+          options.source.width - width,
+          Math.floor((options.sourceX ?? options.x) - radius),
+        ),
+      ),
+      sourceTop = Math.max(
+        0,
+        Math.min(
+          options.source.height - height,
+          Math.floor((options.sourceY ?? options.y) - radius),
+        ),
+      );
+    source = options.source
+      .getContext('2d')!
+      .getImageData(sourceLeft, sourceTop, width, height).data;
+    sourceX = (options.sourceX ?? options.x) - sourceLeft;
+    sourceY = (options.sourceY ?? options.y) - sourceTop;
+  }
+  const result = applyRadialStamp(image.data, {
+    width,
+    height,
+    x: options.x - left,
+    y: options.y - top,
+    size: options.size,
+    hardness: options.hardness,
+    opacity: options.opacity,
+    pointerType: options.pointerType,
+    pressure: options.pressure,
+    pressureSize: options.pressureSize,
+    pressureOpacity: options.pressureOpacity,
+    mode: options.mode,
+    color: options.color,
+    source,
+    sourceX,
+    sourceY,
+  });
+  if (result.changed) context.putImageData(image, left, top);
+  return result.changed;
+};
+
+/** Stamp a line at bounded intervals so fast pointer moves remain continuous. */
+const stampCanvasSegment = (
+  target: HTMLCanvasElement,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  options: Omit<StampCanvasOptions, 'x' | 'y' | 'sourceX' | 'sourceY'> & {
+    sourceAnchor?: { x: number; y: number };
+    destinationAnchor?: { x: number; y: number };
+  },
+) => {
+  const resolved = resolveBrushStamp({
+      size: options.size,
+      hardness: options.hardness,
+      opacity: options.opacity,
+      pointerType: options.pointerType,
+      pressure: options.pressure,
+      pressureSize: options.pressureSize,
+      pressureOpacity: options.pressureOpacity,
+    }),
+    distance = Math.hypot(to.x - from.x, to.y - from.y),
+    steps = Math.max(1, Math.ceil(distance / Math.max(1, resolved.radius * 0.5)));
+  let changed = false;
+  for (let step = 0; step <= steps; step += 1) {
+    const t = step / steps,
+      x = from.x + (to.x - from.x) * t,
+      y = from.y + (to.y - from.y) * t,
+      sourceX = options.sourceAnchor
+        ? options.sourceAnchor.x +
+          (x - (options.destinationAnchor?.x ?? from.x))
+        : undefined,
+      sourceY = options.sourceAnchor
+        ? options.sourceAnchor.y +
+          (y - (options.destinationAnchor?.y ?? from.y))
+        : undefined;
+    changed =
+      stampCanvas(target, {
+        ...options,
+        x,
+        y,
+        sourceX,
+        sourceY,
+      }) || changed;
+  }
+  return changed;
 };
 
 export default function Home() {
@@ -575,6 +716,8 @@ export default function Home() {
     [size, setSize] = useState(18),
     [brushOpacity, setBrushOpacity] = useState(100),
     [hardness, setHardness] = useState(100),
+    [pressureSize, setPressureSize] = useState(false),
+    [pressureOpacity, setPressureOpacity] = useState(false),
     [colorTolerance, setColorTolerance] = useState(24),
     [exportFormat, setExportFormat] = useState<ExportFormat>('png'),
     [exportQuality, setExportQuality] = useState(92),
@@ -711,6 +854,8 @@ export default function Home() {
     size,
     brushOpacity,
     hardness,
+    pressureSize,
+    pressureOpacity,
     colorTolerance,
     exportFormat,
     exportQuality,
@@ -735,6 +880,8 @@ export default function Home() {
     setSize(s.size);
     setBrushOpacity(s.brushOpacity ?? 100);
     setHardness(s.hardness ?? 100);
+    setPressureSize(s.pressureSize ?? false);
+    setPressureOpacity(s.pressureOpacity ?? false);
     setColorTolerance(s.colorTolerance ?? 24);
     setExportFormat(s.exportFormat ?? 'png');
     setExportQuality(s.exportQuality ?? 92);
@@ -1488,6 +1635,8 @@ export default function Home() {
         size,
         brushOpacity,
         hardness,
+        pressureSize,
+        pressureOpacity,
         colorTolerance,
         exportFormat,
         exportQuality,
@@ -1536,6 +1685,8 @@ export default function Home() {
     size,
     brushOpacity,
     hardness,
+    pressureSize,
+    pressureOpacity,
     colorTolerance,
     exportFormat,
     exportQuality,
@@ -2411,6 +2562,8 @@ export default function Home() {
         last: local,
         frame: f,
         layer,
+        lastPressure: pressure(e),
+        pointerType: e.pointerType,
         moved: false,
       } as Gesture;
       gesture.current = g;
@@ -2642,6 +2795,8 @@ export default function Home() {
       last: tool === 'move' ? p : local,
       frame: f,
       layer,
+      lastPressure: pressure(e),
+      pointerType: e.pointerType,
       moved: false,
       queued: [local],
     } as Gesture;
@@ -2654,34 +2809,21 @@ export default function Home() {
           buffer.getContext('2d')!.drawImage(image, 0, 0);
           if (gesture.current !== g) return;
           g.buffer = buffer;
-          const x = buffer.getContext('2d')!;
-          x.fillStyle = color;
-          x.globalCompositeOperation =
-            tool === 'eraser' ? 'destination-out' : 'source-over';
-          const pointPressure = pressure(e),
-            radius = Math.max(
-              0.5,
-              (localSize(layer.matrix, size) * pointPressure) / 2,
-            ),
-            softness =
-              tool === 'pencil'
-                ? 0
-                : Math.max(0, Math.min(1, (100 - hardness) / 100));
-          x.globalAlpha = (brushOpacity / 100) * pointPressure;
-          x.filter = softness
-            ? `blur(${Math.max(0.1, radius * softness)}px)`
-            : 'none';
-          x.beginPath();
-          x.arc(local.x, local.y, radius, 0, Math.PI * 2);
-          x.fill();
-          x.strokeStyle = color;
-          x.lineWidth = radius * 2;
-          x.lineCap = 'round';
-          x.lineJoin = 'round';
-          x.beginPath();
-          x.moveTo(local.x, local.y);
-          for (const point of g.queued || []) x.lineTo(point.x, point.y);
-          x.stroke();
+          let from = local;
+          for (const point of g.queued || [local]) {
+            stampCanvasSegment(buffer, from, point, {
+              size: localSize(layer.matrix, size),
+              hardness: tool === 'pencil' ? 100 : hardness,
+              opacity: brushOpacity / 100,
+              pointerType: g.pointerType,
+              pressure: g.lastPressure,
+              pressureSize: tool !== 'pencil' && pressureSize,
+              pressureOpacity: tool !== 'pencil' && pressureOpacity,
+              mode: tool === 'eraser' ? 'destination-out' : 'source-over',
+              color: tool === 'eraser' ? undefined : brushColor(color),
+            });
+            from = point;
+          }
           g.queued = undefined;
           void paint(f, { [layer.id]: buffer });
         } catch {
@@ -2705,6 +2847,8 @@ export default function Home() {
     const p = point(e);
     const local =
       g.layer?.kind === 'raster' ? inversePoint(g.layer.matrix, p) || p : p;
+    g.lastPressure = pressure(e);
+    g.pointerType = e.pointerType;
     g.moved = true;
     if (g.tool === 'hand') {
       if (stage.current) {
@@ -2725,35 +2869,19 @@ export default function Home() {
       g.source &&
       cloneSource
     ) {
-      const x = g.buffer.getContext('2d')!,
-        radius = Math.max(
-          0.5,
-          (localSize(g.layer!.matrix, size) * pressure(e)) / 2,
-        );
-      const dx = local.x - g.start.x,
-        dy = local.y - g.start.y;
-      x.save();
-      x.globalAlpha =
-        (g.tool === 'heal' ? 0.65 : 1) * (brushOpacity / 100) * pressure(e);
-      x.filter =
-        g.tool === 'heal' || hardness < 100
-          ? `blur(${g.tool === 'heal' ? 1 : Math.max(0.1, (radius * (100 - hardness)) / 100)}px)`
-          : 'none';
-      x.beginPath();
-      x.arc(local.x, local.y, radius, 0, Math.PI * 2);
-      x.clip();
-      x.drawImage(
-        g.source,
-        cloneSource.x + dx - radius,
-        cloneSource.y + dy - radius,
-        radius * 2,
-        radius * 2,
-        local.x - radius,
-        local.y - radius,
-        radius * 2,
-        radius * 2,
-      );
-      x.restore();
+      stampCanvasSegment(g.buffer, g.last, local, {
+        size: localSize(g.layer!.matrix, size),
+        hardness,
+        opacity: brushOpacity / 100,
+        pointerType: g.pointerType,
+        pressure: g.lastPressure,
+        pressureSize,
+        pressureOpacity,
+        mode: g.tool === 'heal' ? 'heal' : 'clone',
+        source: g.source,
+        sourceAnchor: cloneSource,
+        destinationAnchor: g.start,
+      });
       void paint(g.frame, { [g.layer!.id]: g.buffer });
       g.last = local;
       return;
@@ -2776,7 +2904,7 @@ export default function Home() {
         color,
         size,
         colorTolerance,
-        (brushOpacity / 100) * pressure(e),
+        (brushOpacity / 100) * (pressureOpacity ? pressure(e) : 1),
       );
       void paint(g.frame, { [g.layer.id]: g.buffer });
       g.last = local;
@@ -2799,8 +2927,8 @@ export default function Home() {
     ) {
       const x = g.buffer.getContext('2d')!;
       x.strokeStyle = color;
-      x.globalAlpha = (brushOpacity / 100) * pressure(e);
-      const diameter = localSize(g.layer.matrix, size) * pressure(e);
+      x.globalAlpha = (brushOpacity / 100) * (pressureOpacity ? pressure(e) : 1);
+      const diameter = localSize(g.layer.matrix, size) * (pressureSize ? pressure(e) : 1);
       x.filter =
         g.tool === 'pencil' || hardness >= 100
           ? 'none'
@@ -3046,8 +3174,8 @@ export default function Home() {
       g.layer
     ) {
       const x = g.buffer.getContext('2d')!;
-      x.globalAlpha = (brushOpacity / 100) * pressure(e);
-      const diameter = localSize(g.layer.matrix, size) * pressure(e);
+      x.globalAlpha = (brushOpacity / 100) * (pressureOpacity ? pressure(e) : 1);
+      const diameter = localSize(g.layer.matrix, size) * (pressureSize ? pressure(e) : 1);
       x.filter =
         g.tool === 'pencil' || hardness >= 100
           ? 'none'
@@ -4405,7 +4533,7 @@ export default function Home() {
                     <Slider
                       label="Hardness"
                       value={hardness}
-                      min={1}
+                      min={0}
                       max={100}
                       set={setHardness}
                       suffix="%"
@@ -4419,6 +4547,29 @@ export default function Home() {
                     set={setBrushOpacity}
                     suffix="%"
                   />
+                  {tool !== 'pencil' && tool !== 'color-replace' && (
+                    <>
+                      <label className="check-row">
+                        <input
+                          aria-label="Pressure affects size"
+                          type="checkbox"
+                          checked={pressureSize}
+                          onChange={(event) => setPressureSize(event.target.checked)}
+                        />
+                        Pressure affects size
+                      </label>
+                      <label className="check-row">
+                        <input
+                          aria-label="Pressure affects opacity"
+                          type="checkbox"
+                          checked={pressureOpacity}
+                          onChange={(event) => setPressureOpacity(event.target.checked)}
+                        />
+                        Pressure affects opacity
+                      </label>
+                      <p className="adjust-note">Pressure mapping is off by default. Pen and touch inputs use full size and opacity until each option is enabled.</p>
+                    </>
+                  )}
                   {tool === 'color-replace' && (
                     <Slider
                       label="Color tolerance"

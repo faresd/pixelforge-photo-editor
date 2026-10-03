@@ -61,7 +61,7 @@ export type Settings = {
   size: number;
   brushOpacity?: number;
   hardness?: number;
-  /** Opt-in pen/touch pressure mapping for future brush diameter. */
+  /** Opt-in pen/touch pressure mapping for configured brush diameter. */
   pressureSize?: boolean;
   /** Opt-in pen/touch pressure mapping for brush alpha. */
   pressureOpacity?: boolean;
