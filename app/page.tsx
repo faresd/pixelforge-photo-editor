@@ -1683,6 +1683,7 @@ export default function Home() {
     if (!commit(next)) return;
     setResizing(null);
     setNotice(`Image resized to ${plan.width} × ${plan.height}; layers remain editable`);
+
   };
   const resizeCanvas = async (request: CanvasSizeRequest) => {
     if (quickMasking) {
@@ -1789,6 +1790,7 @@ export default function Home() {
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Reveal All could not be applied');
     }
+
   };
   const discard = async () => {
     if (
@@ -3509,10 +3511,12 @@ export default function Home() {
     }
     if (command === 'resize')
       setResizing({ width: current().w, height: current().h, imageSize: effectiveImageSize(current().imageSize) });
+
     else if (command === 'canvas-size')
       setCanvasSizing({ width: current().w, height: current().h });
     else if (command === 'trim') setTrimming(true);
     else if (command === 'reveal-all') void revealAll();
+
     else if (command === 'project-save') exportProject();
     else if (command === 'batch-export')
       setBatchExporting({
