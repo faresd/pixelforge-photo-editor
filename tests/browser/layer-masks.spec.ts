@@ -213,3 +213,39 @@ test('mask controls are guarded for locked, hidden and non-raster layers and rem
     page.getByRole('button', { name: 'Mask from selection', exact: true }),
   ).toBeDisabled();
 });
+
+test('Layer menu commands invert, disable and remove a raster mask', async ({
+  page,
+}) => {
+  await createSelectionMask(page);
+  const openLayerMenu = async () => {
+    await page.getByRole('button', { name: 'Layer', exact: true }).click();
+    await expect(page.getByRole('menu', { name: 'Layer menu' })).toBeVisible();
+  };
+  await openLayerMenu();
+  await page
+    .getByRole('menuitem', { name: 'Invert Layer Mask', exact: true })
+    .click();
+  await expect(
+    page.getByText('Layer mask inverted', { exact: true }),
+  ).toBeVisible();
+  await openLayerMenu();
+  await page
+    .getByRole('menuitem', { name: 'Disable Layer Mask', exact: true })
+    .click();
+  await expect(
+    page.getByText('Layer mask disabled', { exact: true }),
+  ).toBeVisible();
+  await openLayerMenu();
+  await page
+    .getByRole('menuitem', { name: 'Remove Layer Mask', exact: true })
+    .click();
+  await expect(
+    page.getByText('Nondestructive mask active', { exact: true }),
+  ).toHaveCount(0);
+  await openLayerMenu();
+  await expect(
+    page.getByRole('menuitem', { name: 'Invert Layer Mask', exact: true }),
+  ).toBeDisabled();
+  await page.keyboard.press('Escape');
+});
