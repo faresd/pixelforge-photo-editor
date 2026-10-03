@@ -309,6 +309,10 @@ export function validateDraft(input: unknown): Draft {
     value.name.length > 160
   )
     throw new Error('Saved document is not supported');
+  if (value.localRevision !== undefined && !validRevision(value.localRevision))
+    throw new Error('Invalid project revision');
+  if (value.cloud !== undefined && !validCloudLink(value.cloud))
+    throw new Error('Invalid cloud project link');
   if (value.version !== CURRENT_DRAFT_VERSION)
     return DRAFT_MIGRATIONS[value.version](value, settings as Settings);
   if (
@@ -322,10 +326,6 @@ export function validateDraft(input: unknown): Draft {
     )
   )
     throw new Error('Invalid project assets');
-  if (value.localRevision !== undefined && !validRevision(value.localRevision))
-    throw new Error('Invalid project revision');
-  if (value.cloud !== undefined && !validCloudLink(value.cloud))
-    throw new Error('Invalid cloud project link');
   const history = (value.history as Frame[]).map((frame) => ({
     ...frame,
     imageSize: effectiveImageSize(frame.imageSize),

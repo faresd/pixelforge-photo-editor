@@ -112,6 +112,17 @@ test('draft storage preparation rejects malformed revisions and cloud links', ()
       }),
     /Invalid cloud project link/,
   );
+  const legacy = {
+    version: 1,
+    name: 'Legacy fixture',
+    index: 0,
+    history: [{ url: `data:image/png;base64,${png}`, w: 1, h: 1 }],
+    settings,
+  };
+  assert.throws(
+    () => prepareDraftForStorage({ ...legacy, localRevision: -1 }),
+    /Invalid project revision/,
+  );
 });
 
 test('cloud session and project response validators reject malformed or oversized data', () => {
