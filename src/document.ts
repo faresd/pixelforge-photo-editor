@@ -1286,23 +1286,35 @@ export async function renderFrame(
       applyCurves(masked, layer.adjustments);
       applyAutoAdjustments(masked, layer.adjustments);
       const maskImage = await decodeAsset(assets[layer.mask]);
-      const maskCanvas = surface(frame.w, frame.h),
-        maskCanvasContext = maskCanvas.getContext('2d')!;
-      maskCanvasContext.drawImage(maskImage, 0, 0);
-      const maskData = maskCanvasContext.getImageData(
-          0,
-          0,
-          frame.w,
-          frame.h,
-        ).data,
-        maskAlpha = new Uint8ClampedArray(frame.w * frame.h);
-      for (let pixel = 0; pixel < maskAlpha.length; pixel += 1)
-        maskAlpha[pixel] = maskData[pixel * 4 + 3];
-      const maskedImage = maskContext.getImageData(0, 0, frame.w, frame.h);
-      maskedImage.data.set(
-        applyLayerMaskPixels(maskedImage.data, maskAlpha, maskSettings),
-      );
-      maskContext.putImageData(maskedImage, 0, 0);
+      if (!maskSettings.inverted) {
+        // The common path can use the compositor directly and avoids a second
+        // full-frame surface for large images.
+        maskContext.save();
+        maskContext.globalCompositeOperation = 'destination-in';
+        maskContext.setTransform(1, 0, 0, 1, 0, 0);
+        maskContext.drawImage(maskImage, 0, 0);
+        maskContext.restore();
+      } else {
+        // Canvas has no alpha-invert composite operation. Build the inverted
+        // alpha only for this branch, keeping the immutable mask asset intact.
+        const maskCanvas = surface(frame.w, frame.h),
+          maskCanvasContext = maskCanvas.getContext('2d')!;
+        maskCanvasContext.drawImage(maskImage, 0, 0);
+        const maskData = maskCanvasContext.getImageData(
+            0,
+            0,
+            frame.w,
+            frame.h,
+          ).data,
+          maskAlpha = new Uint8ClampedArray(frame.w * frame.h);
+        for (let pixel = 0; pixel < maskAlpha.length; pixel += 1)
+          maskAlpha[pixel] = maskData[pixel * 4 + 3];
+        const maskedImage = maskContext.getImageData(0, 0, frame.w, frame.h);
+        maskedImage.data.set(
+          applyLayerMaskPixels(maskedImage.data, maskAlpha, maskSettings),
+        );
+        maskContext.putImageData(maskedImage, 0, 0);
+      }
       context.save();
       context.globalAlpha = layer.opacity * groupOpacity;
       context.globalCompositeOperation = layer.blend;
