@@ -126,6 +126,7 @@ test('Reveal All enforces canvas limits and validates missing raster assets', ()
   const tooLarge = raster({ matrix: [1, 0, 0, 1, 20000, 0] });
   assert.throws(() => planRevealAll({ w: 100, h: 100, layers: [tooLarge] }, assets), /16,000/);
   assert.throws(() => planRevealAll({ w: 100, h: 100, layers: [raster({ asset: 'missing' })] }, assets), /missing/);
+  assert.throws(() => planRevealAll({ w: 100, h: 100, layers: [raster({ matrix: [0, 0, 0, 0, 0, 0] })] }, assets), /transform/);
 });
 
 test('Canvas operations preserve print metadata through explicit helper', () => {

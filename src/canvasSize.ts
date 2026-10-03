@@ -264,6 +264,7 @@ export function trimBounds(
 }
 
 function transformedCorners(local: PixelBounds, matrix: Matrix): PixelBounds {
+  if (!validMatrix(matrix)) throw new Error('Layer transform is invalid');
   const corners = [
     [local.x, local.y],
     [local.x + local.width, local.y],
@@ -285,6 +286,7 @@ export function layerLocalBounds(layer: Layer, assets: Assets): PixelBounds {
   if (layer.kind === 'raster') {
     const asset = assets[layer.asset];
     if (!asset) throw new Error(`Raster asset ${layer.asset} is missing`);
+    assertDimensions(asset.w, asset.h, 'Raster asset');
     return { x: 0, y: 0, width: asset.w, height: asset.h };
   }
   if (layer.kind === 'text') {
