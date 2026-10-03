@@ -44,6 +44,7 @@ import {
   createDraftId,
   discardDraft,
   initialDraftId,
+  isNewerDraftRevision,
   readDraft,
   saveDraft,
   validateDraft,
@@ -92,6 +93,7 @@ import BatchExportDialog from '../src/BatchExportDialog';
 import ImageBatchDialog from '../src/ImageBatchDialog';
 import type { BatchImageSource } from '../src/imageBatch';
 import AccountMenu from '../src/AccountMenu';
+import ReleaseStatus from '../src/ReleaseStatusView';
 import SelectionTransformDialog from '../src/SelectionTransformDialog';
 import SelectionModifyDialog from '../src/SelectionModifyDialog';
 import CanvasSizeDialog from '../src/CanvasSizeDialog';
@@ -201,6 +203,8 @@ type Command =
   | 'text-align-left'
   | 'text-align-center'
   | 'text-align-right'
+  | 'text-orientation-horizontal'
+  | 'text-orientation-vertical'
   | 'select-all'
   | 'deselect'
   | 'reselect'
@@ -486,7 +490,8 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Align Right', command: 'text-align-right' },
     { label: 'Panels', command: 'noop', disabled: true },
     { label: 'Anti-Alias', command: 'noop', disabled: true },
-    { label: 'Orientation', command: 'noop', disabled: true },
+    { label: 'Horizontal Type', command: 'text-orientation-horizontal' },
+    { label: 'Vertical Type', command: 'text-orientation-vertical' },
     { label: 'OpenType', command: 'noop', disabled: true },
     { label: 'Create Work Path', command: 'noop', disabled: true },
     { label: 'Convert to Shape', command: 'noop', disabled: true },
@@ -1072,6 +1077,7 @@ export default function Home() {
   const { member, checking } = useMember();
   const [cloud, setCloud] = useState<CloudLink | undefined>(),
     [cloudBusy, setCloudBusy] = useState(false),
+    [recovering, setRecovering] = useState(false),
     [cloudMessage, setCloudMessage] = useState('');
   const active = frame?.layers.find((l) => l.id === frame.active),
     adjustments = active ? effectiveAdjustments(active.adjustments) : neutral;
@@ -1536,6 +1542,15 @@ export default function Home() {
       return;
     }
     editLayer({ textAlign });
+  };
+  const setTextOrientation = (orientation: 'horizontal' | 'vertical') => {
+    const f = current();
+    const layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || layer.kind !== 'text') {
+      setNotice('Select a text layer before changing orientation');
+      return;
+    }
+    editLayer({ orientation });
   };
   const editGroup = (id: string, patch: Partial<Group>) => {
     if (quickMasking) {
@@ -2210,12 +2225,12 @@ export default function Home() {
   }, [ready, frame, quickMasking, paint, assets]);
   useEffect(() => {
     const protect = (event: BeforeUnloadEvent) => {
-      if (saving.current || cloudBusy || gesture.current)
+      if (saving.current || cloudBusy || recovering || gesture.current)
         event.preventDefault();
     };
     window.addEventListener('beforeunload', protect);
     return () => window.removeEventListener('beforeunload', protect);
-  }, [cloudBusy]);
+  }, [cloudBusy, recovering]);
   useEffect(() => {
     const open = () => {
       if (new URLSearchParams(location.hash.slice(1)).get('draft') !== draftId)
@@ -2482,6 +2497,44 @@ export default function Home() {
       discarding.current = false;
       saving.current = true;
       setSaveStatus('Could not discard the draft. Please try again.');
+    }
+  };
+  const reloadNewerDraft = async () => {
+    if (saveStatus !== LOCAL_CONFLICT || recovering) return;
+    const expectedRevision = localVersions.current.get(draftId) || 0;
+    setRecovering(true);
+    setSaveStatus('Recovering newer draft…');
+    saving.current = true;
+    try {
+      await saveQueue.current;
+      const latest = await readDraft(draftId);
+      if (
+        !latest ||
+        !isNewerDraftRevision(expectedRevision, latest.localRevision)
+      )
+        throw new Error(
+          'No newer draft is available. Keep an export copy of these edits.',
+        );
+      await install(latest);
+      clearClipboard();
+      setName(latest.name);
+      setCloud(latest.cloud);
+      restoreSettings(latest.settings);
+      localVersions.current.set(draftId, latest.localRevision);
+      quickMaskRef.current = null;
+      setQuickMask(null);
+      setQuickMasking(false);
+      setSaveStatus('Saved on this device');
+      setNotice('Newer draft restored from this browser');
+    } catch (error) {
+      setSaveStatus(
+        error instanceof Error
+          ? error.message
+          : 'Could not recover the newer draft. Export a copy first.',
+      );
+      saving.current = true;
+    } finally {
+      setRecovering(false);
     }
   };
   const addLayer = (layer: Layer) => {
@@ -3688,6 +3741,7 @@ export default function Home() {
         textAlign: 'left',
         lineHeight: 1.2,
         letterSpacing: 0,
+        orientation: 'horizontal',
         matrix: [1, 0, 0, 1, p.x, p.y],
       });
       if (added) setNotice('Editable text layer added');
@@ -4899,6 +4953,8 @@ export default function Home() {
     } else if (command === 'text-align-left') alignText('left');
     else if (command === 'text-align-center') alignText('center');
     else if (command === 'text-align-right') alignText('right');
+    else if (command === 'text-orientation-horizontal') setTextOrientation('horizontal');
+    else if (command === 'text-orientation-vertical') setTextOrientation('vertical');
     else if (command === 'select-all') selectAll();
     else if (command === 'deselect') setSelection(undefined);
     else if (command === 'reselect') reselect();
@@ -5039,6 +5095,8 @@ export default function Home() {
       case 'text-align-left':
       case 'text-align-center':
       case 'text-align-right':
+      case 'text-orientation-horizontal':
+      case 'text-orientation-vertical':
         return !layer || layer.kind !== 'text' || locked;
       case 'merge-visible':
         return !frame.layers.some(
@@ -5059,7 +5117,7 @@ export default function Home() {
       role="application"
       aria-label="PixelForge photo editor"
       aria-busy={!ready}
-      inert={!ready || cloudBusy}
+      inert={!ready || cloudBusy || recovering}
       tabIndex={-1}
       onDragOver={(e) => {
         e.preventDefault();
@@ -5270,6 +5328,7 @@ export default function Home() {
           <button className="export" onClick={() => download()}>
             <Download /> Export
           </button>
+          <ReleaseStatus />
           <AccountMenu member={member} checking={checking} />
         </div>
       </header>
@@ -5286,6 +5345,7 @@ export default function Home() {
         </div>
         <div className="draft-actions">
           <button
+            disabled={recovering}
             onClick={() => {
               setDraftId(createDraftId());
               clearCloud();
@@ -5294,6 +5354,14 @@ export default function Home() {
           >
             Save local copy
           </button>
+          {saveStatus === LOCAL_CONFLICT && (
+            <button
+              disabled={recovering}
+              onClick={() => void reloadNewerDraft()}
+            >
+              Reload newer draft
+            </button>
+          )}
           <a href="/">Home</a>
           <button onClick={() => void discard()}>Discard draft</button>
         </div>

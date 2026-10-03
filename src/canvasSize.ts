@@ -100,6 +100,24 @@ export function estimatedTextLayerBounds(
   layer: Extract<Layer, { kind: 'text' }>,
 ): PixelBounds {
   if (layer.text.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
+  if ((layer.orientation ?? 'horizontal') === 'vertical') {
+    const columnAdvance = Math.max(1, layer.fontSize * Math.max(0.5, layer.lineHeight ?? 1.2)),
+      glyphAdvance = layer.fontSize + (layer.letterSpacing ?? 0);
+    let bounds: PixelBounds | undefined;
+    for (const [column, line] of layer.text.split('\n').entries()) {
+      const count = Array.from(line).length;
+      if (count === 0) continue;
+      const last = (count - 1) * glyphAdvance,
+        next = {
+          x: column * columnAdvance,
+          y: Math.min(0, last),
+          width: layer.fontSize * 2,
+          height: Math.abs(last) + layer.fontSize * 1.3,
+        };
+      bounds = bounds ? unionBounds(bounds, next) : next;
+    }
+    return bounds ?? { x: 0, y: 0, width: 0, height: 0 };
+  }
   const boxWidth = Math.max(1, layer.boxWidth ?? 640),
     lineHeight = Math.max(0.5, layer.lineHeight ?? 1.2),
     spacing = Math.abs(layer.letterSpacing ?? 0),
@@ -144,6 +162,29 @@ export function measuredTextLayerBounds(
     lines = layer.text.split('\n');
   context.save();
   context.font = `${layer.bold ? '700' : '400'} ${layer.fontSize}px "${layer.fontFamily}"`;
+  if ((layer.orientation ?? 'horizontal') === 'vertical') {
+    context.textBaseline = 'top';
+    const columnAdvance = Math.max(1, layer.fontSize * lineHeight),
+      glyphAdvance = layer.fontSize + spacing;
+    let bounds: PixelBounds | undefined;
+    for (const [column, line] of lines.entries()) {
+      for (const [row, glyph] of Array.from(line).entries()) {
+        const measured = context.measureText(glyph),
+          x = column * columnAdvance,
+          y = row * glyphAdvance,
+          left = x - Math.max(0, measured.actualBoundingBoxLeft || 0),
+          right = x + Math.max(measured.width, measured.actualBoundingBoxRight || 0),
+          // The renderer uses a top baseline, so glyphs begin at y rather than
+          // extending above it as they would with Canvas's alphabetic default.
+          top = y,
+          bottom = y + Math.max(layer.fontSize * 1.05, measured.actualBoundingBoxDescent || 0),
+          next = { x: left, y: top, width: right - left, height: bottom - top };
+        bounds = bounds ? unionBounds(bounds, next) : next;
+      }
+    }
+    context.restore();
+    return bounds ?? { x: 0, y: 0, width: 0, height: 0 };
+  }
   const widths = lines.map((line) => trackedTextWidth(context, line, spacing)),
     left = Math.min(
       ...widths.map((width) => alignedTextOffset(width, boxWidth, align)),

@@ -1134,3 +1134,39 @@ test('a stale tab cannot overwrite or discard newer work and can save its own lo
   await expect(page.getByLabel('Document name')).toHaveValue('Newer tab work');
   await second.close();
 });
+
+test('a stale tab can reload the strictly newer draft without changing its bookmark', async ({
+  page,
+  context,
+}) => {
+  const bookmark = page.url();
+  const second = await context.newPage();
+  await second.route(
+    'https://marketplace.cheaply.fr/marketplace/api/photoeditor**',
+    (route) => route.fulfill({ json: { authenticated: false } }),
+  );
+  await second.goto(bookmark);
+  await expect(second.getByRole('application')).toHaveAttribute(
+    'aria-busy',
+    'false',
+  );
+  await second.getByLabel('Document name').fill('Newer recovery work');
+  await saved(second);
+
+  await page.getByLabel('Document name').fill('Stale edits to replace');
+  await expect(page.getByRole('alert')).toHaveText(
+    'This draft changed in another tab. Save a local copy to keep your edits.',
+  );
+  await expect(
+    page.getByRole('button', { name: 'Reload newer draft', exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole('button', { name: 'Reload newer draft', exact: true })
+    .click();
+  await expect(page.getByLabel('Document name')).toHaveValue(
+    'Newer recovery work',
+  );
+  await saved(page);
+  expect(page.url()).toBe(bookmark);
+  await second.close();
+});

@@ -58,6 +58,9 @@ export const BLENDS = [
 export const FONTS = ['Arial', 'Georgia', 'Courier New', 'Verdana'] as const;
 export const TEXT_ALIGNS = ['left', 'center', 'right'] as const;
 export type TextAlign = (typeof TEXT_ALIGNS)[number];
+/** Canvas text flow modes. Older drafts omit orientation and remain horizontal. */
+export const TEXT_ORIENTATIONS = ['horizontal', 'vertical'] as const;
+export type TextOrientation = (typeof TEXT_ORIENTATIONS)[number];
 export type Matrix = [number, number, number, number, number, number];
 export type Adjustments = {
   brightness: number;
@@ -143,6 +146,8 @@ export type Layer = Common &
         lineHeight: number;
         /** Extra advance in pixels between glyphs. */
         letterSpacing: number;
+        /** Text flow direction; omitted legacy values normalize to horizontal. */
+        orientation: TextOrientation;
       }
     | {
         kind: 'rectangle';
@@ -634,7 +639,20 @@ export function drawTextLayer(
   const boxWidth = Math.max(1, layer.boxWidth ?? 640),
     align = layer.textAlign ?? 'left',
     lineHeight = Math.max(0.5, layer.lineHeight ?? 1.2),
-    spacing = layer.letterSpacing ?? 0;
+    spacing = layer.letterSpacing ?? 0,
+    orientation = layer.orientation ?? 'horizontal';
+  if (orientation === 'vertical') {
+    const columnAdvance = Math.max(1, layer.fontSize * lineHeight);
+    for (const [columnIndex, line] of layer.text.split('\n').entries()) {
+      let y = 0;
+      const x = columnIndex * columnAdvance;
+      for (const glyph of Array.from(line)) {
+        context.fillText(glyph, x, y);
+        y += layer.fontSize + spacing;
+      }
+    }
+    return;
+  }
   for (const [lineIndex, line] of layer.text.split('\n').entries()) {
     const width = trackedTextWidth(context, line, spacing),
       start = alignedTextOffset(width, boxWidth, align),
@@ -727,6 +745,7 @@ export function effectiveTextLayer<T extends Layer>(
     textAlign: value.textAlign ?? 'left',
     lineHeight: value.lineHeight ?? 1.2,
     letterSpacing: value.letterSpacing ?? 0,
+    orientation: value.orientation ?? 'horizontal',
   } as T;
 }
 export function validateFrame(
@@ -829,7 +848,10 @@ export function validateFrame(
         !number(layer.boxWidth ?? 640, 1, 16000) ||
         !TEXT_ALIGNS.includes((layer.textAlign ?? 'left') as TextAlign) ||
         !number(layer.lineHeight ?? 1.2, 0.5, 4) ||
-        !number(layer.letterSpacing ?? 0, -100, 100)
+        !number(layer.letterSpacing ?? 0, -100, 100) ||
+        !TEXT_ORIENTATIONS.includes(
+          (layer.orientation ?? 'horizontal') as TextOrientation,
+        )
       )
         return fail();
     } else if (

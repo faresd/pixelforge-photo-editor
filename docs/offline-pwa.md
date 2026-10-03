@@ -34,3 +34,5 @@ an activated, controlling worker, saves a named local draft, disables the
 network, reloads the bookmarked draft, and verifies that the editor and draft
 status recover. Cloud requests intentionally remain online-only and are not
 treated as successful offline operations.
+
+Release metadata and readiness probes (`/release.json` and `/api/readyz.json`) bypass the service-worker cache, including cache-busting queries. They therefore reflect current network reachability and never accumulate poll responses in the offline shell cache. The top bar retains the baked app version and shows **Offline · local editing** when health probes cannot reach the server.

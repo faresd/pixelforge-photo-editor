@@ -1,5 +1,5 @@
 /* PixelForge's service worker keeps the static editor shell available after a successful online visit. */
-const CACHE_NAME = 'pixelforge-shell-v1';
+const CACHE_NAME = 'pixelforge-shell-v2';
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/favicon.svg', '/pixel-logo.svg', '/icons/pixelforge-192.png', '/icons/pixelforge-512.png'];
 
 self.addEventListener('install', (event) => {
@@ -19,6 +19,10 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const request = event.request;
   if (request.method !== 'GET' || new URL(request.url).origin !== self.location.origin) return;
+
+  // Health reads must reach the network; cache busting queries must not grow the shell cache.
+  const path = new URL(request.url).pathname;
+  if (path === '/release.json' || path === '/api/readyz.json') return;
 
   if (request.mode === 'navigate') {
     // Always check the network first so a deploy can replace a cached HTML shell.
