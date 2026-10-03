@@ -1,4 +1,20 @@
 import { rotateHuePixels } from './hue.ts';
+import {
+  applyColorBalancePixels,
+  effectiveColorBalance,
+  isNeutralColorBalance,
+  neutralColorBalance,
+  validColorBalance,
+  type ColorBalance,
+} from './colorBalance.ts';
+import {
+  applySharpenNoisePixels,
+  effectiveSharpenNoise,
+  isNeutralSharpenNoise,
+  neutralSharpenNoise,
+  validSharpenNoise,
+  type SharpenNoise,
+} from './sharpenNoise.ts';
 
 /** Version 2 stores immutable raster assets once; history contains editable layer metadata. */
 export const BLENDS = [
@@ -28,6 +44,10 @@ export type Adjustments = {
   levelsWhite: number;
   /** Midtone gamma for a nondestructive levels correction (0.1-3). */
   levelsGamma: number;
+  /** Tonal color-balance channels, retained as editable metadata. */
+  colorBalance: ColorBalance;
+  /** Nondestructive unsharp-mask and deterministic noise controls. */
+  sharpenNoise: SharpenNoise;
 };
 export const neutral: Adjustments = {
   brightness: 100,
@@ -39,6 +59,8 @@ export const neutral: Adjustments = {
   levelsBlack: 0,
   levelsWhite: 255,
   levelsGamma: 1,
+  colorBalance: { ...neutralColorBalance },
+  sharpenNoise: { ...neutralSharpenNoise },
 };
 export const FILTER_VALUES = [
   'none',
@@ -349,6 +371,8 @@ export function effectiveAdjustments(value: Partial<Adjustments>): Adjustments {
   return {
     ...neutral,
     ...value,
+    colorBalance: effectiveColorBalance(value.colorBalance),
+    sharpenNoise: effectiveSharpenNoise(value.sharpenNoise),
   };
 }
 
@@ -397,6 +421,34 @@ export function applyHue(
   const context = canvas.getContext('2d')!,
     image = context.getImageData(0, 0, canvas.width, canvas.height);
   rotateHuePixels(image.data, degrees);
+  context.putImageData(image, 0, 0);
+  return canvas;
+}
+
+/** Apply editable tonal color-balance channels to a rendered surface. */
+export function applyColorBalance(
+  canvas: HTMLCanvasElement,
+  adjustments: Partial<Adjustments>,
+): HTMLCanvasElement {
+  const value = effectiveAdjustments(adjustments).colorBalance;
+  if (isNeutralColorBalance(value)) return canvas;
+  const context = canvas.getContext('2d')!,
+    image = context.getImageData(0, 0, canvas.width, canvas.height);
+  applyColorBalancePixels(image.data, value);
+  context.putImageData(image, 0, 0);
+  return canvas;
+}
+
+/** Apply bounded sharpen/noise effects to a rendered surface. */
+export function applySharpenNoise(
+  canvas: HTMLCanvasElement,
+  adjustments: Partial<Adjustments>,
+): HTMLCanvasElement {
+  const value = effectiveAdjustments(adjustments).sharpenNoise;
+  if (isNeutralSharpenNoise(value)) return canvas;
+  const context = canvas.getContext('2d')!,
+    image = context.getImageData(0, 0, canvas.width, canvas.height);
+  applySharpenNoisePixels(image.data, canvas.width, canvas.height, value);
   context.putImageData(image, 0, 0);
   return canvas;
 }
@@ -475,7 +527,9 @@ export function validAdjustments(v: unknown): v is Adjustments {
     number(v.levelsWhite ?? neutral.levelsWhite, 1, 255) &&
     number(v.levelsGamma ?? neutral.levelsGamma, 0.1, 3) &&
     Number(v.levelsWhite ?? neutral.levelsWhite) >
-      Number(v.levelsBlack ?? neutral.levelsBlack)
+      Number(v.levelsBlack ?? neutral.levelsBlack) &&
+    validColorBalance(v.colorBalance ?? neutral.colorBalance)
+    && validSharpenNoise(v.sharpenNoise ?? neutral.sharpenNoise)
   );
 }
 export function validAsset(value: unknown): value is Asset {
@@ -938,7 +992,12 @@ export async function renderFrame(
     // immutable source asset; resetting the transform here would bake a
     // translated/scaled layer into the wrong frame coordinates.
     const rasterSource = override || image;
-    if (layer.kind !== 'raster' && effectiveAdjustments(layer.adjustments).hue !== 0) {
+    if (
+      layer.kind !== 'raster' &&
+      (effectiveAdjustments(layer.adjustments).hue !== 0 ||
+        !isNeutralColorBalance(effectiveAdjustments(layer.adjustments).colorBalance) ||
+        !isNeutralSharpenNoise(effectiveAdjustments(layer.adjustments).sharpenNoise))
+    ) {
       // Keep text and shape layers editable: render their existing transform
       // and CSS corrections into an isolated surface, then rotate HSL colour.
       const coloured = await renderFrame(
@@ -957,6 +1016,8 @@ export async function renderFrame(
         overrides,
       );
       applyHue(coloured, layer.adjustments);
+      applyColorBalance(coloured, layer.adjustments);
+      applySharpenNoise(coloured, layer.adjustments);
       context.save();
       context.globalAlpha = layer.opacity * groupOpacity;
       context.globalCompositeOperation = layer.blend;
@@ -976,6 +1037,8 @@ export async function renderFrame(
       maskContext.restore();
       applyHue(masked, layer.adjustments);
       applyLevels(masked, layer.adjustments);
+      applyColorBalance(masked, layer.adjustments);
+      applySharpenNoise(masked, layer.adjustments);
       const maskImage = await decodeAsset(assets[layer.mask]);
       maskContext.save();
       maskContext.globalCompositeOperation = 'destination-in';
@@ -998,7 +1061,9 @@ export async function renderFrame(
       (effectiveAdjustments(layer.adjustments).hue !== 0 ||
         layer.adjustments.levelsBlack !== neutral.levelsBlack ||
         layer.adjustments.levelsWhite !== neutral.levelsWhite ||
-        layer.adjustments.levelsGamma !== neutral.levelsGamma)
+        layer.adjustments.levelsGamma !== neutral.levelsGamma ||
+        !isNeutralColorBalance(effectiveAdjustments(layer.adjustments).colorBalance) ||
+        !isNeutralSharpenNoise(effectiveAdjustments(layer.adjustments).sharpenNoise))
     ) {
       const leveled = surface(frame.w, frame.h),
         leveledContext = leveled.getContext('2d')!;
@@ -1011,6 +1076,8 @@ export async function renderFrame(
       leveledContext.restore();
       applyHue(leveled, layer.adjustments);
       applyLevels(leveled, layer.adjustments);
+      applyColorBalance(leveled, layer.adjustments);
+      applySharpenNoise(leveled, layer.adjustments);
       context.save();
       context.globalAlpha = layer.opacity * groupOpacity;
       context.globalCompositeOperation = layer.blend;

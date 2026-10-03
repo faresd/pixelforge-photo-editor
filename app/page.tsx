@@ -139,6 +139,8 @@ type Command =
   | 'reset'
   | 'levels'
   | 'hue-saturation'
+  | 'color-balance'
+  | 'sharpen-noise'
   | 'crop'
   | 'rotate-left'
   | 'rotate-right'
@@ -304,6 +306,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Adjustments', command: 'reset', disabled: true },
     { label: 'Levels…', command: 'levels' },
     { label: 'Hue/Saturation…', command: 'hue-saturation' },
+    { label: 'Color Balance…', command: 'color-balance' },
     {
       label: 'Auto Tone',
       shortcut: 'Shift+Ctrl+L',
@@ -451,7 +454,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Twirl…', command: 'noop', disabled: true },
     { label: 'Wave…', command: 'noop', disabled: true },
     { label: 'Noise', command: 'noop', disabled: true },
-    { label: 'Add Noise…', command: 'noop', disabled: true },
+    { label: 'Add Noise…', command: 'sharpen-noise' },
     { label: 'Pixelate', command: 'noop', disabled: true },
     { label: 'Color Halftone…', command: 'noop', disabled: true },
     { label: 'Mosaic…', command: 'noop', disabled: true },
@@ -461,11 +464,11 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Difference Clouds', command: 'noop', disabled: true },
     { label: 'Fibers…', command: 'noop', disabled: true },
     { label: 'Lens Flare…', command: 'noop', disabled: true },
-    { label: 'Sharpen', command: 'noop', disabled: true },
-    { label: 'Sharpen Edges', command: 'noop', disabled: true },
-    { label: 'Sharpen More', command: 'noop', disabled: true },
-    { label: 'Smart Sharpen…', command: 'noop', disabled: true },
-    { label: 'Unsharp Mask…', command: 'noop', disabled: true },
+    { label: 'Sharpen', command: 'sharpen-noise' },
+    { label: 'Sharpen Edges', command: 'sharpen-noise' },
+    { label: 'Sharpen More', command: 'sharpen-noise' },
+    { label: 'Smart Sharpen…', command: 'sharpen-noise' },
+    { label: 'Unsharp Mask…', command: 'sharpen-noise' },
     { label: 'Stylize', command: 'noop', disabled: true },
     { label: 'Video', command: 'noop', disabled: true },
     { label: 'De-Interlace…', command: 'noop', disabled: true },
@@ -640,6 +643,8 @@ export default function Home() {
     levelsBlack,
     levelsWhite,
     levelsGamma,
+    colorBalance,
+    sharpenNoise,
   } = adjustments;
   const dimensions = frame ? `${frame.w} × ${frame.h} px` : 'Opening…',
     canUndo = index.current > 0,
@@ -979,6 +984,10 @@ export default function Home() {
     setLevelsBlack = (levelsBlack: number) => adjust({ levelsBlack }),
     setLevelsWhite = (levelsWhite: number) => adjust({ levelsWhite }),
     setLevelsGamma = (levelsGamma: number) => adjust({ levelsGamma });
+  const setColorBalance = (patch: Partial<Adjustments['colorBalance']>) =>
+    adjust({ colorBalance: { ...colorBalance, ...patch } });
+  const setSharpenNoise = (patch: Partial<Adjustments['sharpenNoise']>) =>
+    adjust({ sharpenNoise: { ...sharpenNoise, ...patch } });
   const chooseFilter = (filter: string, label: string) => {
     if (adjust({ filter }))
       setNotice(`${label} applied to selected layer; remains editable`);
@@ -2910,6 +2919,10 @@ export default function Home() {
       setNotice('Levels controls are available in Adjust selected layer');
     else if (command === 'hue-saturation')
       setNotice('Hue/Saturation controls are available in Adjust selected layer');
+    else if (command === 'color-balance')
+      setNotice('Color Balance controls are available in Adjust selected layer');
+    else if (command === 'sharpen-noise')
+      setNotice('Sharpen and Noise controls are available in Adjust selected layer');
     else if (command === 'crop') {
       setTool('crop');
       setNotice('Drag on the image to crop');
@@ -3372,9 +3385,147 @@ export default function Home() {
               set={setLevelsGamma}
               suffix=""
             />
+            <div className="adjustment-subtitle">Color Balance</div>
+            <Slider
+              label="Shadows cyan/red"
+              value={colorBalance.shadowsCyanRed}
+              min={-100}
+              max={100}
+              set={(value) => setColorBalance({ shadowsCyanRed: value })}
+              suffix=""
+            />
+            <Slider
+              label="Shadows magenta/green"
+              value={colorBalance.shadowsMagentaGreen}
+              min={-100}
+              max={100}
+              set={(value) => setColorBalance({ shadowsMagentaGreen: value })}
+              suffix=""
+            />
+            <Slider
+              label="Shadows yellow/blue"
+              value={colorBalance.shadowsYellowBlue}
+              min={-100}
+              max={100}
+              set={(value) => setColorBalance({ shadowsYellowBlue: value })}
+              suffix=""
+            />
+            <Slider
+              label="Midtones cyan/red"
+              value={colorBalance.midtonesCyanRed}
+              min={-100}
+              max={100}
+              set={(value) => setColorBalance({ midtonesCyanRed: value })}
+              suffix=""
+            />
+            <Slider
+              label="Midtones magenta/green"
+              value={colorBalance.midtonesMagentaGreen}
+              min={-100}
+              max={100}
+              set={(value) => setColorBalance({ midtonesMagentaGreen: value })}
+              suffix=""
+            />
+            <Slider
+              label="Midtones yellow/blue"
+              value={colorBalance.midtonesYellowBlue}
+              min={-100}
+              max={100}
+              set={(value) => setColorBalance({ midtonesYellowBlue: value })}
+              suffix=""
+            />
+            <Slider
+              label="Highlights cyan/red"
+              value={colorBalance.highlightsCyanRed}
+              min={-100}
+              max={100}
+              set={(value) => setColorBalance({ highlightsCyanRed: value })}
+              suffix=""
+            />
+            <Slider
+              label="Highlights magenta/green"
+              value={colorBalance.highlightsMagentaGreen}
+              min={-100}
+              max={100}
+              set={(value) => setColorBalance({ highlightsMagentaGreen: value })}
+              suffix=""
+            />
+            <Slider
+              label="Highlights yellow/blue"
+              value={colorBalance.highlightsYellowBlue}
+              min={-100}
+              max={100}
+              set={(value) => setColorBalance({ highlightsYellowBlue: value })}
+              suffix=""
+            />
+            <label className="check-row">
+              <input
+                aria-label="Preserve luminosity"
+                type="checkbox"
+                checked={colorBalance.preserveLuminosity}
+                onChange={(event) =>
+                  setColorBalance({ preserveLuminosity: event.target.checked })
+                }
+              />
+              Preserve luminosity
+            </label>
+            <div className="adjustment-subtitle">Sharpen and Noise</div>
+            <Slider
+              label="Sharpen amount"
+              value={sharpenNoise.sharpen}
+              min={0}
+              max={100}
+              set={(value) => setSharpenNoise({ sharpen: value })}
+              suffix=""
+            />
+            <Slider
+              label="Sharpen radius"
+              value={sharpenNoise.radius}
+              min={0}
+              max={8}
+              set={(value) => setSharpenNoise({ radius: value })}
+              suffix=" px"
+            />
+            <Slider
+              label="Sharpen threshold"
+              value={sharpenNoise.threshold}
+              min={0}
+              max={255}
+              set={(value) => setSharpenNoise({ threshold: value })}
+              suffix=""
+            />
+            <Slider
+              label="Noise amount"
+              value={sharpenNoise.noise}
+              min={0}
+              max={100}
+              set={(value) => setSharpenNoise({ noise: value })}
+              suffix=""
+            />
+            <Slider
+              label="Noise seed"
+              value={sharpenNoise.seed % 10001}
+              min={0}
+              max={10000}
+              set={(value) => setSharpenNoise({ seed: value })}
+              suffix=""
+            />
+            <label className="check-row">
+              <input
+                aria-label="Monochromatic noise"
+                type="checkbox"
+                checked={sharpenNoise.monochromatic}
+                onChange={(event) =>
+                  setSharpenNoise({ monochromatic: event.target.checked })
+                }
+              />
+              Monochromatic noise
+            </label>
             <p className="adjust-note">
               Adjustments stay editable on the selected layer. Hue rotates
-              colours while Levels remaps input black, white and midtone gamma
+              colours, Levels remaps input black, white and midtone gamma, and
+              Color Balance targets shadows, midtones and highlights. Sharpen
+              uses a bounded unsharp mask and Noise is deterministic, all
               without changing source pixels.
             </p>
           </section>

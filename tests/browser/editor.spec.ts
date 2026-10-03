@@ -1422,3 +1422,99 @@ test('Escape cancels a running batch without mutating history', async ({ page })
   expect(afterCancel.history).toHaveLength(9);
   expect(afterCancel.index).toBe(8);
 });
+
+test('Color Balance is nondestructive, pixel-visible, persisted and menu-addressable', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  const setColorInput = async (value: string) =>
+    page.getByLabel('Drawing color').evaluate((input, next) => {
+      const element = input as HTMLInputElement;
+      const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+      const setter = Reflect.get(descriptor ?? {}, 'set') as ((this: HTMLInputElement, value: string) => void) | undefined;
+      if (!setter) throw new Error('color input setter unavailable');
+      Reflect.apply(setter, element, [next]);
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+      element.dispatchEvent(new Event('change', { bubbles: true }));
+    }, value);
+  await setColorInput('#707070');
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Fill/ }).click();
+  const canvas = page.getByTestId('editor-canvas');
+  const sample = () =>
+    canvas.evaluate((item: HTMLCanvasElement) =>
+      Array.from(item.getContext('2d')!.getImageData(600, 400, 1, 1).data),
+    );
+  await expect.poll(sample).toEqual([112, 112, 112, 255]);
+  const source = await sample();
+  await page.getByLabel('Midtones cyan/red', { exact: true }).fill('80');
+  await expect.poll(sample).not.toEqual(source);
+  const adjusted = await sample();
+  expect(adjusted[0]).toBeGreaterThan(adjusted[1]);
+  expect(adjusted[3]).toBe(255);
+  await page.getByRole('button', { name: 'Image', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Color Balance…', exact: true }).click();
+  await expect(page.getByLabel('Midtones cyan/red', { exact: true })).toHaveValue('80');
+  const projectDownload = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
+  const projectPath = await (await projectDownload).path();
+  const project = JSON.parse(await (await import('node:fs/promises')).readFile(projectPath!, 'utf8')) as {
+    history: Array<{ layers: Array<{ adjustments: { colorBalance: { midtonesCyanRed: number } } }> }>;
+    index: number;
+  };
+  expect(project.history[project.index].layers.at(-1)!.adjustments.colorBalance.midtonesCyanRed).toBe(80);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Midtones cyan/red', { exact: true })).toHaveValue('80');
+  await expect.poll(sample).toEqual(adjusted);
+});
+
+test('Sharpen and Noise controls preserve alpha, remain deterministic and round-trip', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByLabel('Drawing color').evaluate((input) => {
+    const element = input as HTMLInputElement;
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+    const setter = Reflect.get(descriptor ?? {}, 'set') as ((this: HTMLInputElement, value: string) => void) | undefined;
+    if (!setter) throw new Error('color input setter unavailable');
+    Reflect.apply(setter, element, ['#707070']);
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Fill/ }).click();
+  const canvas = page.getByTestId('editor-canvas');
+  const sample = () =>
+    canvas.evaluate((item: HTMLCanvasElement) =>
+      Array.from(item.getContext('2d')!.getImageData(600, 400, 1, 1).data),
+    );
+  const before = await sample();
+  await page.getByLabel('Noise amount', { exact: true }).fill('35');
+  await page.getByLabel('Noise seed', { exact: true }).fill('42');
+  await page.getByLabel('Monochromatic noise', { exact: true }).check();
+  await expect.poll(sample).not.toEqual(before);
+  const adjusted = await sample();
+  expect(adjusted[3]).toBe(before[3]);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Add Noise…', exact: true }).click();
+  await expect(page.getByLabel('Noise amount', { exact: true })).toHaveValue('35');
+  const projectDownload = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
+  const projectPath = await (await projectDownload).path();
+  const project = JSON.parse(await (await import('node:fs/promises')).readFile(projectPath!, 'utf8')) as {
+    history: Array<{ layers: Array<{ adjustments: { sharpenNoise: { noise: number; seed: number; monochromatic: boolean } } }> }>;
+    index: number;
+  };
+  expect(project.history[project.index].layers.at(-1)!.adjustments.sharpenNoise).toMatchObject({
+    noise: 35,
+    seed: 42,
+    monochromatic: true,
+  });
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Noise amount', { exact: true })).toHaveValue('35');
+  await expect(page.getByLabel('Noise seed', { exact: true })).toHaveValue('42');
+  await expect(page.getByLabel('Monochromatic noise', { exact: true })).toBeChecked();
+  await expect.poll(sample).toEqual(adjusted);
+});
