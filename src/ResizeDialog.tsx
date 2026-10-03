@@ -107,7 +107,7 @@ export default function ResizeDialog({ width, height, imageSize, close, apply }:
       return 'Enter valid dimensions to preview';
     }
   })();
-  const label = (unit: typeof widthUnit) => unitSuffix[unit];
+  const label = (unit: typeof widthUnit) => unit === 'pixels' ? unitSuffix[unit] : unit;
   return <dialog ref={dialog} className="editor-dialog image-size-dialog" onCancel={close}>
     <form onSubmit={event => { event.preventDefault(); if (valid) apply(request); }}>
       <h2>Image Size</h2><h3>Resize image</h3>
