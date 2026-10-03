@@ -7,6 +7,8 @@ import {
   validateDraft,
 } from '../src/drafts.ts';
 import {
+  listCloudProjects,
+  saveCloudProject,
   validateCloudDelete,
   validateCloudOpen,
   validateCloudProjectList,
@@ -215,4 +217,31 @@ test('cloud open preserves local editable fields while dropping no validated ass
   assert.equal(opened.history[0].layers[0].asset, assetId);
   assert.deepEqual(Object.keys(opened.assets), [assetId]);
   assert.equal(opened.settings.tool, 'move');
+});
+
+test('cloud endpoint wrappers fail closed on malformed responses and payloads', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify({ projects: [{ id: 'bad' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    await assert.rejects(
+      () => listCloudProjects(),
+      /Cloud response is invalid/,
+    );
+    let called = false;
+    globalThis.fetch = async () => {
+      called = true;
+      return new Response('{}', { status: 200 });
+    };
+    assert.throws(
+      () => saveCloudProject('project-1', '1', { ...baseDraft(), version: 8 }),
+      /Unsupported project version/,
+    );
+    assert.equal(called, false, 'invalid documents are rejected before upload');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
