@@ -22,7 +22,7 @@ function drawPart(context: CanvasRenderingContext2D, part: SelectionPart) {
   } else context.fillRect(part.x, part.y, part.w, part.h);
 }
 
-/** Resolve every selection source into document-space alpha, applying feather/invert once. */
+/** Resolve alpha before its affine transform, then clip to the document canvas. */
 export async function renderSelection(
   selection: Selection,
   w: number,
@@ -54,7 +54,11 @@ export async function renderSelection(
     for (let i = 3; i < image.data.length; i += 4) image.data[i] = 255 - image.data[i];
     target.putImageData(image, 0, 0);
   }
-  return out;
+  if (!selection.matrix) return out;
+  const transformed = surface(w, h), transformedContext = transformed.getContext('2d')!;
+  transformedContext.setTransform(...selection.matrix);
+  transformedContext.drawImage(out, 0, 0);
+  return transformed;
 }
 
 /** Compose resolved alpha rather than discarding a color mask, feather or inversion. */

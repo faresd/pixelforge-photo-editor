@@ -12,8 +12,20 @@ The dialog previews the actual encoded byte size before download. JPEG and WebP 
 
 The selected format, lossy quality and optional target size are validated and saved with the local draft, then restored from a bookmark or after reload. Legacy projects without these optional fields default to PNG at quality 92 with no target. The preference is UI state; the document's pixels and editable history do not depend on it.
 
+## Batch history export
+
+“Batch export history…” renders every retained undo-history frame as a
+flattened PNG, JPEG or WebP image and downloads one local ZIP package. The
+archive uses the ZIP store method so browser-produced bytes are unchanged and
+portable without a third-party compression runtime. A manifest records the
+document name, format, quality, snapshot index, dimensions and byte size. It
+contains no asset URLs, layer source data or embedded metadata. Filenames are
+sanitized and path traversal or duplicate names are rejected. Rendering stops
+at a 256 MB encoded-output safety limit; the editable draft remains available
+when the limit or an encoder fails.
+
 ## Acceptance evidence
 
-The desktop/mobile browser tests export all three formats and check PNG, JPEG and WebP signatures, check that WebP quality changes the encoded byte count, check the transparency disclosure, exercise the JPEG/WebP target-size search against actual downloaded bytes, assert the target preference survives reload, and check that rendered exports contain no EXIF/GPS marker. A browser that cannot encode WebP receives an explicit unsupported-format message rather than a corrupt download.
+The desktop/mobile browser tests export all three formats and check PNG, JPEG and WebP signatures, check that WebP quality changes the encoded byte count, check the transparency disclosure, exercise the JPEG/WebP target-size search against actual downloaded bytes, assert the target preference survives reload, and check that rendered exports contain no EXIF/GPS marker. Batch tests create multiple history states, inspect the ZIP entries and manifest, verify dimensions/byte counts and assert that source data URLs are absent. Pure tests cover CRC-32, archive entry order and path-traversal/duplicate-name rejection. A browser that cannot encode WebP receives an explicit unsupported-format message rather than a corrupt download.
 
-This contract does not claim metadata editing, batch export, ICC color management, HEIC/PSD output or Photoshop compatibility. Those remain later production-workflow milestones.
+This contract does not claim metadata editing, ICC color management, HEIC/PSD output or Photoshop compatibility. Those remain later production-workflow milestones.

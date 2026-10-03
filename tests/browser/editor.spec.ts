@@ -1,5 +1,18 @@
 import { test, expect } from '@playwright/test';
 
+async function project(page: import('@playwright/test').Page) {
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  const pending = page.waitForEvent('download');
+  await page
+    .getByRole('menuitem', { name: 'Download project file', exact: true })
+    .click();
+  const download = await pending;
+  const path = await download.path();
+  return JSON.parse(
+    await (await import('node:fs/promises')).readFile(path!, 'utf8'),
+  ) as { history: unknown[]; index: number };
+}
+
 test.beforeEach(async ({ page }) => {
   await page.route(
     'https://marketplace.cheaply.fr/marketplace/api/photoeditor**',
@@ -1259,7 +1272,7 @@ test('menus provide roving keyboard focus and restore the trigger on Escape', as
   await page.keyboard.press('ArrowDown');
   await expect(fileItems.nth(1)).toBeFocused();
   await page.keyboard.press('End');
-  await expect(fileItems.nth(7)).toBeFocused();
+  await expect(fileItems.last()).toBeFocused();
   await page.keyboard.press('Home');
   await expect(fileItems.nth(0)).toBeFocused();
   await page.keyboard.press('Escape');
@@ -1269,7 +1282,7 @@ test('menus provide roving keyboard focus and restore the trigger on Escape', as
   // ArrowUp from a trigger opens the last item, and disabled commands never
   // receive focus while moving through the menu.
   await page.keyboard.press('ArrowUp');
-  await expect(fileItems.nth(7)).toBeFocused();
+  await expect(fileItems.last()).toBeFocused();
   await page.keyboard.press('Escape');
 
   const edit = page.getByRole('button', { name: 'Edit', exact: true });
@@ -1290,4 +1303,122 @@ test('menus provide roving keyboard focus and restore the trigger on Escape', as
   ).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(edit).toBeFocused();
+});
+
+test('batch history export packages flattened snapshots with a privacy manifest', async ({
+  page,
+}) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+
+  // Create a second editable history state without uploading a source file.
+  await page.getByRole('button', { name: 'Image', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Rotate right', exact: true }).click();
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
+
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  const batch = page.getByRole('menuitem', { name: 'Batch export history…', exact: true });
+  await expect(batch).toBeEnabled();
+  await batch.click();
+  await expect(page.getByRole('heading', { name: 'Batch export history', exact: true })).toBeVisible();
+  await page.getByLabel('Batch export format', { exact: true }).selectOption('webp');
+  await page.getByLabel('Batch export quality', { exact: true }).fill('80');
+  await page.getByRole('button', { name: 'Build batch ZIP', exact: true }).click();
+  await expect(page.getByRole('status', { name: 'Batch export progress', exact: true })).toContainText('2 snapshots');
+
+  const pending = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download batch ZIP', exact: true }).click();
+  const download = await pending;
+  expect(download.suggestedFilename()).toBe('coastline-edit-history.zip');
+  const path = await download.path();
+  const bytes = await (await import('node:fs/promises')).readFile(path!);
+  expect(bytes.subarray(0, 4).toString('hex')).toBe('504b0304');
+
+  const entries: { name: string; data: Buffer }[] = [];
+  let offset = 0;
+  while (offset + 4 <= bytes.length && bytes.readUInt32LE(offset) === 0x04034b50) {
+    const nameLength = bytes.readUInt16LE(offset + 26);
+    const extraLength = bytes.readUInt16LE(offset + 28);
+    const size = bytes.readUInt32LE(offset + 18);
+    const name = bytes.subarray(offset + 30, offset + 30 + nameLength).toString();
+    const start = offset + 30 + nameLength + extraLength;
+    entries.push({ name, data: bytes.subarray(start, start + size) });
+    offset = start + size;
+  }
+  expect(entries.map((entry) => entry.name)).toEqual([
+    'coastline-edit-history-001.webp',
+    'coastline-edit-history-002.webp',
+    'coastline-edit-manifest.json',
+  ]);
+  const manifest = JSON.parse(entries[2].data.toString()) as {
+    application: string;
+    snapshotCount: number;
+    format: string;
+    metadata: string;
+    entries: Array<{ historyIndex: number; bytes: number; width: number; height: number; file: string }>;
+  };
+  expect(manifest).toMatchObject({
+    application: 'pixelforge-photo-editor',
+    snapshotCount: 2,
+    format: 'webp',
+    metadata: 'rendered pixels only; source EXIF, GPS and color profiles omitted',
+  });
+  expect(manifest.entries.map((entry) => entry.historyIndex)).toEqual([0, 1]);
+  expect(manifest.entries.every((entry) => entry.bytes > 0)).toBe(true);
+  expect(manifest.entries.map((entry) => [entry.width, entry.height])).toEqual([
+    [1440, 960],
+    [960, 1440],
+  ]);
+  expect(manifest.entries.map((entry) => entry.file)).toEqual([
+    'coastline-edit-history-001.webp',
+    'coastline-edit-history-002.webp',
+  ]);
+  for (const entry of entries.slice(0, 2)) {
+    const dimensions = await page.evaluate(async (payload) => {
+      const blob = new Blob([new Uint8Array(payload)], { type: 'image/webp' });
+      const url = URL.createObjectURL(blob);
+      try {
+        const image = new Image();
+        image.src = url;
+        await image.decode();
+        const canvas = document.createElement('canvas');
+        canvas.width = image.naturalWidth;
+        canvas.height = image.naturalHeight;
+        const context = canvas.getContext('2d')!;
+        context.drawImage(image, 0, 0);
+        const pixel = context.getImageData(0, 0, 1, 1).data;
+        return { width: image.naturalWidth, height: image.naturalHeight, energy: pixel[0] + pixel[1] + pixel[2] + pixel[3] };
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    }, [...entry.data]);
+    expect(dimensions.width * dimensions.height).toBeGreaterThan(0);
+    expect(dimensions.energy).toBeGreaterThan(0);
+  }
+  expect(bytes.includes(Buffer.from('data:image'))).toBe(false);
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Saved on this device');
+  const afterExport = await project(page);
+  expect(afterExport.history).toHaveLength(2);
+  expect(afterExport.index).toBe(1);
+});
+
+test('Escape cancels a running batch without mutating history', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  for (let count = 0; count < 8; count += 1) {
+    await page.getByRole('button', { name: 'Image', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Rotate right', exact: true }).click();
+    await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
+  }
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Batch export history…', exact: true }).click();
+  await page.getByRole('button', { name: 'Build batch ZIP', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('heading', { name: 'Batch export history', exact: true })).toBeHidden();
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
+  await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Saved on this device');
+  const afterCancel = await project(page);
+  expect(afterCancel.history).toHaveLength(9);
+  expect(afterCancel.index).toBe(8);
 });

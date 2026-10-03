@@ -64,6 +64,8 @@ export type Settings = {
   brightness: number;
   contrast: number;
   saturation: number;
+  /** Nondestructive hue rotation in degrees (-180..180). */
+  hue: number;
   blur: number;
   filter: string;
 };
