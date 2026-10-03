@@ -147,6 +147,8 @@ export type Selection = {
   parts?: SelectionPart[];
   /** Canvas-sized alpha asset for a color-based selection. */
   mask?: string;
+  /** Optional affine transform applied nondestructively at render time. */
+  matrix?: Matrix;
 };
 export type Frame = {
   w: number;
@@ -156,10 +158,96 @@ export type Frame = {
   /** Optional for backwards compatibility with v2 drafts created before folders. */
   groups?: Group[];
   selection?: Selection;
+  /** Last committed selection, retained so Select > Reselect can restore it. */
+  previousSelection?: Selection;
 };
 export type Asset = { url: string; w: number; h: number };
 export type Assets = Record<string, Asset>;
 export const identity = (): Matrix => [1, 0, 0, 1, 0, 0];
+
+/** Return true for a finite, non-singular affine matrix within safe bounds. */
+export function validMatrix(value: unknown): value is Matrix {
+  return (
+    Array.isArray(value) &&
+    value.length === 6 &&
+    value.every((entry) => number(entry, -1000000, 1000000)) &&
+    Math.abs(Number(value[0]) * Number(value[3]) - Number(value[1]) * Number(value[2])) >=
+      0.000000000001
+  );
+}
+
+/** Compose an affine transform onto a selection without baking any pixels. */
+export function transformSelection(
+  selection: Selection,
+  matrix: Matrix,
+): Selection {
+  if (!validMatrix(matrix)) throw new Error('Invalid selection transform');
+  const combined = multiply(matrix, selection.matrix || identity());
+  if (!validMatrix(combined)) throw new Error('Selection transform exceeds safe limits');
+  return {
+    ...selection,
+    matrix: combined,
+  };
+}
+
+export type SelectionTransform = {
+  offsetX: number;
+  offsetY: number;
+  scaleX: number;
+  scaleY: number;
+  angle: number;
+  skewX: number;
+  skewY: number;
+  flipX: boolean;
+  flipY: boolean;
+};
+
+/** Parse a single locale-neutral decimal, accepting a decimal comma. */
+export function selectionDecimal(value: string): number {
+  if (!/^[+-]?(?:\d+(?:[.,]\d*)?|[.,]\d+)$/.test(value.trim())) return NaN;
+  return Number(value.trim().replace(',', '.'));
+}
+
+/** Compute the transform about the current selection's geometric centre. */
+export function selectionTransformMatrix(
+  selection: Selection,
+  values: SelectionTransform,
+): Matrix {
+  if (
+    !number(values.offsetX, -16000, 16000) ||
+    !number(values.offsetY, -16000, 16000) ||
+    !number(values.scaleX, 1, 1000) ||
+    !number(values.scaleY, 1, 1000) ||
+    !number(values.angle, -180, 180) ||
+    !number(values.skewX, -80, 80) ||
+    !number(values.skewY, -80, 80) ||
+    typeof values.flipX !== 'boolean' ||
+    typeof values.flipY !== 'boolean'
+  )
+    throw new Error('Choose valid transform values within the displayed limits.');
+  const parts = selection.parts?.length ? selection.parts : [selection],
+    left = Math.min(...parts.map((part) => part.x)),
+    top = Math.min(...parts.map((part) => part.y)),
+    right = Math.max(...parts.map((part) => part.x + part.w)),
+    bottom = Math.max(...parts.map((part) => part.y + part.h)),
+    sourceX = (left + right) / 2,
+    sourceY = (top + bottom) / 2,
+    m = selection.matrix || identity(),
+    cx = m[0] * sourceX + m[2] * sourceY + m[4],
+    cy = m[1] * sourceX + m[3] * sourceY + m[5],
+    angle = values.angle * Math.PI / 180,
+    sx = values.scaleX / 100 * (values.flipX ? -1 : 1),
+    sy = values.scaleY / 100 * (values.flipY ? -1 : 1),
+    skew: Matrix = [1, Math.tan(values.skewY * Math.PI / 180), Math.tan(values.skewX * Math.PI / 180), 1, 0, 0],
+    rotation: Matrix = [Math.cos(angle), Math.sin(angle), -Math.sin(angle), Math.cos(angle), 0, 0],
+    result = multiply(
+      [1, 0, 0, 1, cx + values.offsetX, cy + values.offsetY],
+      multiply(rotation, multiply(skew, multiply([sx, 0, 0, sy, 0, 0], [1, 0, 0, 1, -cx, -cy]))),
+    );
+  if (!validMatrix(result))
+    throw new Error('This skew combination collapses the selection. Choose different angles.');
+  return result.map((value) => Math.abs(value) < 1e-12 ? 0 : value) as Matrix;
+}
 export const commonLayer = (name: string): Common => ({
   id: crypto.randomUUID(),
   name,
@@ -190,6 +278,7 @@ export const transformFrame = (
   w,
   h,
   selection: undefined,
+  previousSelection: undefined,
   layers: frame.layers.map((layer) => ({
     ...layer,
     matrix: multiply(matrix, layer.matrix),
@@ -535,12 +624,11 @@ export function validateFrame(
         return fail();
     } else return fail();
   }
-  const selection = value.selection;
-  if (selection !== undefined) {
-    if (!record(selection)) return fail();
-    const s = selection as Record<string, unknown>,
-      frameWidth = Number(value.w),
-      frameHeight = Number(value.h);
+  const frameWidth = Number(value.w),
+    frameHeight = Number(value.h);
+  const validSelection = (selection: unknown): selection is Selection => {
+    if (!record(selection)) return false;
+    const s = selection as Record<string, unknown>;
     const validPart = (part: unknown, requireOperation: boolean) => {
       if (!record(part)) return false;
       const p = part as Record<string, unknown>;
@@ -566,23 +654,29 @@ export function validateFrame(
             )))
       );
     };
-    if (
-      !validPart({ ...s, operation: 'replace' }, false) ||
-      !number(s.feather, 0, 1000) ||
-      typeof s.inverted !== 'boolean' ||
-      (s.parts !== undefined &&
-        (!Array.isArray(s.parts) ||
-          s.parts.length < 1 ||
-          s.parts.length > 1000 ||
-          s.parts.some((part) => !validPart(part, true)))) ||
-      (s.mask !== undefined &&
-        (!validId(s.mask) ||
-          !Object.hasOwn(assets, s.mask) ||
-          assets[s.mask].w !== frameWidth ||
-          assets[s.mask].h !== frameHeight))
-    )
-      return fail();
-  }
+    return (
+      validPart({ ...s, operation: 'replace' }, false) &&
+      number(s.feather, 0, 1000) &&
+      typeof s.inverted === 'boolean' &&
+      (s.matrix === undefined || validMatrix(s.matrix)) &&
+      (s.parts === undefined ||
+        (Array.isArray(s.parts) &&
+          s.parts.length >= 1 &&
+          s.parts.length <= 1000 &&
+          s.parts.every((part) => validPart(part, true)))) &&
+      (s.mask === undefined ||
+        (validId(s.mask) &&
+          Object.hasOwn(assets, s.mask) &&
+          assets[s.mask].w === frameWidth &&
+          assets[s.mask].h === frameHeight))
+    );
+  };
+  if (
+    (value.selection !== undefined && !validSelection(value.selection)) ||
+    (value.previousSelection !== undefined &&
+      !validSelection(value.previousSelection))
+  )
+    return fail();
   if (pixels > 64000000 || !validId(value.active) || !ids.has(value.active))
     return fail();
 }
@@ -590,6 +684,8 @@ export function referencedAssets(history: Frame[], assets: Assets): Assets {
   const used: Assets = {};
   for (const frame of history) {
     if (frame.selection?.mask) used[frame.selection.mask] = assets[frame.selection.mask];
+    if (frame.previousSelection?.mask)
+      used[frame.previousSelection.mask] = assets[frame.previousSelection.mask];
     for (const layer of frame.layers)
       if (layer.kind === 'raster') {
         used[layer.asset] = assets[layer.asset];

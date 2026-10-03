@@ -66,6 +66,7 @@ import {
   rasterFrame,
   replaceColorStroke,
   renderFrame,
+  transformSelection as transformSelectionModel,
   surface,
   transformFrameWithMasks,
   floodFill,
@@ -83,6 +84,7 @@ import { useDocument } from '../src/useDocument';
 import LayersPanel from '../src/LayersPanel';
 import ResizeDialog from '../src/ResizeDialog';
 import ExportDialog from '../src/ExportDialog';
+import SelectionTransformDialog from '../src/SelectionTransformDialog';
 import { type ExportFormat } from '../src/export';
 import { renderSelection } from '../src/selections';
 import { BrandLockup } from '../src/Brand';
@@ -128,7 +130,9 @@ type Command =
   | 'text-align-right'
   | 'select-all'
   | 'deselect'
+  | 'reselect'
   | 'invert-selection'
+  | 'transform-selection'
   | 'mask-selection'
   | 'reset'
   | 'levels'
@@ -385,7 +389,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
   Select: [
     { label: 'All', shortcut: 'Ctrl+A', command: 'select-all' },
     { label: 'Deselect', shortcut: 'Ctrl+D', command: 'deselect' },
-    { label: 'Reselect', command: 'noop', disabled: true },
+    { label: 'Reselect', command: 'reselect' },
     { label: 'Inverse', shortcut: 'Ctrl+Shift+I', command: 'invert-selection' },
     { label: '', command: 'noop', separator: true },
     { label: 'All Layers', command: 'noop', disabled: true },
@@ -400,7 +404,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Modify', command: 'noop', disabled: true },
     { label: 'Grow', command: 'noop', disabled: true },
     { label: 'Similar', command: 'noop', disabled: true },
-    { label: 'Transform Selection', command: 'noop', disabled: true },
+    { label: 'Transform Selection', command: 'transform-selection' },
     { label: 'Edit in Quick Mask Mode', command: 'noop', disabled: true },
     { label: 'Load Selection…', command: 'noop', disabled: true },
     { label: 'Save Selection…', command: 'noop', disabled: true },
@@ -558,6 +562,7 @@ export default function Home() {
       width: number;
       height: number;
     } | null>(null);
+  const [selectionTransforming, setSelectionTransforming] = useState(false);
 
   /**
    * Menus use a small roving-focus model rather than relying on browser tab
@@ -682,6 +687,7 @@ export default function Home() {
     setNotice('Foreground and background colors swapped');
   };
   const current = () => history.current[index.current];
+  const transformSelectionValue = selectionTransforming ? current().selection : undefined;
   const localSelectionMask = async (
     selection: Selection,
     frameWidth: number,
@@ -795,7 +801,13 @@ export default function Home() {
   const setSelection = (selection: Selection | undefined) => {
     const f = current();
     if (JSON.stringify(f.selection) === JSON.stringify(selection)) return;
-    if (commit({ ...f, selection })) {
+    // A deselect keeps the exact editable snapshot needed by Select > Reselect.
+    // New selections intentionally retain that snapshot until a later deselect
+    // replaces it; it remains local document metadata and never leaves exports.
+    const next = selection
+      ? { ...f, selection }
+      : { ...f, selection: undefined, previousSelection: f.selection || f.previousSelection };
+    if (commit(next)) {
       const label =
         selection?.shape === 'ellipse'
           ? 'Elliptical'
@@ -803,6 +815,35 @@ export default function Home() {
             ? 'Polygonal'
             : 'Rectangular';
       setNotice(selection ? `${label} selection created` : 'Selection cleared');
+    }
+  };
+  const reselect = () => {
+    const f = current();
+    if (f.selection) {
+      setNotice('A selection is already active');
+      return;
+    }
+    if (!f.previousSelection) {
+      setNotice('No previous selection to restore');
+      return;
+    }
+    if (commit({ ...f, selection: f.previousSelection }))
+      setNotice('Previous selection restored');
+  };
+  const applySelectionTransform = (matrix: Matrix) => {
+    const f = current();
+    if (!f.selection) {
+      setNotice('Create a selection before transforming it');
+      setSelectionTransforming(false);
+      return;
+    }
+    try {
+      const selection = transformSelectionModel(f.selection, matrix);
+      if (commit({ ...f, selection })) setNotice('Selection transform applied');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Selection transform failed');
+    } finally {
+      setSelectionTransforming(false);
     }
   };
   const selectAll = () => {
@@ -2843,7 +2884,12 @@ export default function Home() {
     else if (command === 'text-align-right') alignText('right');
     else if (command === 'select-all') selectAll();
     else if (command === 'deselect') setSelection(undefined);
+    else if (command === 'reselect') reselect();
     else if (command === 'invert-selection') invertSelection();
+    else if (command === 'transform-selection') {
+      if (current().selection) setSelectionTransforming(true);
+      else setNotice('Create a selection before transforming it');
+    }
     else if (command === 'mask-selection') void createMaskFromSelection();
     else if (command === 'reset') resetAdjustments();
     else if (command === 'levels')
@@ -2904,6 +2950,10 @@ export default function Home() {
         );
       case 'mask-selection':
         return !layer || layer.kind !== 'raster' || locked || !frame.selection;
+      case 'reselect':
+        return Boolean(frame.selection) || !frame.previousSelection;
+      case 'transform-selection':
+        return !frame.selection;
       case 'hide-layer':
         return !layer || Boolean(groupForLayer(frame, layer)?.locked);
       case 'text-align-left':
@@ -2964,6 +3014,13 @@ export default function Home() {
           height={resizing.height}
           close={() => setResizing(null)}
           apply={resizeImage}
+        />
+      )}
+      {transformSelectionValue && (
+        <SelectionTransformDialog
+          selection={transformSelectionValue}
+          close={() => setSelectionTransforming(false)}
+          apply={applySelectionTransform}
         />
       )}
       {exporting && (
