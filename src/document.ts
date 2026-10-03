@@ -1,3 +1,5 @@
+import { rotateHuePixels } from './hue';
+
 /** Version 2 stores immutable raster assets once; history contains editable layer metadata. */
 export const BLENDS = [
   'source-over',
@@ -16,6 +18,8 @@ export type Adjustments = {
   brightness: number;
   contrast: number;
   saturation: number;
+  /** HSL hue rotation in degrees. Zero leaves source colours unchanged. */
+  hue: number;
   blur: number;
   filter: string;
   /** Input black point for a nondestructive levels correction (0-254). */
@@ -29,6 +33,7 @@ export const neutral: Adjustments = {
   brightness: 100,
   contrast: 100,
   saturation: 100,
+  hue: 0,
   blur: 0,
   filter: 'none',
   levelsBlack: 0,
@@ -293,6 +298,20 @@ export function applyLevels(
   return canvas;
 }
 
+/** Apply an HSL hue correction to rendered pixels, preserving alpha. */
+export function applyHue(
+  canvas: HTMLCanvasElement,
+  adjustments: Partial<Adjustments>,
+): HTMLCanvasElement {
+  const degrees = effectiveAdjustments(adjustments).hue;
+  if (degrees === 0) return canvas;
+  const context = canvas.getContext('2d')!,
+    image = context.getImageData(0, 0, canvas.width, canvas.height);
+  rotateHuePixels(image.data, degrees);
+  context.putImageData(image, 0, 0);
+  return canvas;
+}
+
 /** Measure one text line including custom tracking in canvas pixels. */
 export function trackedTextWidth(
   context: CanvasRenderingContext2D,
@@ -357,6 +376,7 @@ export function validAdjustments(v: unknown): v is Adjustments {
     number(v.brightness, 0, 200) &&
     number(v.contrast, 0, 200) &&
     number(v.saturation, 0, 200) &&
+    number(v.hue ?? neutral.hue, -180, 180) &&
     number(v.blur, 0, 20) &&
     typeof v.filter === 'string' &&
     FILTER_VALUES.includes(v.filter) &&
@@ -822,6 +842,32 @@ export async function renderFrame(
     // immutable source asset; resetting the transform here would bake a
     // translated/scaled layer into the wrong frame coordinates.
     const rasterSource = override || image;
+    if (layer.kind !== 'raster' && effectiveAdjustments(layer.adjustments).hue !== 0) {
+      // Keep text and shape layers editable: render their existing transform
+      // and CSS corrections into an isolated surface, then rotate HSL colour.
+      const coloured = await renderFrame(
+        {
+          ...frame,
+          layers: [{
+            ...layer,
+            groupId: undefined,
+            opacity: 1,
+            blend: 'source-over',
+            adjustments: { ...effectiveAdjustments(layer.adjustments), hue: 0 },
+          }],
+          groups: [],
+        },
+        assets,
+        overrides,
+      );
+      applyHue(coloured, layer.adjustments);
+      context.save();
+      context.globalAlpha = layer.opacity * groupOpacity;
+      context.globalCompositeOperation = layer.blend;
+      context.drawImage(coloured, 0, 0);
+      context.restore();
+      continue;
+    }
     if (layer.kind === 'raster' && layer.mask && rasterSource) {
       const masked = surface(frame.w, frame.h),
         maskContext = masked.getContext('2d')!;
@@ -832,6 +878,7 @@ export async function renderFrame(
       maskContext.filter = filterCSS(layer.adjustments);
       maskContext.drawImage(rasterSource, 0, 0);
       maskContext.restore();
+      applyHue(masked, layer.adjustments);
       applyLevels(masked, layer.adjustments);
       const maskImage = await decodeAsset(assets[layer.mask]);
       maskContext.save();
@@ -852,7 +899,8 @@ export async function renderFrame(
     if (
       layer.kind === 'raster' &&
       rasterSource &&
-      (layer.adjustments.levelsBlack !== neutral.levelsBlack ||
+      (effectiveAdjustments(layer.adjustments).hue !== 0 ||
+        layer.adjustments.levelsBlack !== neutral.levelsBlack ||
         layer.adjustments.levelsWhite !== neutral.levelsWhite ||
         layer.adjustments.levelsGamma !== neutral.levelsGamma)
     ) {
@@ -865,6 +913,7 @@ export async function renderFrame(
       leveledContext.filter = filterCSS(layer.adjustments);
       leveledContext.drawImage(rasterSource, 0, 0);
       leveledContext.restore();
+      applyHue(leveled, layer.adjustments);
       applyLevels(leveled, layer.adjustments);
       context.save();
       context.globalAlpha = layer.opacity * groupOpacity;

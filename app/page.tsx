@@ -132,6 +132,7 @@ type Command =
   | 'mask-selection'
   | 'reset'
   | 'levels'
+  | 'hue-saturation'
   | 'crop'
   | 'rotate-left'
   | 'rotate-right'
@@ -295,6 +296,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Mode', command: 'noop', disabled: true },
     { label: 'Adjustments', command: 'reset', disabled: true },
     { label: 'Levels…', command: 'levels' },
+    { label: 'Hue/Saturation…', command: 'hue-saturation' },
     {
       label: 'Auto Tone',
       shortcut: 'Shift+Ctrl+L',
@@ -619,6 +621,7 @@ export default function Home() {
     brightness,
     contrast,
     saturation,
+    hue,
     blur,
     filter,
     levelsBlack,
@@ -922,6 +925,7 @@ export default function Home() {
   const setBrightness = (brightness: number) => adjust({ brightness }),
     setContrast = (contrast: number) => adjust({ contrast }),
     setSaturation = (saturation: number) => adjust({ saturation }),
+    setHue = (hue: number) => adjust({ hue }),
     setBlur = (blur: number) => adjust({ blur }),
     setLevelsBlack = (levelsBlack: number) => adjust({ levelsBlack }),
     setLevelsWhite = (levelsWhite: number) => adjust({ levelsWhite }),
@@ -2844,6 +2848,8 @@ export default function Home() {
     else if (command === 'reset') resetAdjustments();
     else if (command === 'levels')
       setNotice('Levels controls are available in Adjust selected layer');
+    else if (command === 'hue-saturation')
+      setNotice('Hue/Saturation controls are available in Adjust selected layer');
     else if (command === 'crop') {
       setTool('crop');
       setNotice('Drag on the image to crop');
@@ -3247,6 +3253,14 @@ export default function Home() {
               set={setSaturation}
             />
             <Slider
+              label="Hue"
+              value={hue}
+              min={-180}
+              max={180}
+              set={setHue}
+              suffix="°"
+            />
+            <Slider
               label="Blur"
               value={blur}
               min={0}
@@ -3281,9 +3295,9 @@ export default function Home() {
               suffix=""
             />
             <p className="adjust-note">
-              Adjustments stay editable on the selected layer. Levels remaps
-              input black, white and midtone gamma without changing source
-              pixels.
+              Adjustments stay editable on the selected layer. Hue rotates
+              colours while Levels remaps input black, white and midtone gamma
+              without changing source pixels.
             </p>
           </section>
           <section className="panel">
