@@ -1,4 +1,4 @@
-import { rotateHuePixels } from './hue';
+import { rotateHuePixels } from './hue.ts';
 
 /** Version 2 stores immutable raster assets once; history contains editable layer metadata. */
 export const BLENDS = [
