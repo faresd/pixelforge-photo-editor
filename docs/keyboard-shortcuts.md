@@ -26,6 +26,7 @@ Use `Cmd` on macOS and `Ctrl` on Windows/Linux.
 | `M` | Cycle rectangular, elliptical, single-row and single-column marquee |
 | `L` | Lasso |
 | `W` | Magic Wand |
+| `Q` | Toggle Quick Mask mode |
 | `D` | Reset foreground/background to black/white |
 | `X` | Swap foreground/background colors |
 | `[` / `]` | Decrease/increase brush size |
@@ -56,6 +57,13 @@ these aliases.
 | `1` | Actual size |
 | `+` / `-` | Zoom in/out |
 | `Escape` | Close an open menu |
+
+Quick Mask mode uses the current selection as its starting alpha. Paint hides
+selected pixels with the standard red overlay; hold `Alt` or enable Reveal in
+the Quick Mask panel to restore them. Exiting converts the painted alpha back
+to a canvas-sized selection mask. Undo/redo and document-changing commands are
+disabled until Quick Mask mode is exited so the active alpha cannot drift from
+the current frame.
 
 ## Menu keyboard access
 

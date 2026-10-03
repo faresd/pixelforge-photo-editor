@@ -15,6 +15,19 @@ import {
   validSharpenNoise,
   type SharpenNoise,
 } from './sharpenNoise.ts';
+import type { SavedSelectionBook } from './savedSelections.ts';
+import {
+  parseSavedSelections,
+  referencedSelectionMasks,
+} from './savedSelections.ts';
+import {
+  applyCurvesPixels,
+  effectiveCurves,
+  isNeutralCurves,
+  neutralCurves,
+  validCurves,
+  type Curves,
+} from './curves.ts';
 
 /** Version 2 stores immutable raster assets once; history contains editable layer metadata. */
 export const BLENDS = [
@@ -48,6 +61,8 @@ export type Adjustments = {
   colorBalance: ColorBalance;
   /** Nondestructive unsharp-mask and deterministic noise controls. */
   sharpenNoise: SharpenNoise;
+  /** Editable composite and per-channel curves, retained as control points. */
+  curves: Curves;
 };
 export const neutral: Adjustments = {
   brightness: 100,
@@ -61,6 +76,12 @@ export const neutral: Adjustments = {
   levelsGamma: 1,
   colorBalance: { ...neutralColorBalance },
   sharpenNoise: { ...neutralSharpenNoise },
+  curves: {
+    rgb: neutralCurves.rgb,
+    red: neutralCurves.red,
+    green: neutralCurves.green,
+    blue: neutralCurves.blue,
+  },
 };
 export const FILTER_VALUES = [
   'none',
@@ -182,6 +203,10 @@ export type Frame = {
   selection?: Selection;
   /** Last committed selection, retained so Select > Reselect can restore it. */
   previousSelection?: Selection;
+  /** Named selection snapshots retained with the document history. */
+  savedSelections?: SavedSelectionBook;
+  /** Persisted Quick Mask alpha asset while the mode is active. */
+  quickMask?: { asset: string; active: boolean };
 };
 export type Asset = { url: string; w: number; h: number };
 export type Assets = Record<string, Asset>;
@@ -193,8 +218,9 @@ export function validMatrix(value: unknown): value is Matrix {
     Array.isArray(value) &&
     value.length === 6 &&
     value.every((entry) => number(entry, -1000000, 1000000)) &&
-    Math.abs(Number(value[0]) * Number(value[3]) - Number(value[1]) * Number(value[2])) >=
-      0.000000000001
+    Math.abs(
+      Number(value[0]) * Number(value[3]) - Number(value[1]) * Number(value[2]),
+    ) >= 0.000000000001
   );
 }
 
@@ -205,7 +231,8 @@ export function transformSelection(
 ): Selection {
   if (!validMatrix(matrix)) throw new Error('Invalid selection transform');
   const combined = multiply(matrix, selection.matrix || identity());
-  if (!validMatrix(combined)) throw new Error('Selection transform exceeds safe limits');
+  if (!validMatrix(combined))
+    throw new Error('Selection transform exceeds safe limits');
   return {
     ...selection,
     matrix: combined,
@@ -246,7 +273,9 @@ export function selectionTransformMatrix(
     typeof values.flipX !== 'boolean' ||
     typeof values.flipY !== 'boolean'
   )
-    throw new Error('Choose valid transform values within the displayed limits.');
+    throw new Error(
+      'Choose valid transform values within the displayed limits.',
+    );
   const parts = selection.parts?.length ? selection.parts : [selection],
     left = Math.min(...parts.map((part) => part.x)),
     top = Math.min(...parts.map((part) => part.y)),
@@ -257,18 +286,37 @@ export function selectionTransformMatrix(
     m = selection.matrix || identity(),
     cx = m[0] * sourceX + m[2] * sourceY + m[4],
     cy = m[1] * sourceX + m[3] * sourceY + m[5],
-    angle = values.angle * Math.PI / 180,
-    sx = values.scaleX / 100 * (values.flipX ? -1 : 1),
-    sy = values.scaleY / 100 * (values.flipY ? -1 : 1),
-    skew: Matrix = [1, Math.tan(values.skewY * Math.PI / 180), Math.tan(values.skewX * Math.PI / 180), 1, 0, 0],
-    rotation: Matrix = [Math.cos(angle), Math.sin(angle), -Math.sin(angle), Math.cos(angle), 0, 0],
+    angle = (values.angle * Math.PI) / 180,
+    sx = (values.scaleX / 100) * (values.flipX ? -1 : 1),
+    sy = (values.scaleY / 100) * (values.flipY ? -1 : 1),
+    skew: Matrix = [
+      1,
+      Math.tan((values.skewY * Math.PI) / 180),
+      Math.tan((values.skewX * Math.PI) / 180),
+      1,
+      0,
+      0,
+    ],
+    rotation: Matrix = [
+      Math.cos(angle),
+      Math.sin(angle),
+      -Math.sin(angle),
+      Math.cos(angle),
+      0,
+      0,
+    ],
     result = multiply(
       [1, 0, 0, 1, cx + values.offsetX, cy + values.offsetY],
-      multiply(rotation, multiply(skew, multiply([sx, 0, 0, sy, 0, 0], [1, 0, 0, 1, -cx, -cy]))),
+      multiply(
+        rotation,
+        multiply(skew, multiply([sx, 0, 0, sy, 0, 0], [1, 0, 0, 1, -cx, -cy])),
+      ),
     );
   if (!validMatrix(result))
-    throw new Error('This skew combination collapses the selection. Choose different angles.');
-  return result.map((value) => Math.abs(value) < 1e-12 ? 0 : value) as Matrix;
+    throw new Error(
+      'This skew combination collapses the selection. Choose different angles.',
+    );
+  return result.map((value) => (Math.abs(value) < 1e-12 ? 0 : value)) as Matrix;
 }
 export const commonLayer = (name: string): Common => ({
   id: crypto.randomUUID(),
@@ -301,6 +349,10 @@ export const transformFrame = (
   h,
   selection: undefined,
   previousSelection: undefined,
+  // Geometric transforms change the canvas bounds. Named snapshots are
+  // cleared until they can be transformed with an explicit selection contract.
+  savedSelections: undefined,
+  quickMask: undefined,
   layers: frame.layers.map((layer) => ({
     ...layer,
     matrix: multiply(matrix, layer.matrix),
@@ -335,7 +387,39 @@ export async function transformFrameWithMasks(
       return { ...layer, mask: addAsset(assets, transformed) };
     }),
   );
-  return { ...next, layers };
+  const savedSelections = frame.savedSelections && {
+    version: 1 as const,
+    selections: await Promise.all(
+      frame.savedSelections.selections.map(async (entry) => {
+        const { renderSelection } = await import('./selections.ts');
+        const original = await renderSelection(
+            entry.selection,
+            frame.w,
+            frame.h,
+            assets,
+          ),
+          transformed = surface(w, h),
+          context = transformed.getContext('2d')!;
+        context.setTransform(...matrix);
+        context.drawImage(original, 0, 0);
+        return {
+          id: entry.id,
+          name: entry.name,
+          selection: {
+            shape: 'rectangle' as const,
+            x: 0,
+            y: 0,
+            w,
+            h,
+            feather: 0,
+            inverted: false,
+            mask: addAsset(assets, transformed),
+          },
+        };
+      }),
+    ),
+  };
+  return { ...next, layers, ...(savedSelections ? { savedSelections } : {}) };
 }
 
 /** Map a frame-space pointer into a raster layer's untransformed asset space. */
@@ -373,6 +457,7 @@ export function effectiveAdjustments(value: Partial<Adjustments>): Adjustments {
     ...value,
     colorBalance: effectiveColorBalance(value.colorBalance),
     sharpenNoise: effectiveSharpenNoise(value.sharpenNoise),
+    curves: effectiveCurves(value.curves),
   };
 }
 
@@ -453,6 +538,20 @@ export function applySharpenNoise(
   return canvas;
 }
 
+/** Apply editable RGB and per-channel curves to a rendered surface. */
+export function applyCurves(
+  canvas: HTMLCanvasElement,
+  adjustments: Partial<Adjustments>,
+): HTMLCanvasElement {
+  const value = effectiveAdjustments(adjustments).curves;
+  if (isNeutralCurves(value)) return canvas;
+  const context = canvas.getContext('2d')!,
+    image = context.getImageData(0, 0, canvas.width, canvas.height);
+  applyCurvesPixels(image.data, value);
+  context.putImageData(image, 0, 0);
+  return canvas;
+}
+
 /** Measure one text line including custom tracking in canvas pixels. */
 export function trackedTextWidth(
   context: CanvasRenderingContext2D,
@@ -462,7 +561,8 @@ export function trackedTextWidth(
   const spacing = Number.isFinite(letterSpacing) ? letterSpacing : 0;
   return Math.max(
     0,
-    context.measureText(text).width + Math.max(0, Array.from(text).length - 1) * spacing,
+    context.measureText(text).width +
+      Math.max(0, Array.from(text).length - 1) * spacing,
   );
 }
 
@@ -528,8 +628,9 @@ export function validAdjustments(v: unknown): v is Adjustments {
     number(v.levelsGamma ?? neutral.levelsGamma, 0.1, 3) &&
     Number(v.levelsWhite ?? neutral.levelsWhite) >
       Number(v.levelsBlack ?? neutral.levelsBlack) &&
-    validColorBalance(v.colorBalance ?? neutral.colorBalance)
-    && validSharpenNoise(v.sharpenNoise ?? neutral.sharpenNoise)
+    validColorBalance(v.colorBalance ?? neutral.colorBalance) &&
+    validSharpenNoise(v.sharpenNoise ?? neutral.sharpenNoise) &&
+    validCurves(v.curves ?? neutral.curves)
   );
 }
 export function validAsset(value: unknown): value is Asset {
@@ -564,7 +665,10 @@ export function validAsset(value: unknown): value is Asset {
  * contract. Keeping this at the persistence boundary lets older bookmarks
  * open without changing their left-aligned, 1.2x-spaced rendering.
  */
-export function effectiveTextLayer<T extends Layer>(layer: T, frameWidth?: number): T {
+export function effectiveTextLayer<T extends Layer>(
+  layer: T,
+  frameWidth?: number,
+): T {
   if (layer.kind !== 'text') return layer;
   const value = layer as T & Partial<Extract<Layer, { kind: 'text' }>>;
   return {
@@ -654,9 +758,7 @@ export function validateFrame(
         !FONTS.includes(layer.fontFamily as (typeof FONTS)[number]) ||
         typeof layer.bold !== 'boolean' ||
         !number(layer.boxWidth ?? 640, 1, 16000) ||
-        !TEXT_ALIGNS.includes(
-          (layer.textAlign ?? 'left') as TextAlign,
-        ) ||
+        !TEXT_ALIGNS.includes((layer.textAlign ?? 'left') as TextAlign) ||
         !number(layer.lineHeight ?? 1.2, 0.5, 4) ||
         !number(layer.letterSpacing ?? 0, -100, 100)
       )
@@ -680,6 +782,25 @@ export function validateFrame(
   }
   const frameWidth = Number(value.w),
     frameHeight = Number(value.h);
+  if (value.savedSelections !== undefined) {
+    try {
+      const book = parseSavedSelections(value.savedSelections, {
+        w: frameWidth,
+        h: frameHeight,
+      });
+      if (
+        referencedSelectionMasks(book).some(
+          (id) =>
+            !Object.hasOwn(assets, id) ||
+            assets[id].w !== frameWidth ||
+            assets[id].h !== frameHeight,
+        )
+      )
+        return fail();
+    } catch {
+      return fail();
+    }
+  }
   const validSelection = (selection: unknown): selection is Selection => {
     if (!record(selection)) return false;
     const s = selection as Record<string, unknown>;
@@ -695,7 +816,9 @@ export function validateFrame(
         Number(p.x) + Number(p.w) <= frameWidth &&
         Number(p.y) + Number(p.h) <= frameHeight &&
         (!requireOperation ||
-          ['replace', 'add', 'subtract', 'intersect'].includes(String(p.operation))) &&
+          ['replace', 'add', 'subtract', 'intersect'].includes(
+            String(p.operation),
+          )) &&
         (p.shape !== 'polygon' ||
           (Array.isArray(p.points) &&
             p.points.length >= 3 &&
@@ -728,7 +851,14 @@ export function validateFrame(
   if (
     (value.selection !== undefined && !validSelection(value.selection)) ||
     (value.previousSelection !== undefined &&
-      !validSelection(value.previousSelection))
+      !validSelection(value.previousSelection)) ||
+    (value.quickMask !== undefined &&
+      (!record(value.quickMask) ||
+        !validId(value.quickMask.asset) ||
+        typeof value.quickMask.active !== 'boolean' ||
+        !Object.hasOwn(assets, value.quickMask.asset) ||
+        assets[value.quickMask.asset].w !== frameWidth ||
+        assets[value.quickMask.asset].h !== frameHeight))
   )
     return fail();
   if (pixels > 64000000 || !validId(value.active) || !ids.has(value.active))
@@ -737,9 +867,16 @@ export function validateFrame(
 export function referencedAssets(history: Frame[], assets: Assets): Assets {
   const used: Assets = {};
   for (const frame of history) {
-    if (frame.selection?.mask) used[frame.selection.mask] = assets[frame.selection.mask];
+    if (frame.selection?.mask)
+      used[frame.selection.mask] = assets[frame.selection.mask];
     if (frame.previousSelection?.mask)
       used[frame.previousSelection.mask] = assets[frame.previousSelection.mask];
+    if (frame.quickMask?.asset && assets[frame.quickMask.asset])
+      used[frame.quickMask.asset] = assets[frame.quickMask.asset];
+    for (const entry of frame.savedSelections?.selections || []) {
+      if (entry.selection.mask && assets[entry.selection.mask])
+        used[entry.selection.mask] = assets[entry.selection.mask];
+    }
     for (const layer of frame.layers)
       if (layer.kind === 'raster') {
         used[layer.asset] = assets[layer.asset];
@@ -840,9 +977,12 @@ export function floodFill(
       Math.abs(data[index + 3] - target[3]),
     ) <= tolerance;
   if (!same(start)) return false;
-  const seen = new Uint8Array(canvas.width * canvas.height), queue = [startX, startY];
+  const seen = new Uint8Array(canvas.width * canvas.height),
+    queue = [startX, startY];
   while (queue.length) {
-    const cy = queue.pop()!, cx = queue.pop()!, offset = (cy * canvas.width + cx) * 4;
+    const cy = queue.pop()!,
+      cx = queue.pop()!,
+      offset = (cy * canvas.width + cx) * 4;
     if (seen[cy * canvas.width + cx] || !same(offset)) continue;
     seen[cy * canvas.width + cx] = 1;
     data.set(replacement, offset);
@@ -882,7 +1022,9 @@ export function replaceColorStroke(
   ];
   const width = source.width,
     height = source.height,
-    sourceData = source.getContext('2d')!.getImageData(0, 0, width, height).data,
+    sourceData = source
+      .getContext('2d')!
+      .getImageData(0, 0, width, height).data,
     context = output.getContext('2d')!,
     image = context.getImageData(0, 0, width, height),
     outputData = image.data,
@@ -948,7 +1090,8 @@ export function colorSelectMask(
         Math.abs(data[index + 3] - target[3]),
       ) <= tolerance;
   if (!same(start)) return surface(canvas.width, canvas.height);
-  const seen = new Uint8Array(canvas.width * canvas.height), queue = [startX, startY];
+  const seen = new Uint8Array(canvas.width * canvas.height),
+    queue = [startX, startY];
   while (queue.length) {
     const cy = queue.pop()!,
       cx = queue.pop()!,
@@ -995,21 +1138,31 @@ export async function renderFrame(
     if (
       layer.kind !== 'raster' &&
       (effectiveAdjustments(layer.adjustments).hue !== 0 ||
-        !isNeutralColorBalance(effectiveAdjustments(layer.adjustments).colorBalance) ||
-        !isNeutralSharpenNoise(effectiveAdjustments(layer.adjustments).sharpenNoise))
+        !isNeutralColorBalance(
+          effectiveAdjustments(layer.adjustments).colorBalance,
+        ) ||
+        !isNeutralSharpenNoise(
+          effectiveAdjustments(layer.adjustments).sharpenNoise,
+        ) ||
+        !isNeutralCurves(effectiveAdjustments(layer.adjustments).curves))
     ) {
       // Keep text and shape layers editable: render their existing transform
       // and CSS corrections into an isolated surface, then rotate HSL colour.
       const coloured = await renderFrame(
         {
           ...frame,
-          layers: [{
-            ...layer,
-            groupId: undefined,
-            opacity: 1,
-            blend: 'source-over',
-            adjustments: { ...effectiveAdjustments(layer.adjustments), hue: 0 },
-          }],
+          layers: [
+            {
+              ...layer,
+              groupId: undefined,
+              opacity: 1,
+              blend: 'source-over',
+              adjustments: {
+                ...effectiveAdjustments(layer.adjustments),
+                hue: 0,
+              },
+            },
+          ],
           groups: [],
         },
         assets,
@@ -1018,6 +1171,7 @@ export async function renderFrame(
       applyHue(coloured, layer.adjustments);
       applyColorBalance(coloured, layer.adjustments);
       applySharpenNoise(coloured, layer.adjustments);
+      applyCurves(coloured, layer.adjustments);
       context.save();
       context.globalAlpha = layer.opacity * groupOpacity;
       context.globalCompositeOperation = layer.blend;
@@ -1039,6 +1193,7 @@ export async function renderFrame(
       applyLevels(masked, layer.adjustments);
       applyColorBalance(masked, layer.adjustments);
       applySharpenNoise(masked, layer.adjustments);
+      applyCurves(masked, layer.adjustments);
       const maskImage = await decodeAsset(assets[layer.mask]);
       maskContext.save();
       maskContext.globalCompositeOperation = 'destination-in';
@@ -1062,8 +1217,13 @@ export async function renderFrame(
         layer.adjustments.levelsBlack !== neutral.levelsBlack ||
         layer.adjustments.levelsWhite !== neutral.levelsWhite ||
         layer.adjustments.levelsGamma !== neutral.levelsGamma ||
-        !isNeutralColorBalance(effectiveAdjustments(layer.adjustments).colorBalance) ||
-        !isNeutralSharpenNoise(effectiveAdjustments(layer.adjustments).sharpenNoise))
+        !isNeutralColorBalance(
+          effectiveAdjustments(layer.adjustments).colorBalance,
+        ) ||
+        !isNeutralSharpenNoise(
+          effectiveAdjustments(layer.adjustments).sharpenNoise,
+        ) ||
+        !isNeutralCurves(effectiveAdjustments(layer.adjustments).curves))
     ) {
       const leveled = surface(frame.w, frame.h),
         leveledContext = leveled.getContext('2d')!;
@@ -1078,6 +1238,7 @@ export async function renderFrame(
       applyLevels(leveled, layer.adjustments);
       applyColorBalance(leveled, layer.adjustments);
       applySharpenNoise(leveled, layer.adjustments);
+      applyCurves(leveled, layer.adjustments);
       context.save();
       context.globalAlpha = layer.opacity * groupOpacity;
       context.globalCompositeOperation = layer.blend;
@@ -1114,7 +1275,15 @@ export async function renderFrame(
       context.strokeStyle = layer.color;
       context.lineWidth = layer.stroke;
       context.beginPath();
-      context.ellipse(layer.width / 2, layer.height / 2, layer.width / 2, layer.height / 2, 0, 0, Math.PI * 2);
+      context.ellipse(
+        layer.width / 2,
+        layer.height / 2,
+        layer.width / 2,
+        layer.height / 2,
+        0,
+        0,
+        Math.PI * 2,
+      );
       if (layer.fill) context.fill();
       else context.stroke();
     }

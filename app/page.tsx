@@ -2,6 +2,7 @@
 
 import {
   Brush,
+  Bookmark,
   Crop,
   Download,
   Eraser,
@@ -86,8 +87,25 @@ import ResizeDialog from '../src/ResizeDialog';
 import ExportDialog from '../src/ExportDialog';
 import BatchExportDialog from '../src/BatchExportDialog';
 import SelectionTransformDialog from '../src/SelectionTransformDialog';
+import CurveEditor from '../src/CurveEditor';
+import { type CurveChannel, type CurvePoints } from '../src/curves';
 import { type ExportFormat } from '../src/export';
 import { renderSelection } from '../src/selections';
+import {
+  createQuickMask,
+  loadSelection,
+  paintQuickMask,
+  parseSavedSelections,
+  quickMaskOverlay,
+  saveSelection,
+  serializeSavedSelections,
+  selectionFromQuickMask,
+  emptySavedSelectionBook,
+  deleteSelection,
+  renameSelection,
+  type QuickMask,
+  type SavedSelectionBook,
+} from '../src/savedSelections';
 import { BrandLockup } from '../src/Brand';
 type MenuName =
   | 'File'
@@ -136,8 +154,12 @@ type Command =
   | 'invert-selection'
   | 'transform-selection'
   | 'mask-selection'
+  | 'quick-mask'
+  | 'save-selection'
+  | 'load-selection'
   | 'reset'
   | 'levels'
+  | 'curves'
   | 'hue-saturation'
   | 'color-balance'
   | 'sharpen-noise'
@@ -305,6 +327,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Mode', command: 'noop', disabled: true },
     { label: 'Adjustments', command: 'reset', disabled: true },
     { label: 'Levels…', command: 'levels' },
+    { label: 'Curves…', command: 'curves' },
     { label: 'Hue/Saturation…', command: 'hue-saturation' },
     { label: 'Color Balance…', command: 'color-balance' },
     {
@@ -411,9 +434,9 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Grow', command: 'noop', disabled: true },
     { label: 'Similar', command: 'noop', disabled: true },
     { label: 'Transform Selection', command: 'transform-selection' },
-    { label: 'Edit in Quick Mask Mode', command: 'noop', disabled: true },
-    { label: 'Load Selection…', command: 'noop', disabled: true },
-    { label: 'Save Selection…', command: 'noop', disabled: true },
+    { label: 'Edit in Quick Mask Mode', command: 'quick-mask' },
+    { label: 'Load Selection…', command: 'load-selection' },
+    { label: 'Save Selection…', command: 'save-selection' },
     { label: 'Mask from Selection', command: 'mask-selection' },
   ],
   Filter: [
@@ -506,6 +529,8 @@ export default function Home() {
   const file = useRef<HTMLInputElement>(null),
     layerFile = useRef<HTMLInputElement>(null),
     projectFile = useRef<HTMLInputElement>(null),
+    selectionFile = useRef<HTMLInputElement>(null),
+    quickMaskOverlayCanvas = useRef<HTMLCanvasElement>(null),
     stage = useRef<HTMLElement>(null),
     menuArea = useRef<HTMLElement>(null),
     menuButtonRefs = useRef<Record<MenuName, HTMLButtonElement | null>>(
@@ -574,6 +599,17 @@ export default function Home() {
       height: number;
     } | null>(null);
   const [selectionTransforming, setSelectionTransforming] = useState(false);
+  const [quickMasking, setQuickMasking] = useState(false),
+    [quickMask, setQuickMask] = useState<QuickMask | null>(null),
+    [quickMaskReveal, setQuickMaskReveal] = useState(false),
+    [savedSelectionName, setSavedSelectionName] = useState('Selection 1');
+  const quickMaskRef = useRef<QuickMask | null>(null),
+    quickMaskGesture = useRef<{
+      frame: Frame;
+      last: { x: number; y: number };
+      selected: boolean;
+      before: Uint8ClampedArray;
+    } | null>(null);
 
   /**
    * Menus use a small roving-focus model rather than relying on browser tab
@@ -595,10 +631,13 @@ export default function Home() {
     menu: MenuName,
   ) => {
     const buttons = (menuItemRefs.current[menu] || []).filter(
-      (button): button is HTMLButtonElement => button !== null && !button.disabled,
+      (button): button is HTMLButtonElement =>
+        button !== null && !button.disabled,
     );
     if (!buttons.length) return;
-    const currentIndex = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    const currentIndex = buttons.indexOf(
+      document.activeElement as HTMLButtonElement,
+    );
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       event.stopPropagation();
@@ -643,6 +682,7 @@ export default function Home() {
     levelsBlack,
     levelsWhite,
     levelsGamma,
+    curves,
     colorBalance,
     sharpenNoise,
   } = adjustments;
@@ -700,7 +740,297 @@ export default function Home() {
     setNotice('Foreground and background colors swapped');
   };
   const current = () => history.current[index.current];
-  const transformSelectionValue = selectionTransforming ? current().selection : undefined;
+  const transformSelectionValue = selectionTransforming
+    ? current().selection
+    : undefined;
+  const currentSavedSelections = (): SavedSelectionBook =>
+    current().savedSelections || emptySavedSelectionBook();
+  const imageToQuickMask = (image: CanvasImageSource): QuickMask => {
+    const width =
+        image instanceof HTMLImageElement
+          ? image.naturalWidth
+          : (image as HTMLCanvasElement).width,
+      height =
+        image instanceof HTMLImageElement
+          ? image.naturalHeight
+          : (image as HTMLCanvasElement).height,
+      sample = surface(width, height),
+      context = sample.getContext('2d')!;
+    context.drawImage(image, 0, 0);
+    const data = context.getImageData(0, 0, width, height).data,
+      selected = new Uint8ClampedArray(width * height);
+    for (let i = 0; i < selected.length; i += 1) selected[i] = data[i * 4 + 3];
+    return createQuickMask(width, height, selected);
+  };
+  const quickMaskAsset = (mask: QuickMask) => {
+    const image = surface(mask.width, mask.height),
+      context = image.getContext('2d')!,
+      data = context.createImageData(mask.width, mask.height);
+    for (let i = 0; i < mask.selected.length; i += 1) {
+      const offset = i * 4;
+      data.data[offset] = 255;
+      data.data[offset + 1] = 255;
+      data.data[offset + 2] = 255;
+      data.data[offset + 3] = mask.selected[i];
+    }
+    context.putImageData(data, 0, 0);
+    return addAsset(assets.current, image);
+  };
+  const drawQuickMaskOverlay = (mask: QuickMask) => {
+    const target = quickMaskOverlayCanvas.current;
+    if (!target) return;
+    target.width = mask.width;
+    target.height = mask.height;
+    const context = target.getContext('2d')!;
+    const imageData = context.createImageData(mask.width, mask.height);
+    imageData.data.set(quickMaskOverlay(mask));
+    context.putImageData(imageData, 0, 0);
+  };
+  const repaintQuickMask = (mask: QuickMask) => {
+    quickMaskRef.current = mask;
+    setQuickMask(mask);
+    void paint(current()).then(() => {
+      if (quickMaskRef.current === mask) drawQuickMaskOverlay(mask);
+    });
+  };
+  const persistQuickMask = (mask: QuickMask, active = true) => {
+    const f = current(),
+      asset = quickMaskAsset(mask);
+    if (commit({ ...f, quickMask: { asset, active } })) {
+      if (active) setNotice('Quick Mask stroke applied');
+      return asset;
+    }
+    return undefined;
+  };
+  const enterQuickMask = async () => {
+    const f = current();
+    if (quickMasking) {
+      setNotice('Quick Mask mode is already active');
+      return;
+    }
+    try {
+      let mask: QuickMask;
+      if (f.selection) {
+        const rendered = await renderSelection(
+            f.selection,
+            f.w,
+            f.h,
+            assets.current,
+          ),
+          alpha = rendered.getContext('2d')!.getImageData(0, 0, f.w, f.h).data,
+          selected = new Uint8ClampedArray(f.w * f.h);
+        for (let i = 0; i < selected.length; i += 1)
+          selected[i] = alpha[i * 4 + 3];
+        mask = createQuickMask(f.w, f.h, selected);
+      } else mask = createQuickMask(f.w, f.h);
+      const asset = quickMaskAsset(mask);
+      if (!commit({ ...f, quickMask: { asset, active: true } })) return;
+      quickMaskRef.current = mask;
+      setQuickMask(mask);
+      setQuickMasking(true);
+      setTool('brush');
+      setNotice(
+        'Quick Mask mode active; paint to hide or reveal the selection',
+      );
+      void paint({ ...f, quickMask: { asset, active: true } }).then(() =>
+        drawQuickMaskOverlay(mask),
+      );
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : 'Could not enter Quick Mask mode',
+      );
+    }
+  };
+  const exitQuickMask = () => {
+    const mask = quickMaskRef.current;
+    if (!mask) {
+      setQuickMasking(false);
+      return;
+    }
+    const f = current(),
+      asset = quickMaskAsset(mask),
+      selection = selectionFromQuickMask(mask, asset);
+    if (commit({ ...f, selection, quickMask: undefined })) {
+      quickMaskRef.current = null;
+      setQuickMask(null);
+      setQuickMasking(false);
+      setNotice('Quick Mask converted to selection');
+    }
+  };
+  const toggleQuickMask = () => {
+    if (quickMasking) exitQuickMask();
+    else void enterQuickMask();
+  };
+  const updateQuickMaskAt = (
+    mask: QuickMask,
+    x: number,
+    y: number,
+    selected: boolean,
+  ) => {
+    const next = createQuickMask(mask.width, mask.height, mask.selected);
+    if (
+      !paintQuickMask(
+        next,
+        x,
+        y,
+        size,
+        brushOpacity / 100,
+        selected,
+        hardness / 100,
+      )
+    )
+      return;
+    repaintQuickMask(next);
+  };
+  const saveCurrentSelection = (name = savedSelectionName) => {
+    const f = current();
+    if (!f.selection) {
+      setNotice('Create a selection before saving it');
+      return;
+    }
+    try {
+      const book = saveSelection(currentSavedSelections(), f.selection, name, {
+        bounds: { w: f.w, h: f.h },
+      });
+      if (commit({ ...f, savedSelections: book })) {
+        setSavedSelectionName(`Selection ${book.selections.length + 1}`);
+        setNotice(`Selection “${book.selections.at(-1)?.name}” saved`);
+      }
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : 'Selection could not be saved',
+      );
+    }
+  };
+  const loadSavedSelection = (id: string) => {
+    const f = current();
+    try {
+      const selection = loadSelection(currentSavedSelections(), id, {
+        w: f.w,
+        h: f.h,
+      });
+      if (commit({ ...f, selection })) setNotice('Saved selection loaded');
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : 'Saved selection could not be loaded',
+      );
+    }
+  };
+  const renameSavedSelection = (id: string) => {
+    const entry = currentSavedSelections().selections.find(
+      (item) => item.id === id,
+    );
+    const nextName = window.prompt(
+      'Rename saved selection',
+      entry?.name || 'Selection',
+    );
+    if (nextName === null) return;
+    try {
+      const book = renameSelection(currentSavedSelections(), id, nextName);
+      if (commit({ ...current(), savedSelections: book }))
+        setNotice('Saved selection renamed');
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : 'Saved selection could not be renamed',
+      );
+    }
+  };
+  const deleteSavedSelection = (id: string) => {
+    const entry = currentSavedSelections().selections.find(
+      (item) => item.id === id,
+    );
+    if (!entry || !window.confirm(`Delete saved selection “${entry.name}”?`))
+      return;
+    try {
+      const book = deleteSelection(currentSavedSelections(), id);
+      if (commit({ ...current(), savedSelections: book }))
+        setNotice('Saved selection deleted');
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : 'Saved selection could not be deleted',
+      );
+    }
+  };
+  const exportSelection = () => {
+    const f = current();
+    if (!f.selection) {
+      setNotice('Create a selection before saving it');
+      return;
+    }
+    if (f.selection.mask) {
+      setNotice('Color-based selections must be saved in the project file');
+      return;
+    }
+    try {
+      const book = saveSelection(
+        emptySavedSelectionBook(),
+        f.selection,
+        savedSelectionName,
+        {
+          id: 'selection-1',
+          bounds: { w: f.w, h: f.h },
+        },
+      );
+      const url = URL.createObjectURL(
+          new Blob([serializeSavedSelections(book, { w: f.w, h: f.h })], {
+            type: 'application/json',
+          }),
+        ),
+        link = document.createElement('a');
+      link.href = url;
+      link.download = `${savedSelectionName || 'selection'}.pixelselection`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setNotice('Selection file downloaded');
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : 'Selection file could not be saved',
+      );
+    }
+  };
+  const importSelection = async (selected?: File) => {
+    if (!selected) return;
+    try {
+      const f = current(),
+        book = parseSavedSelections(await selected.text(), { w: f.w, h: f.h });
+      const entry = book.selections[0];
+      if (!entry) throw new Error('Selection file is empty.');
+      if (
+        entry.selection.mask &&
+        !Object.hasOwn(assets.current, entry.selection.mask)
+      )
+        throw new Error(
+          'Selection file references pixels that are not included.',
+        );
+      let merged = currentSavedSelections();
+      for (const imported of book.selections) {
+        merged = saveSelection(merged, imported.selection, imported.name, {
+          id: imported.id,
+          bounds: { w: f.w, h: f.h },
+        });
+      }
+      if (commit({ ...f, selection: entry.selection, savedSelections: merged }))
+        setNotice(`Selection “${entry.name}” loaded`);
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : 'Selection file could not be opened',
+      );
+    } finally {
+      if (selectionFile.current) selectionFile.current.value = '';
+    }
+  };
   const localSelectionMask = async (
     selection: Selection,
     frameWidth: number,
@@ -750,6 +1080,10 @@ export default function Home() {
   const layerIsLocked = (f: Frame, layer: Layer) =>
     layer.locked || Boolean(groupForLayer(f, layer)?.locked);
   const editLayer = (patch: Partial<Layer>) => {
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before editing layers');
+      return false;
+    }
     const f = current(),
       layer = f.layers.find((l) => l.id === f.active)!;
     const group = groupForLayer(f, layer);
@@ -786,6 +1120,10 @@ export default function Home() {
     editLayer({ textAlign });
   };
   const editGroup = (id: string, patch: Partial<Group>) => {
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before editing layers');
+      return false;
+    }
     const f = current(),
       group = f.groups?.find((item) => item.id === id);
     if (!group) return false;
@@ -819,7 +1157,11 @@ export default function Home() {
     // replaces it; it remains local document metadata and never leaves exports.
     const next = selection
       ? { ...f, selection }
-      : { ...f, selection: undefined, previousSelection: f.selection || f.previousSelection };
+      : {
+          ...f,
+          selection: undefined,
+          previousSelection: f.selection || f.previousSelection,
+        };
     if (commit(next)) {
       const label =
         selection?.shape === 'ellipse'
@@ -854,7 +1196,9 @@ export default function Home() {
       const selection = transformSelectionModel(f.selection, matrix);
       if (commit({ ...f, selection })) setNotice('Selection transform applied');
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Selection transform failed');
+      setNotice(
+        error instanceof Error ? error.message : 'Selection transform failed',
+      );
     } finally {
       setSelectionTransforming(false);
     }
@@ -986,6 +1330,8 @@ export default function Home() {
     setLevelsGamma = (levelsGamma: number) => adjust({ levelsGamma });
   const setColorBalance = (patch: Partial<Adjustments['colorBalance']>) =>
     adjust({ colorBalance: { ...colorBalance, ...patch } });
+  const setCurve = (channel: CurveChannel, points: CurvePoints) =>
+    adjust({ curves: { ...curves, [channel]: points } });
   const setSharpenNoise = (patch: Partial<Adjustments['sharpenNoise']>) =>
     adjust({ sharpenNoise: { ...sharpenNoise, ...patch } });
   const chooseFilter = (filter: string, label: string) => {
@@ -1033,6 +1379,23 @@ export default function Home() {
             saved.localRevision || 0,
           );
           restoreSettings(saved.settings);
+          const restoredMask = saved.history[saved.index].quickMask;
+          if (restoredMask?.active) {
+            try {
+              const image = await decodeAsset(saved.assets[restoredMask.asset]),
+                data = imageToQuickMask(image);
+              quickMaskRef.current = data;
+              setQuickMask(data);
+              setQuickMasking(true);
+              void paint(saved.history[saved.index]).then(() =>
+                drawQuickMaskOverlay(data),
+              );
+            } catch {
+              setQuickMasking(false);
+              setQuickMask(null);
+              quickMaskRef.current = null;
+            }
+          }
           if (saved.migrated) {
             setDraftId(createDraftId());
             setNotice(
@@ -1091,7 +1454,7 @@ export default function Home() {
       cancelled = true;
     };
     // Settings are loaded once from the opening bookmark.
-  }, [assets, commit, install]);
+  }, [assets, commit, install, paint]);
   useEffect(() => {
     if (!ready || index.current < 0 || discarding.current) return;
     const sequence = ++saveSequence.current;
@@ -1171,6 +1534,36 @@ export default function Home() {
     assets,
   ]);
   useEffect(() => {
+    if (quickMasking && quickMask) drawQuickMaskOverlay(quickMask);
+  }, [quickMasking, quickMask]);
+  useEffect(() => {
+    if (!ready) return;
+    if (!frame?.quickMask?.active) {
+      if (quickMasking && !quickMaskGesture.current) {
+        quickMaskRef.current = null;
+        setQuickMask(null);
+        setQuickMasking(false);
+      }
+      return;
+    }
+    let cancelled = false;
+    void decodeAsset(assets.current[frame.quickMask.asset])
+      .then((image) => {
+        if (cancelled) return;
+        const restored = imageToQuickMask(image);
+        quickMaskRef.current = restored;
+        setQuickMask(restored);
+        setQuickMasking(true);
+        void paint(frame).then(() => drawQuickMaskOverlay(restored));
+      })
+      .catch(() => {
+        if (!cancelled) setNotice('Quick Mask data could not be restored');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, frame, quickMasking, paint, assets]);
+  useEffect(() => {
     const protect = (event: BeforeUnloadEvent) => {
       if (saving.current || cloudBusy || gesture.current)
         event.preventDefault();
@@ -1247,6 +1640,10 @@ export default function Home() {
     }
   };
   const resizeImage = async (w: number, h: number) => {
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before resizing the document');
+      return;
+    }
     const f = current();
     const next = await transformFrameWithMasks(
       f,
@@ -1667,6 +2064,10 @@ export default function Home() {
     }
   };
   const load = async (selected?: File, asLayer = false) => {
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before opening an image');
+      return;
+    }
     if (!selected?.type.startsWith('image/')) {
       setNotice('Choose an image file');
       return;
@@ -1735,6 +2136,24 @@ export default function Home() {
       ? e.pressure
       : 1;
   const pointerDown = async (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (quickMasking && quickMaskRef.current) {
+      if (gesture.current || quickMaskGesture.current || doc.rendering) return;
+      const p = point(e);
+      canvas.current?.setPointerCapture(e.pointerId);
+      quickMaskGesture.current = {
+        frame: current(),
+        last: p,
+        selected: quickMaskReveal || e.altKey,
+        before: quickMaskRef.current.selected.slice(),
+      };
+      updateQuickMaskAt(
+        quickMaskRef.current,
+        p.x,
+        p.y,
+        quickMaskReveal || e.altKey,
+      );
+      return;
+    }
     // Polygonal lasso is a click-to-place workflow. Keep its gesture alive
     // between pointer events so touch, pen and mouse can place vertices one
     // at a time; clicking near the first point closes the path.
@@ -2138,6 +2557,13 @@ export default function Home() {
     }
   };
   const pointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (quickMaskGesture.current && quickMaskRef.current) {
+      const p = point(e),
+        g = quickMaskGesture.current;
+      updateQuickMaskAt(quickMaskRef.current, p.x, p.y, g.selected);
+      g.last = p;
+      return;
+    }
     const g = gesture.current;
     if (!g) return;
     const p = point(e);
@@ -2420,6 +2846,29 @@ export default function Home() {
     g.last = g.layer?.kind === 'raster' ? local : p;
   };
   const pointerUp = async (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (quickMaskGesture.current) {
+      const mask = quickMaskRef.current;
+      const canceledGesture = quickMaskGesture.current;
+      quickMaskGesture.current = null;
+      if (mask && e.type !== 'pointercancel') {
+        const asset = persistQuickMask(mask);
+        if (asset)
+          void paint({ ...current(), quickMask: { asset, active: true } }).then(
+            () => drawQuickMaskOverlay(mask),
+          );
+      } else if (mask) {
+        const restored = createQuickMask(
+          mask.width,
+          mask.height,
+          canceledGesture.before,
+        );
+        quickMaskRef.current = restored;
+        setQuickMask(restored);
+        void paint(current()).then(() => drawQuickMaskOverlay(restored));
+        setNotice('Quick Mask stroke cancelled');
+      }
+      return;
+    }
     const g = gesture.current;
     if (!g) return;
     if (g.tool === 'polygonal-lasso') {
@@ -2666,6 +3115,10 @@ export default function Home() {
     finishPolygonalLasso(g);
   };
   const transform = async (a: 'left' | 'right' | 'h' | 'v') => {
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before transforming the document');
+      return;
+    }
     const f = current();
     const matrix: Matrix =
       a === 'left'
@@ -2687,10 +3140,18 @@ export default function Home() {
     if (changed) setNotice('Transform applied to document; layers preserved');
   };
   const undo = () => {
+      if (quickMasking) {
+        setNotice('Exit Quick Mask mode before changing history');
+        return;
+      }
       travel(-1);
       setNotice('Undone');
     },
     redo = () => {
+      if (quickMasking) {
+        setNotice('Exit Quick Mask mode before changing history');
+        return;
+      }
       travel(1);
       setNotice('Redone');
     };
@@ -2717,7 +3178,8 @@ export default function Home() {
     delete pendingMenuFocus.current[activeMenu];
     const focusMenuItem = () => {
       const buttons = (menuItemRefs.current[activeMenu] || []).filter(
-        (button): button is HTMLButtonElement => button !== null && !button.disabled,
+        (button): button is HTMLButtonElement =>
+          button !== null && !button.disabled,
       );
       buttons[focus === 'last' ? buttons.length - 1 : 0]?.focus();
     };
@@ -2740,12 +3202,36 @@ export default function Home() {
         setNotice('Polygonal lasso cancelled');
         return;
       }
+      if (e.key === 'Escape' && quickMasking) {
+        e.preventDefault();
+        if (quickMaskGesture.current) {
+          const mask = quickMaskRef.current;
+          if (mask) {
+            const restored = createQuickMask(
+              mask.width,
+              mask.height,
+              quickMaskGesture.current.before,
+            );
+            quickMaskRef.current = restored;
+            setQuickMask(restored);
+          }
+          quickMaskGesture.current = null;
+          setNotice('Quick Mask stroke cancelled');
+        } else exitQuickMask();
+        return;
+      }
       if (gesture.current) return;
       if (e.key === 'Escape') {
         closeMenu(true);
         return;
       }
       if (typing) return;
+      if (quickMasking && command) {
+        e.preventDefault();
+        if (e.key.toLowerCase() === 's' && e.shiftKey) exportProject();
+        else setNotice('Exit Quick Mask mode before changing the document');
+        return;
+      }
       if (e.key === 'F5' && e.shiftKey) {
         e.preventDefault();
         void fillActiveLayer();
@@ -2808,6 +3294,11 @@ export default function Home() {
         resetColors();
         return;
       }
+      if (e.key.toLowerCase() === 'q') {
+        e.preventDefault();
+        toggleQuickMask();
+        return;
+      }
       if (e.key.toLowerCase() === 'x') {
         e.preventDefault();
         swapColors();
@@ -2868,6 +3359,20 @@ export default function Home() {
   });
   const runCommand = (command: Command) => {
     if (command === 'noop') return;
+    if (
+      quickMasking &&
+      ![
+        'quick-mask',
+        'zoom-in',
+        'zoom-out',
+        'fit',
+        'actual',
+        'project-save',
+      ].includes(command)
+    ) {
+      setNotice('Exit Quick Mask mode before changing the document');
+      return;
+    }
     if (command === 'resize')
       setResizing({ width: current().w, height: current().h });
     else if (command === 'project-save') exportProject();
@@ -2909,20 +3414,32 @@ export default function Home() {
     else if (command === 'deselect') setSelection(undefined);
     else if (command === 'reselect') reselect();
     else if (command === 'invert-selection') invertSelection();
+    else if (command === 'quick-mask') toggleQuickMask();
+    else if (command === 'save-selection') {
+      saveCurrentSelection();
+      exportSelection();
+    } else if (command === 'load-selection') selectionFile.current?.click();
     else if (command === 'transform-selection') {
       if (current().selection) setSelectionTransforming(true);
       else setNotice('Create a selection before transforming it');
-    }
-    else if (command === 'mask-selection') void createMaskFromSelection();
+    } else if (command === 'mask-selection') void createMaskFromSelection();
     else if (command === 'reset') resetAdjustments();
     else if (command === 'levels')
       setNotice('Levels controls are available in Adjust selected layer');
     else if (command === 'hue-saturation')
-      setNotice('Hue/Saturation controls are available in Adjust selected layer');
+      setNotice(
+        'Hue/Saturation controls are available in Adjust selected layer',
+      );
+    else if (command === 'curves')
+      setNotice('Curves controls are available in Adjust selected layer');
     else if (command === 'color-balance')
-      setNotice('Color Balance controls are available in Adjust selected layer');
+      setNotice(
+        'Color Balance controls are available in Adjust selected layer',
+      );
     else if (command === 'sharpen-noise')
-      setNotice('Sharpen and Noise controls are available in Adjust selected layer');
+      setNotice(
+        'Sharpen and Noise controls are available in Adjust selected layer',
+      );
     else if (command === 'crop') {
       setTool('crop');
       setNotice('Drag on the image to crop');
@@ -2942,13 +3459,25 @@ export default function Home() {
   };
   const menuItemDisabled = (item: MenuItem) => {
     if (item.disabled || !frame) return true;
+    if (
+      quickMasking &&
+      ![
+        'quick-mask',
+        'zoom-in',
+        'zoom-out',
+        'fit',
+        'actual',
+        'project-save',
+      ].includes(item.command)
+    )
+      return true;
     const layer = frame.layers.find((item) => item.id === frame.active);
     const locked = layer ? layerIsLocked(frame, layer) : true;
     switch (item.command) {
       case 'undo':
-        return !canUndo;
+        return !canUndo || quickMasking;
       case 'redo':
-        return !canRedo;
+        return !canRedo || quickMasking;
       case 'copy-layer':
         return !layer;
       case 'cut-layer':
@@ -2977,6 +3506,12 @@ export default function Home() {
         );
       case 'mask-selection':
         return !layer || layer.kind !== 'raster' || locked || !frame.selection;
+      case 'quick-mask':
+        return !frame;
+      case 'save-selection':
+        return !frame.selection;
+      case 'load-selection':
+        return !frame;
       case 'reselect':
         return Boolean(frame.selection) || !frame.previousSelection;
       case 'transform-selection':
@@ -3035,6 +3570,14 @@ export default function Home() {
         accept=".pixelforge,application/json"
         onChange={(event) => void importProject(event.target.files?.[0])}
       />
+      <input
+        ref={selectionFile}
+        data-testid="selection-input"
+        className="hidden"
+        type="file"
+        accept=".pixelselection,application/json"
+        onChange={(event) => void importSelection(event.target.files?.[0])}
+      />
       {resizing && (
         <ResizeDialog
           width={resizing.width}
@@ -3091,14 +3634,15 @@ export default function Home() {
                 aria-haspopup="menu"
                 aria-expanded={activeMenu === menuName}
                 onClick={() =>
-                  activeMenu === menuName
-                    ? closeMenu(true)
-                    : openMenu(menuName)
+                  activeMenu === menuName ? closeMenu(true) : openMenu(menuName)
                 }
                 onKeyDown={(event) => {
                   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
                     event.preventDefault();
-                    openMenu(menuName, event.key === 'ArrowUp' ? 'last' : 'first');
+                    openMenu(
+                      menuName,
+                      event.key === 'ArrowUp' ? 'last' : 'first',
+                    );
                   }
                 }}
               >
@@ -3151,7 +3695,7 @@ export default function Home() {
             aria-label="Undo"
             className="icon"
             onClick={undo}
-            disabled={!canUndo}
+            disabled={!canUndo || quickMasking}
           >
             <Undo2 />
           </button>
@@ -3159,7 +3703,7 @@ export default function Home() {
             aria-label="Redo"
             className="icon"
             onClick={redo}
-            disabled={!canRedo}
+            disabled={!canRedo || quickMasking}
           >
             <Redo2 />
           </button>
@@ -3216,6 +3760,19 @@ export default function Home() {
               <kbd>{key}</kbd>
             </button>
           ))}
+          <button
+            className={
+              quickMasking ? 'active quick-mask-tool' : 'quick-mask-tool'
+            }
+            onClick={toggleQuickMask}
+            aria-label="Quick Mask mode"
+            aria-pressed={quickMasking}
+            title="Quick Mask mode (Q)"
+          >
+            <Bookmark />
+            <span>Quick Mask</span>
+            <kbd>Q</kbd>
+          </button>
           <hr />
           <label className="color">
             <input
@@ -3263,6 +3820,14 @@ export default function Home() {
               onDoubleClick={doubleClick}
               className={`tool-${tool}`}
             />
+            {quickMasking && (
+              <canvas
+                ref={quickMaskOverlayCanvas}
+                className="quick-mask-overlay"
+                data-testid="quick-mask-overlay"
+                aria-hidden="true"
+              />
+            )}
           </div>
           <div className="zoom">
             <button
@@ -3311,6 +3876,80 @@ export default function Home() {
               setSelectionOperation={setSelectionOperation}
               setSelectionFeather={setSelectionFeather}
             />
+          )}
+          {frame && (
+            <section
+              className="panel saved-selections-panel"
+              aria-label="Saved selections"
+            >
+              <Title icon={Bookmark} text="Saved selections" />
+              <label className="layer-field">
+                Selection name
+                <input
+                  aria-label="Saved selection name"
+                  maxLength={160}
+                  value={savedSelectionName}
+                  onChange={(event) =>
+                    setSavedSelectionName(event.target.value)
+                  }
+                />
+              </label>
+              <div className="layer-actions">
+                <button
+                  onClick={() => saveCurrentSelection()}
+                  disabled={!frame.selection}
+                >
+                  Save selection
+                </button>
+                <button onClick={exportSelection} disabled={!frame.selection}>
+                  Download selection file
+                </button>
+              </div>
+              <div className="saved-selection-list">
+                {(frame.savedSelections?.selections || []).map((entry) => (
+                  <div className="saved-selection-row" key={entry.id}>
+                    <span>{entry.name}</span>
+                    <button onClick={() => loadSavedSelection(entry.id)}>
+                      Load
+                    </button>
+                    <button onClick={() => renameSavedSelection(entry.id)}>
+                      Rename
+                    </button>
+                    <button onClick={() => deleteSavedSelection(entry.id)}>
+                      Delete
+                    </button>
+                  </div>
+                ))}
+                {!frame.savedSelections?.selections.length && (
+                  <small>No saved selections yet.</small>
+                )}
+              </div>
+            </section>
+          )}
+          {quickMasking && quickMask && (
+            <section
+              className="panel quick-mask-panel"
+              aria-label="Quick Mask options"
+            >
+              <Title
+                icon={Bookmark}
+                text="Quick Mask mode"
+                action="Exit"
+                onClick={exitQuickMask}
+              />
+              <label>
+                <input
+                  type="checkbox"
+                  checked={quickMaskReveal}
+                  onChange={(event) => setQuickMaskReveal(event.target.checked)}
+                />
+                Reveal selection while painting
+              </label>
+              <p>
+                Paint hides selected pixels in red. Hold Alt to reveal while
+                painting.
+              </p>
+            </section>
           )}
           <section className="panel">
             <Title
@@ -3385,6 +4024,27 @@ export default function Home() {
               set={setLevelsGamma}
               suffix=""
             />
+            <div className="adjustment-subtitle">Curves (nondestructive)</div>
+            <CurveEditor
+              label="RGB"
+              points={curves.rgb}
+              onChange={(points) => setCurve('rgb', points)}
+            />
+            <CurveEditor
+              label="Red"
+              points={curves.red}
+              onChange={(points) => setCurve('red', points)}
+            />
+            <CurveEditor
+              label="Green"
+              points={curves.green}
+              onChange={(points) => setCurve('green', points)}
+            />
+            <CurveEditor
+              label="Blue"
+              points={curves.blue}
+              onChange={(points) => setCurve('blue', points)}
+            />
             <div className="adjustment-subtitle">Color Balance</div>
             <Slider
               label="Shadows cyan/red"
@@ -3447,7 +4107,9 @@ export default function Home() {
               value={colorBalance.highlightsMagentaGreen}
               min={-100}
               max={100}
-              set={(value) => setColorBalance({ highlightsMagentaGreen: value })}
+              set={(value) =>
+                setColorBalance({ highlightsMagentaGreen: value })
+              }
               suffix=""
             />
             <Slider
