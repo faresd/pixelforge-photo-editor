@@ -31,6 +31,8 @@ export type TonalStrokeOptions = {
   flow?: number;
   range?: TonalRange;
   mode: TonalMode;
+  /** Optional canvas-sized selection alpha (0..255) applied to the stroke. */
+  selectionMask?: ArrayLike<number>;
 };
 export type SpongeStrokeOptions = Omit<TonalStrokeOptions, 'exposure' | 'range' | 'mode'> & {
   /** Saturation/vibrance amount, normalized 0..1. */
@@ -63,6 +65,14 @@ function assertPixels(value: ArrayLike<number>, width: number, height: number, l
   for (let i = 0; i < value.length; i += 1)
     if (!finite(value[i]) || value[i] < 0 || value[i] > 255)
       throw new Error(`${label} contains invalid RGBA channels`);
+}
+
+function assertSelectionMask(value: ArrayLike<number> | undefined, width: number, height: number): void {
+  if (value === undefined) return;
+  if (value.length !== width * height) throw new Error('Selection mask must contain one alpha value per pixel');
+  for (let i = 0; i < value.length; i += 1)
+    if (!finite(value[i]) || value[i] < 0 || value[i] > 255)
+      throw new Error('Selection mask contains invalid alpha values');
 }
 
 function assertStroke(options: TonalStrokeOptions | SpongeStrokeOptions): void {
@@ -166,6 +176,7 @@ export function applyDodgeBurnStroke(source: ArrayLike<number>, destination: Arr
   assertStroke(options);
   assertPixels(source, options.width, options.height, 'Source');
   assertPixels(destination, options.width, options.height, 'Destination');
+  assertSelectionMask(options.selectionMask, options.width, options.height);
   if (!['dodge', 'burn'].includes(options.mode)) throw new Error('Tonal mode is invalid');
   if (options.range !== undefined && !TONAL_RANGES.includes(options.range)) throw new Error('Tonal range is invalid');
   const exposure = normalized(options.exposure, 'Exposure', 0.5),
@@ -175,7 +186,7 @@ export function applyDodgeBurnStroke(source: ArrayLike<number>, destination: Arr
     mask = maskForStroke(options);
   let changed = false;
   for (let index = 0; index < mask.length; index += 1) {
-    const coverage = mask[index] / 255,
+    const coverage = (mask[index] / 255) * (options.selectionMask ? options.selectionMask[index] / 255 : 1),
       offset = index * 4;
     if (coverage <= 0 || pixels[offset + 3] === 0) continue;
     const luminance = (0.2126 * pixels[offset] + 0.7152 * pixels[offset + 1] + 0.0722 * pixels[offset + 2]) / 255,
@@ -193,20 +204,22 @@ export function applySpongeStroke(source: ArrayLike<number>, destination: ArrayL
   assertStroke(options);
   assertPixels(source, options.width, options.height, 'Source');
   assertPixels(destination, options.width, options.height, 'Destination');
+  assertSelectionMask(options.selectionMask, options.width, options.height);
   const amount = normalized(options.amount, 'Sponge amount', 0.5),
+    flow = normalized(options.flow, 'Flow', 1),
     mode = options.mode ?? 'saturate';
   if (!SPONGE_MODES.includes(mode)) throw new Error('Sponge mode is invalid');
   const pixels = new Uint8ClampedArray(destination),
     mask = maskForStroke(options);
   let changed = false;
   for (let index = 0; index < mask.length; index += 1) {
-    const coverage = mask[index] / 255,
+    const coverage = (mask[index] / 255) * (options.selectionMask ? options.selectionMask[index] / 255 : 1),
       offset = index * 4;
     if (coverage <= 0 || pixels[offset + 3] === 0) continue;
     const [hue, saturation, lightness] = rgbToHsl(pixels[offset], pixels[offset + 1], pixels[offset + 2]),
       // Saturating low-chroma pixels more strongly is the useful "vibrance"
       // behavior while still producing a bounded, predictable adjustment.
-      strength = clamp(amount * coverage * (mode === 'saturate' ? 1 - saturation * 0.55 : 1), 0, 1),
+      strength = clamp(amount * flow * coverage * (mode === 'saturate' ? 1 - saturation * 0.55 : 1), 0, 1),
       nextSaturation = mode === 'saturate'
         ? saturation + (1 - saturation) * strength
         : saturation * (1 - strength),

@@ -82,6 +82,7 @@ import {
   type SelectionOperation,
   type SelectionPart,
   type TextAlign,
+  type Assets,
 } from '../src/document';
 import { useDocument } from '../src/useDocument';
 import LayersPanel from '../src/LayersPanel';
@@ -549,6 +550,9 @@ type Gesture = {
   layer?: Layer;
   buffer?: HTMLCanvasElement;
   source?: HTMLCanvasElement;
+  /** Selection alpha sampled once in the edited layer's local pixel space. */
+  selectionMask?: Uint8ClampedArray;
+  changed?: boolean;
   replaceTarget?: [number, number, number, number];
   pending?: Promise<void>;
   queued?: Array<{
@@ -711,6 +715,7 @@ const tonalCanvasSegment = (
     mode: 'dodge' | 'burn' | 'sponge';
     spongeMode: SpongeMode;
     spongeVibrance: number;
+    selectionMask?: Uint8ClampedArray;
   },
 ) => {
   const sourceContext = source.getContext('2d')!,
@@ -728,7 +733,9 @@ const tonalCanvasSegment = (
         size: options.size,
         hardness: options.hardness,
         amount: options.spongeVibrance / 100,
+        flow: options.flow,
         mode: options.spongeMode,
+        selectionMask: options.selectionMask,
       })
     : applyDodgeBurnStroke(sourcePixels.data, destinationPixels.data, {
         width: destination.width,
@@ -743,10 +750,43 @@ const tonalCanvasSegment = (
         flow: options.flow,
         range: options.range,
         mode: options.mode,
+        selectionMask: options.selectionMask,
       });
   destinationPixels.data.set(result.pixels);
   if (result.changed) destinationContext.putImageData(destinationPixels, 0, 0);
   return result.changed;
+};
+
+/**
+ * Convert the frame-space selection alpha into the selected raster asset's
+ * local pixel space. Tonal tools edit layer assets directly, so sampling the
+ * selection once at pointer-down keeps every subsequent segment clipped to
+ * the same feathered/inverted selection even when the layer is transformed.
+ */
+const selectionMaskForLayer = async (
+  selection: Frame['selection'],
+  frame: Frame,
+  layer: Extract<Layer, { kind: 'raster' }>,
+  assets: Assets,
+  assetWidth?: number,
+  assetHeight?: number,
+): Promise<Uint8ClampedArray | undefined> => {
+  if (!selection) return undefined;
+  const rendered = await renderSelection(selection, frame.w, frame.h, assets),
+    frameData = rendered.getContext('2d')!.getImageData(0, 0, frame.w, frame.h).data,
+    asset = assetWidth && assetHeight ? undefined : await decodeAsset(assets[layer.asset]),
+    width = assetWidth ?? asset!.naturalWidth,
+    height = assetHeight ?? asset!.naturalHeight,
+    mask = new Uint8ClampedArray(width * height),
+    [a, b, c, d, e, f] = layer.matrix;
+  for (let y = 0; y < height; y += 1)
+    for (let x = 0; x < width; x += 1) {
+      const frameX = Math.floor(a * (x + 0.5) + c * (y + 0.5) + e),
+        frameY = Math.floor(b * (x + 0.5) + d * (y + 0.5) + f);
+      if (frameX >= 0 && frameX < frame.w && frameY >= 0 && frameY < frame.h)
+        mask[y * width + x] = frameData[(frameY * frame.w + frameX) * 4 + 3];
+    }
+  return mask;
 };
 
 export default function Home() {
@@ -2767,11 +2807,20 @@ export default function Home() {
           sourceContext.drawImage(image, 0, 0);
           bufferContext.drawImage(image, 0, 0);
           if (gesture.current !== g) return;
+          g.selectionMask = await selectionMaskForLayer(
+            f.selection,
+            f,
+            layer,
+            assets.current,
+            image.naturalWidth,
+            image.naturalHeight,
+          );
+          if (gesture.current !== g) return;
           g.source = source;
           g.buffer = buffer;
           let from = g.start;
           for (const queued of g.queued || [{ ...g.start, pressure: g.lastPressure, pointerType: g.pointerType }]) {
-            tonalCanvasSegment(source, buffer, from, queued, {
+            const changed = tonalCanvasSegment(source, buffer, from, queued, {
               size: localSize(layer.matrix, size),
               hardness,
               exposure: tonalExposure,
@@ -2780,8 +2829,10 @@ export default function Home() {
               mode: tool,
               spongeMode,
               spongeVibrance,
+              selectionMask: g.selectionMask,
             });
             from = queued;
+            g.changed = Boolean(g.changed || changed);
           }
           g.queued = undefined;
           void paint(f, { [layer.id]: buffer });
@@ -3199,7 +3250,7 @@ export default function Home() {
       g.buffer &&
       g.source
     ) {
-      tonalCanvasSegment(g.source, g.buffer, g.last, local, {
+      const changed = tonalCanvasSegment(g.source, g.buffer, g.last, local, {
         size: localSize(g.layer!.matrix, size),
         hardness,
         exposure: tonalExposure,
@@ -3208,7 +3259,9 @@ export default function Home() {
         mode: g.tool,
         spongeMode,
         spongeVibrance,
+        selectionMask: g.selectionMask,
       });
+      g.changed = Boolean(g.changed || changed);
       void paint(g.frame, { [g.layer!.id]: g.buffer });
       g.last = local;
       return;
@@ -3477,6 +3530,15 @@ export default function Home() {
     await g.pending;
     if (gesture.current !== g) return;
     gesture.current = null;
+    const latest = current(),
+      latestLayer = g.layer
+        ? latest.layers.find((layer) => layer.id === g.layer!.id)
+        : undefined;
+    if (latest !== f || (g.layer && latestLayer !== g.layer)) {
+      void paint(latest);
+      setNotice('Gesture cancelled because the document changed');
+      return;
+    }
     if (e.type === 'pointercancel') {
       void paint(current());
       setNotice('Gesture cancelled');
@@ -3705,8 +3767,9 @@ export default function Home() {
       g.buffer &&
       g.layer
     ) {
+      let changed = Boolean(g.changed);
       if (g.moved && g.source && (g.last.x !== local.x || g.last.y !== local.y))
-        tonalCanvasSegment(g.source, g.buffer, g.last, local, {
+        changed = tonalCanvasSegment(g.source, g.buffer, g.last, local, {
           size: localSize(g.layer.matrix, size),
           hardness,
           exposure: tonalExposure,
@@ -3715,7 +3778,13 @@ export default function Home() {
           mode: g.tool,
           spongeMode,
           spongeVibrance,
-        });
+          selectionMask: g.selectionMask,
+        }) || changed;
+      if (!changed) {
+        void paint(f);
+        setNotice('No tonal change applied');
+        return;
+      }
       const asset = addAsset(assets.current, g.buffer);
       if (
         commit({

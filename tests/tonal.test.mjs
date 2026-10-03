@@ -115,6 +115,39 @@ test('Sponge zero amount is an identity and transparent pixels keep hidden RGB',
   assert.deepEqual(result.pixels, source);
 });
 
+test('selection alpha clips Dodge, Burn and Sponge without mutating the mask', () => {
+  const source = rgba(3, 1, [60, 120, 180, 255]),
+    mask = new Uint8ClampedArray([0, 255, 96]),
+    originalMask = mask.slice();
+  const dodged = applyDodgeBurnStroke(source, source, {
+    ...base({ width: 3, height: 1, x1: 1, y1: 0, x2: 1, y2: 0, size: 9 }),
+    selectionMask: mask,
+  });
+  assert.deepEqual(pixel(dodged.pixels, 3, 0, 0), [60, 120, 180, 255]);
+  assert.ok(dodged.pixels[4] > source[4]);
+  assert.ok(dodged.pixels[8] > source[8]);
+  const sponged = applySpongeStroke(source, source, {
+    ...base({ width: 3, height: 1, x1: 1, y1: 0, x2: 1, y2: 0, size: 9 }),
+    amount: 1,
+    mode: 'saturate',
+    selectionMask: mask,
+  });
+  assert.deepEqual(pixel(sponged.pixels, 3, 0, 0), pixel(source, 3, 0, 0));
+  assert.deepEqual(mask, originalMask);
+});
+
+test('invalid selection alpha is rejected before a tonal edit', () => {
+  const source = rgba(2, 1);
+  assert.throws(() => applyDodgeBurnStroke(source, source, {
+    ...base({ width: 2, height: 1 }),
+    selectionMask: new Uint8ClampedArray([255]),
+  }), /Selection mask/);
+  assert.throws(() => applySpongeStroke(source, source, {
+    ...base({ width: 2, height: 1 }),
+    selectionMask: [255, 256],
+  }), /Selection mask/);
+});
+
 test('replaying one stroke is deterministic and destination/source are never mutated', () => {
   const source = rgba(8, 2, [90, 110, 130, 255]);
   const destination = source.slice();

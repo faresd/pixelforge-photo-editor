@@ -225,3 +225,44 @@ test('tonal strokes honor locked layers and cancel touch gestures without commit
   const canceled = await project(page);
   expect(canceled.history.length).toBe(unlockedBeforeCancel.history.length);
 });
+
+test('active selection clips tonal pixels and preserves exact outside bytes', async ({ page }) => {
+  await newPaintLayer(page);
+  await page.getByLabel('Drawing color', { exact: true }).fill('#808080');
+  await page.getByRole('button', { name: 'Fill tool', exact: true }).click();
+  const center = await canvasPoint(page, 0.5);
+  const canvas = page.getByTestId('editor-canvas');
+  await canvas.evaluate((element) => { element.setPointerCapture = () => undefined; });
+  await canvas.dispatchEvent('pointerdown', { pointerId: 186, pointerType: 'mouse', pressure: 1, clientX: center.clientX, clientY: center.clientY, buttons: 1, isPrimary: true });
+  await expect(page.locator('footer')).toContainText('Area filled', { timeout: 10000 });
+  await page.getByRole('button', { name: 'Select tool', exact: true }).click();
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.8, { steps: 4 });
+  await page.mouse.up();
+  await expect(page.getByRole('button', { name: 'Mask from selection', exact: true })).toBeEnabled();
+  const before = await project(page);
+  const beforeAsset = before.assets[before.history[before.index].layers.at(-1)!.asset!]!;
+  const beforePixels = await sample(page, beforeAsset, [{ x: 0.35, y: 0.5 }, { x: 0.75, y: 0.5 }]);
+  await page.getByRole('button', { name: 'Dodge tool', exact: true }).click();
+  await page.getByLabel('Size', { exact: true }).fill('80');
+  await page.getByLabel('Exposure', { exact: true }).fill('100');
+  await stroke(page, 0.35, 0.35);
+  const after = await project(page);
+  const afterAsset = after.assets[after.history[after.index].layers.at(-1)!.asset!]!;
+  const afterPixels = await sample(page, afterAsset, [{ x: 0.35, y: 0.5 }, { x: 0.75, y: 0.5 }]);
+  expect(afterPixels[0][0]).toBeGreaterThan(beforePixels[0][0]);
+  expect(afterPixels[1]).toEqual(beforePixels[1]);
+});
+
+test('a tonal stroke on a fully transparent layer is a no-op without history growth', async ({ page }) => {
+  await newPaintLayer(page);
+  const before = await project(page);
+  await page.getByRole('button', { name: 'Dodge tool', exact: true }).click();
+  await stroke(page, 0.5, 0.55);
+  await expect(page.locator('footer')).toContainText('No tonal change applied');
+  const after = await project(page);
+  expect(after.history.length).toBe(before.history.length);
+  expect(after.index).toBe(before.index);
+});
