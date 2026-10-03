@@ -57,6 +57,19 @@ these aliases.
 | `+` / `-` | Zoom in/out |
 | `Escape` | Close an open menu |
 
+## Menu keyboard access
+
+Menu triggers are keyboard buttons. Press `Enter` or `Space` to open a menu,
+or `ArrowDown`/`ArrowUp` to open it and focus its first/last enabled command.
+Inside an open menu, `ArrowDown` and `ArrowUp` move through enabled commands
+with wrapping; `Home` and `End` jump to the first and last enabled command.
+`Enter` or `Space` activates the focused command, `Escape` closes the menu and
+returns focus to its trigger, and `Tab` closes the popup before moving to the
+next control. Disabled roadmap entries are skipped by keyboard navigation.
+
+This focus model is covered in the desktop and mobile Playwright projects so
+the Photoshop-style command inventory remains usable without a pointer.
+
 Shortcuts operate on the current local draft and remain available without an
 account. The foreground/background pair is included in draft and project-file
 settings, with `#ffffff` used for older drafts that do not contain a background

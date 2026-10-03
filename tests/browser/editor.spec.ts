@@ -1237,3 +1237,57 @@ test('Photoshop-style document shortcuts drive existing actions and ignore text 
     page.getByRole('button', { name: 'Brush tool', exact: true }),
   ).toHaveAttribute('aria-pressed', 'true');
 });
+
+test('menus provide roving keyboard focus and restore the trigger on Escape', async ({
+  page,
+}) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute(
+    'aria-busy',
+    'false',
+  );
+
+  const file = page.getByRole('button', { name: 'File', exact: true });
+  await file.focus();
+  await page.keyboard.press('ArrowDown');
+  const fileMenu = page.getByRole('menu', { name: 'File menu' });
+  const fileItems = fileMenu.getByRole('menuitem');
+  await expect(fileItems.nth(0)).toBeFocused();
+  await expect(fileItems.nth(0)).toHaveAttribute('tabindex', '-1');
+
+  // Arrow navigation wraps and Home/End skip disabled roadmap entries.
+  await page.keyboard.press('ArrowDown');
+  await expect(fileItems.nth(1)).toBeFocused();
+  await page.keyboard.press('End');
+  await expect(fileItems.nth(7)).toBeFocused();
+  await page.keyboard.press('Home');
+  await expect(fileItems.nth(0)).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(fileMenu).toBeHidden();
+  await expect(file).toBeFocused();
+
+  // ArrowUp from a trigger opens the last item, and disabled commands never
+  // receive focus while moving through the menu.
+  await page.keyboard.press('ArrowUp');
+  await expect(fileItems.nth(7)).toBeFocused();
+  await page.keyboard.press('Escape');
+
+  const edit = page.getByRole('button', { name: 'Edit', exact: true });
+  await edit.press('Enter');
+  const editMenu = page.getByRole('menu', { name: 'Edit menu' });
+  // Undo/redo and the planned commands are disabled in a fresh document;
+  // focus starts at the first enabled command, Copy Layer.
+  await expect(
+    editMenu.getByRole('menuitem', { name: /^Copy Layer/ }),
+  ).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(
+    editMenu.getByRole('menuitem', { name: 'Clear', exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(
+    editMenu.getByRole('menuitem', { name: /^Fill/ }),
+  ).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(edit).toBeFocused();
+});
