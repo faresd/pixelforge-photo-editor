@@ -43,6 +43,21 @@ const pointerStroke = async (page: Page, pressure: number, fraction = 0.5, point
   await page.waitForTimeout(150);
   await saved(page);
 };
+const toolStroke = async (page: Page, tool: string, notice: string, fraction: number, select = true) => {
+  if (select) await page.getByRole('button', { name: `${tool} tool`, exact: true }).click();
+  const point = await canvasPoint(page, fraction);
+  const canvas = page.getByTestId('editor-canvas');
+  await canvas.evaluate((element) => {
+    element.setPointerCapture = () => undefined;
+  });
+  await canvas.dispatchEvent('pointerdown', { pointerId: 17, pointerType: 'mouse', pressure: 1, clientX: point.clientX, clientY: point.clientY, buttons: 1, isPrimary: true });
+  await page.waitForTimeout(100);
+  await canvas.dispatchEvent('pointermove', { pointerId: 17, pointerType: 'mouse', pressure: 1, clientX: point.clientX + 12, clientY: point.clientY, buttons: 1, isPrimary: true });
+  await canvas.dispatchEvent('pointerup', { pointerId: 17, pointerType: 'mouse', pressure: 1, clientX: point.clientX + 12, clientY: point.clientY, buttons: 0, isPrimary: true });
+  await expect(canvas).toHaveAttribute('data-rendering', 'false');
+  await expect(page.locator('footer')).toContainText(notice, { timeout: 10000 });
+  await saved(page);
+};
 
  test.beforeEach(async ({ page }) => openEditor(page));
 
@@ -160,6 +175,35 @@ test('eraser honors opacity and restores through undo', async ({ page }) => {
   await saved(page);
   const restored = await project(page);
   expect(restored.history[restored.index].layers.at(-1)!.asset).toBe(paintedLayer.asset);
+});
+
+test('clone source stays fixed and healing commits through the shared stamp path', async ({ page }) => {
+  await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
+  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await page.getByLabel('Size', { exact: true }).fill('28');
+  await pointerStroke(page, 1, 0.3, 'mouse');
+  const painted = await project(page);
+
+  await page.getByRole('button', { name: 'Clone tool', exact: true }).click();
+  const sourcePoint = await canvasPoint(page, 0.3);
+  const canvas = page.getByTestId('editor-canvas');
+  await canvas.dispatchEvent('pointerdown', { pointerId: 18, pointerType: 'mouse', pressure: 1, clientX: sourcePoint.clientX, clientY: sourcePoint.clientY, buttons: 1, isPrimary: true });
+  await canvas.dispatchEvent('pointerup', { pointerId: 18, pointerType: 'mouse', pressure: 1, clientX: sourcePoint.clientX, clientY: sourcePoint.clientY, buttons: 0, isPrimary: true });
+  await expect(page.locator('footer')).toContainText('Clone source set; drag on the image to paint it');
+  await toolStroke(page, 'Clone', 'Clone stroke applied', 0.7, false);
+  const cloned = await project(page);
+  expect(cloned.history.length).toBeGreaterThan(painted.history.length);
+  expect(cloned.history[cloned.index].layers.at(-1)!.asset).not.toBe(painted.history[painted.index].layers.at(-1)!.asset);
+
+  await page.getByRole('button', { name: 'Healing tool', exact: true }).click();
+  const healingSource = await canvasPoint(page, 0.3);
+  await canvas.dispatchEvent('pointerdown', { pointerId: 19, pointerType: 'mouse', pressure: 1, clientX: healingSource.clientX, clientY: healingSource.clientY, buttons: 1, isPrimary: true });
+  await canvas.dispatchEvent('pointerup', { pointerId: 19, pointerType: 'mouse', pressure: 1, clientX: healingSource.clientX, clientY: healingSource.clientY, buttons: 0, isPrimary: true });
+  await expect(page.locator('footer')).toContainText('Clone source set; drag on the image to paint it');
+  await toolStroke(page, 'Healing', 'Healing stroke applied', 0.8, false);
+  const healed = await project(page);
+  expect(healed.history.length).toBeGreaterThan(cloned.history.length);
+  expect(healed.history[healed.index].layers.at(-1)!.asset).not.toBe(cloned.history[cloned.index].layers.at(-1)!.asset);
 });
 
 test('touch stroke commits once and pointer cancellation leaves the draft unchanged', async ({ page }) => {

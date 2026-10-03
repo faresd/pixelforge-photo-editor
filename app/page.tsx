@@ -2565,7 +2565,9 @@ export default function Home() {
         lastPressure: pressure(e),
         pointerType: e.pointerType,
         moved: false,
+        queued: [local],
       } as Gesture;
+      const sourceAnchor = cloneSource;
       gesture.current = g;
       g.pending = (async () => {
         const sourceImage = await decodeAsset(assets.current[layer.asset]),
@@ -2575,6 +2577,25 @@ export default function Home() {
         g.source = source;
         g.buffer = surface(source.width, source.height);
         g.buffer.getContext('2d')!.drawImage(source, 0, 0);
+        let from = g.start;
+        for (const point of g.queued || [g.start]) {
+          stampCanvasSegment(g.buffer, from, point, {
+            size: localSize(layer.matrix, size),
+            hardness,
+            opacity: brushOpacity / 100,
+            pointerType: g.pointerType,
+            pressure: g.lastPressure,
+            pressureSize,
+            pressureOpacity,
+            mode: tool === 'heal' ? 'heal' : 'clone',
+            source,
+            sourceAnchor,
+            destinationAnchor: g.start,
+          });
+          from = point;
+        }
+        g.queued = undefined;
+        void paint(f, { [layer.id]: g.buffer });
       })();
       await g.pending;
       return;
@@ -2886,6 +2907,9 @@ export default function Home() {
       g.last = local;
       return;
     }
+    if ((g.tool === 'clone' || g.tool === 'heal') && !g.buffer) {
+      (g.queued || (g.queued = [])).push(local);
+    }
     if (
       g.tool === 'color-replace' &&
       g.buffer &&
@@ -2904,7 +2928,7 @@ export default function Home() {
         color,
         size,
         colorTolerance,
-        (brushOpacity / 100) * (pressureOpacity ? pressure(e) : 1),
+        brushOpacity / 100,
       );
       void paint(g.frame, { [g.layer.id]: g.buffer });
       g.last = local;
@@ -2925,22 +2949,17 @@ export default function Home() {
       g.buffer &&
       g.layer
     ) {
-      const x = g.buffer.getContext('2d')!;
-      x.strokeStyle = color;
-      x.globalAlpha = (brushOpacity / 100) * (pressureOpacity ? pressure(e) : 1);
-      const diameter = localSize(g.layer.matrix, size) * (pressureSize ? pressure(e) : 1);
-      x.filter =
-        g.tool === 'pencil' || hardness >= 100
-          ? 'none'
-          : `blur(${Math.max(0.1, ((diameter / 2) * (100 - hardness)) / 100)}px)`;
-      x.lineWidth =
-        g.tool === 'pencil' ? Math.max(1, Math.round(diameter)) : diameter;
-      x.lineCap = 'round';
-      x.lineJoin = 'round';
-      x.beginPath();
-      x.moveTo(g.last.x, g.last.y);
-      x.lineTo(local.x, local.y);
-      x.stroke();
+      stampCanvasSegment(g.buffer, g.last, local, {
+        size: localSize(g.layer.matrix, size),
+        hardness: g.tool === 'pencil' ? 100 : hardness,
+        opacity: brushOpacity / 100,
+        pointerType: g.pointerType,
+        pressure: g.lastPressure,
+        pressureSize: g.tool !== 'pencil' && pressureSize,
+        pressureOpacity: g.tool !== 'pencil' && pressureOpacity,
+        mode: g.tool === 'eraser' ? 'destination-out' : 'source-over',
+        color: g.tool === 'eraser' ? undefined : brushColor(color),
+      });
       void paint(g.frame, { [g.layer.id]: g.buffer });
     } else if (
       g.tool === 'rectangle' ||
@@ -3173,17 +3192,20 @@ export default function Home() {
       g.buffer &&
       g.layer
     ) {
-      const x = g.buffer.getContext('2d')!;
-      x.globalAlpha = (brushOpacity / 100) * (pressureOpacity ? pressure(e) : 1);
-      const diameter = localSize(g.layer.matrix, size) * (pressureSize ? pressure(e) : 1);
-      x.filter =
-        g.tool === 'pencil' || hardness >= 100
-          ? 'none'
-          : `blur(${Math.max(0.1, ((diameter / 2) * (100 - hardness)) / 100)}px)`;
-      x.beginPath();
-      x.moveTo(g.last.x, g.last.y);
-      x.lineTo(local.x, local.y);
-      x.stroke();
+      g.lastPressure = g.lastPressure ?? 1;
+      g.pointerType = g.pointerType || e.pointerType;
+      if (g.moved && (g.last.x !== local.x || g.last.y !== local.y))
+        stampCanvasSegment(g.buffer, g.last, local, {
+          size: localSize(g.layer.matrix, size),
+          hardness: g.tool === 'pencil' ? 100 : hardness,
+          opacity: brushOpacity / 100,
+          pointerType: g.pointerType,
+          pressure: g.lastPressure,
+          pressureSize: g.tool !== 'pencil' && pressureSize,
+          pressureOpacity: g.tool !== 'pencil' && pressureOpacity,
+          mode: g.tool === 'eraser' ? 'destination-out' : 'source-over',
+          color: g.tool === 'eraser' ? undefined : brushColor(color),
+        });
       const asset = addAsset(assets.current, g.buffer);
       const changed = commit({
         ...f,
