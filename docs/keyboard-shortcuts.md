@@ -21,6 +21,7 @@ Use `Cmd` on macOS and `Ctrl` on Windows/Linux.
 | `J` | Healing |
 | `C` | Crop |
 | `E` | Eraser |
+| `O` | Cycle Dodge, Burn and Sponge (Shift reverses) |
 | `T` | Text |
 | `U` | Cycle Rectangle and Ellipse |
 | `M` | Cycle rectangular, elliptical, single-row and single-column marquee |
@@ -31,10 +32,9 @@ Use `Cmd` on macOS and `Ctrl` on Windows/Linux.
 | `X` | Swap foreground/background colors |
 | `[` / `]` | Decrease/increase brush size |
 
-`P`, `A`, `R` and `O` remain PixelForge aliases for Pencil, Color Replace,
-Rectangle and Ellipse. Photoshop tools that PixelForge has not implemented yet
-(for example Pen, Paths, Dodge/Burn and Rotate View) are not advertised behind
-these aliases.
+`P`, `A` and `R` remain PixelForge aliases for Pencil, Color Replace and
+Rectangle. Photoshop tools that PixelForge has not implemented yet (for
+example Pen, Paths and Rotate View) are not advertised behind these aliases.
 
 ## Commands and view
 

@@ -27,6 +27,8 @@ import {
   Save,
   Shapes,
   Sparkles,
+  Sun,
+  Moon,
   Type,
   Undo2,
   Upload,
@@ -121,6 +123,12 @@ import {
   eraseBackgroundStroke,
   eraseMagicRegion,
 } from '../src/erasers';
+import {
+  applyDodgeBurnStroke,
+  applySpongeStroke,
+  type TonalRange,
+  type SpongeMode,
+} from '../src/tonal';
 type MenuName =
   | 'File'
   | 'Edit'
@@ -218,6 +226,9 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'eraser', label: 'Eraser', icon: Eraser, key: 'E' },
   { id: 'background-eraser', label: 'Background Eraser', icon: Eraser, key: 'E' },
   { id: 'magic-eraser', label: 'Magic Eraser', icon: Wand2, key: 'E' },
+  { id: 'dodge', label: 'Dodge', icon: Sun, key: 'O' },
+  { id: 'burn', label: 'Burn', icon: Moon, key: 'O' },
+  { id: 'sponge', label: 'Sponge', icon: Sparkles, key: 'O' },
   { id: 'text', label: 'Text', icon: Type, key: 'T' },
   { id: 'rectangle', label: 'Shape', icon: Shapes, key: 'U' },
   { id: 'ellipse', label: 'Ellipse', icon: Shapes, key: 'U' },
@@ -255,11 +266,11 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   m: MARQUEE_TOOLS,
   l: ['lasso', 'polygonal-lasso'],
   e: ['eraser', 'background-eraser', 'magic-eraser'],
+  o: ['dodge', 'burn', 'sponge'],
 };
 /** Existing PixelForge aliases retained while the primary keys follow Photoshop. */
 const TOOL_ALIASES: Record<string, Tool> = {
   a: 'color-replace',
-  o: 'ellipse',
   p: 'pencil',
   r: 'rectangle',
 };
@@ -685,6 +696,59 @@ const stampCanvasSegment = (
   return changed;
 };
 
+/** Apply one immutable tonal stroke to a canvas pair and publish the new pixels. */
+const tonalCanvasSegment = (
+  source: HTMLCanvasElement,
+  destination: HTMLCanvasElement,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  options: {
+    size: number;
+    hardness: number;
+    exposure: number;
+    flow: number;
+    range: TonalRange;
+    mode: 'dodge' | 'burn' | 'sponge';
+    spongeMode: SpongeMode;
+    spongeVibrance: number;
+  },
+) => {
+  const sourceContext = source.getContext('2d')!,
+    destinationContext = destination.getContext('2d')!,
+    sourcePixels = sourceContext.getImageData(0, 0, source.width, source.height),
+    destinationPixels = destinationContext.getImageData(0, 0, destination.width, destination.height);
+  const result = options.mode === 'sponge'
+    ? applySpongeStroke(sourcePixels.data, destinationPixels.data, {
+        width: destination.width,
+        height: destination.height,
+        x1: from.x,
+        y1: from.y,
+        x2: to.x,
+        y2: to.y,
+        size: options.size,
+        hardness: options.hardness,
+        amount: options.spongeVibrance / 100,
+        mode: options.spongeMode,
+      })
+    : applyDodgeBurnStroke(sourcePixels.data, destinationPixels.data, {
+        width: destination.width,
+        height: destination.height,
+        x1: from.x,
+        y1: from.y,
+        x2: to.x,
+        y2: to.y,
+        size: options.size,
+        hardness: options.hardness,
+        exposure: options.exposure / 100,
+        flow: options.flow,
+        range: options.range,
+        mode: options.mode,
+      });
+  destinationPixels.data.set(result.pixels);
+  if (result.changed) destinationContext.putImageData(destinationPixels, 0, 0);
+  return result.changed;
+};
+
 export default function Home() {
   const file = useRef<HTMLInputElement>(null),
     layerFile = useRef<HTMLInputElement>(null),
@@ -731,6 +795,10 @@ export default function Home() {
     [pressureSize, setPressureSize] = useState(false),
     [pressureOpacity, setPressureOpacity] = useState(false),
     [colorTolerance, setColorTolerance] = useState(24),
+    [tonalExposure, setTonalExposure] = useState(50),
+    [tonalRange, setTonalRange] = useState<TonalRange>('midtones'),
+    [spongeMode, setSpongeMode] = useState<SpongeMode>('saturate'),
+    [spongeVibrance, setSpongeVibrance] = useState(50),
     [exportFormat, setExportFormat] = useState<ExportFormat>('png'),
     [exportQuality, setExportQuality] = useState(92),
     [exportTargetBytes, setExportTargetBytes] = useState<number | undefined>(
@@ -869,6 +937,10 @@ export default function Home() {
     pressureSize,
     pressureOpacity,
     colorTolerance,
+    tonalExposure,
+    tonalRange,
+    spongeMode,
+    spongeVibrance,
     exportFormat,
     exportQuality,
     exportTargetBytes,
@@ -895,6 +967,10 @@ export default function Home() {
     setPressureSize(s.pressureSize ?? false);
     setPressureOpacity(s.pressureOpacity ?? false);
     setColorTolerance(s.colorTolerance ?? 24);
+    setTonalExposure(s.tonalExposure ?? 50);
+    setTonalRange(s.tonalRange ?? 'midtones');
+    setSpongeMode(s.spongeMode ?? 'saturate');
+    setSpongeVibrance(s.spongeVibrance ?? 50);
     setExportFormat(s.exportFormat ?? 'png');
     setExportQuality(s.exportQuality ?? 92);
     setExportTargetBytes(s.exportTargetBytes);
@@ -1650,6 +1726,10 @@ export default function Home() {
         pressureSize,
         pressureOpacity,
         colorTolerance,
+        tonalExposure,
+        tonalRange,
+        spongeMode,
+        spongeVibrance,
         exportFormat,
         exportQuality,
         exportTargetBytes,
@@ -1700,6 +1780,10 @@ export default function Home() {
     pressureSize,
     pressureOpacity,
     colorTolerance,
+    tonalExposure,
+    tonalRange,
+    spongeMode,
+    spongeVibrance,
     exportFormat,
     exportQuality,
     exportTargetBytes,
@@ -2652,6 +2736,63 @@ export default function Home() {
       await g.pending;
       return;
     }
+    if (tool === 'dodge' || tool === 'burn' || tool === 'sponge') {
+      if (
+        layerIsLocked(f, layer) ||
+        !layer.visible ||
+        layer.kind !== 'raster'
+      ) {
+        setNotice('Select a visible, unlocked raster layer before toning');
+        return;
+      }
+      const g = {
+        tool,
+        start: local,
+        last: local,
+        frame: f,
+        layer,
+        lastPressure: pressure(e),
+        pointerType: e.pointerType,
+        moved: false,
+        queued: [{ ...local, pressure: pressure(e), pointerType: e.pointerType }],
+      } as Gesture;
+      gesture.current = g;
+      g.pending = (async () => {
+        try {
+          const image = await decodeAsset(assets.current[layer.asset]),
+            source = surface(image.naturalWidth, image.naturalHeight),
+            buffer = surface(image.naturalWidth, image.naturalHeight),
+            sourceContext = source.getContext('2d')!,
+            bufferContext = buffer.getContext('2d')!;
+          sourceContext.drawImage(image, 0, 0);
+          bufferContext.drawImage(image, 0, 0);
+          if (gesture.current !== g) return;
+          g.source = source;
+          g.buffer = buffer;
+          let from = g.start;
+          for (const queued of g.queued || [{ ...g.start, pressure: g.lastPressure, pointerType: g.pointerType }]) {
+            tonalCanvasSegment(source, buffer, from, queued, {
+              size: localSize(layer.matrix, size),
+              hardness,
+              exposure: tonalExposure,
+              flow: brushOpacity / 100,
+              range: tonalRange,
+              mode: tool,
+              spongeMode,
+              spongeVibrance,
+            });
+            from = queued;
+          }
+          g.queued = undefined;
+          void paint(f, { [layer.id]: buffer });
+        } catch {
+          gesture.current = null;
+          setNotice('Could not prepare tonal tool');
+        }
+      })();
+      await g.pending;
+      return;
+    }
     if (tool === 'clone' || tool === 'heal') {
       if (
         layerIsLocked(f, layer) ||
@@ -3045,6 +3186,32 @@ export default function Home() {
         pressure: g.lastPressure,
         pointerType: g.pointerType,
       });
+    }
+    if ((g.tool === 'dodge' || g.tool === 'burn' || g.tool === 'sponge') && !g.buffer) {
+      (g.queued || (g.queued = [])).push({
+        ...local,
+        pressure: g.lastPressure,
+        pointerType: g.pointerType,
+      });
+    }
+    if (
+      (g.tool === 'dodge' || g.tool === 'burn' || g.tool === 'sponge') &&
+      g.buffer &&
+      g.source
+    ) {
+      tonalCanvasSegment(g.source, g.buffer, g.last, local, {
+        size: localSize(g.layer!.matrix, size),
+        hardness,
+        exposure: tonalExposure,
+        flow: brushOpacity / 100,
+        range: tonalRange,
+        mode: g.tool,
+        spongeMode,
+        spongeVibrance,
+      });
+      void paint(g.frame, { [g.layer!.id]: g.buffer });
+      g.last = local;
+      return;
     }
     if ((g.tool === 'clone' || g.tool === 'heal') && !g.buffer) {
       (g.queued || (g.queued = [])).push({ ...local, pressure: g.lastPressure, pointerType: g.pointerType });
@@ -3533,6 +3700,32 @@ export default function Home() {
         })
       )
         setNotice('Background Eraser stroke applied');
+    } else if (
+      (g.tool === 'dodge' || g.tool === 'burn' || g.tool === 'sponge') &&
+      g.buffer &&
+      g.layer
+    ) {
+      if (g.moved && g.source && (g.last.x !== local.x || g.last.y !== local.y))
+        tonalCanvasSegment(g.source, g.buffer, g.last, local, {
+          size: localSize(g.layer.matrix, size),
+          hardness,
+          exposure: tonalExposure,
+          flow: brushOpacity / 100,
+          range: tonalRange,
+          mode: g.tool,
+          spongeMode,
+          spongeVibrance,
+        });
+      const asset = addAsset(assets.current, g.buffer);
+      if (
+        commit({
+          ...f,
+          layers: f.layers.map((item) =>
+            item.id === g.layer!.id ? { ...item, asset } : item,
+          ),
+        })
+      )
+        setNotice(`${g.tool === 'sponge' ? 'Sponge' : g.tool === 'dodge' ? 'Dodge' : 'Burn'} stroke applied`);
     } else if (g.tool === 'color-replace' && g.buffer && g.layer) {
       const asset = addAsset(assets.current, g.buffer);
       if (
@@ -4698,6 +4891,9 @@ export default function Home() {
             tool === 'eraser' ||
             tool === 'background-eraser' ||
             tool === 'magic-eraser' ||
+            tool === 'dodge' ||
+            tool === 'burn' ||
+            tool === 'sponge' ||
             tool === 'clone' ||
             tool === 'heal' ||
             tool === 'rectangle' ||
@@ -4722,6 +4918,9 @@ export default function Home() {
                 tool === 'eraser' ||
                 tool === 'background-eraser' ||
                 tool === 'magic-eraser' ||
+                tool === 'dodge' ||
+                tool === 'burn' ||
+                tool === 'sponge' ||
                 tool === 'clone' ||
                 tool === 'heal') && (
                 <>
@@ -4737,7 +4936,7 @@ export default function Home() {
                   )}
                   {tool !== 'magic-eraser' && (
                     <Slider
-                      label="Opacity"
+                      label={tool === 'dodge' || tool === 'burn' || tool === 'sponge' ? 'Flow' : 'Opacity'}
                       value={brushOpacity}
                       min={1}
                       max={100}
@@ -4745,7 +4944,7 @@ export default function Home() {
                       suffix="%"
                     />
                   )}
-                  {tool !== 'pencil' && tool !== 'color-replace' && tool !== 'magic-eraser' && (
+                  {tool !== 'pencil' && tool !== 'color-replace' && tool !== 'magic-eraser' && tool !== 'dodge' && tool !== 'burn' && tool !== 'sponge' && (
                     <>
                       <label className="check-row">
                         <input
@@ -4777,6 +4976,53 @@ export default function Home() {
                       set={setColorTolerance}
                       suffix=""
                     />
+                  )}
+                  {(tool === 'dodge' || tool === 'burn') && (
+                    <>
+                      <Slider
+                        label="Exposure"
+                        value={tonalExposure}
+                        min={1}
+                        max={100}
+                        set={setTonalExposure}
+                        suffix="%"
+                      />
+                      <label className="select-row">
+                        <span>Range</span>
+                        <select
+                          aria-label="Tonal range"
+                          value={tonalRange}
+                          onChange={(event) => setTonalRange(event.target.value as TonalRange)}
+                        >
+                          <option value="shadows">Shadows</option>
+                          <option value="midtones">Midtones</option>
+                          <option value="highlights">Highlights</option>
+                        </select>
+                      </label>
+                    </>
+                  )}
+                  {tool === 'sponge' && (
+                    <>
+                      <Slider
+                        label="Vibrance"
+                        value={spongeVibrance}
+                        min={1}
+                        max={100}
+                        set={setSpongeVibrance}
+                        suffix="%"
+                      />
+                      <label className="select-row">
+                        <span>Mode</span>
+                        <select
+                          aria-label="Sponge mode"
+                          value={spongeMode}
+                          onChange={(event) => setSpongeMode(event.target.value as SpongeMode)}
+                        >
+                          <option value="saturate">Saturate</option>
+                          <option value="desaturate">Desaturate</option>
+                        </select>
+                      </label>
+                    </>
                   )}
                 </>
               )}
