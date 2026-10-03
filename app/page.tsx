@@ -90,6 +90,7 @@ import ResizeDialog from '../src/ResizeDialog';
 import ExportDialog from '../src/ExportDialog';
 import BatchExportDialog from '../src/BatchExportDialog';
 import SelectionTransformDialog from '../src/SelectionTransformDialog';
+import SelectionModifyDialog from '../src/SelectionModifyDialog';
 import CanvasSizeDialog from '../src/CanvasSizeDialog';
 import TrimDialog from '../src/TrimDialog';
 import {
@@ -107,6 +108,10 @@ import { applyAutoAdjustmentsPixels, type AutoMode } from '../src/auto';
 import { createBackgroundMask } from '../src/backgroundRemoval';
 import { type ExportFormat } from '../src/export';
 import { renderSelection } from '../src/selections';
+import {
+  refineSelectionAlpha,
+  type SelectionRefineMode,
+} from '../src/selectionRefine';
 import {
   createQuickMask,
   loadSelection,
@@ -197,6 +202,8 @@ type Command =
   | 'reselect'
   | 'invert-selection'
   | 'transform-selection'
+  | 'grow-selection'
+  | 'contract-selection'
   | 'mask-selection'
   | 'remove-background'
   | 'invert-layer-mask'
@@ -504,7 +511,8 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Sky', command: 'noop', disabled: true },
     { label: 'Select and Mask…', command: 'noop', disabled: true },
     { label: 'Modify', command: 'noop', disabled: true },
-    { label: 'Grow', command: 'noop', disabled: true },
+    { label: 'Grow…', command: 'grow-selection' },
+    { label: 'Contract…', command: 'contract-selection' },
     { label: 'Similar', command: 'noop', disabled: true },
     { label: 'Transform Selection', command: 'transform-selection' },
     { label: 'Edit in Quick Mask Mode', command: 'quick-mask' },
@@ -986,6 +994,7 @@ export default function Home() {
   } | null>(null);
   const [trimming, setTrimming] = useState(false);
   const [selectionTransforming, setSelectionTransforming] = useState(false);
+  const [selectionRefining, setSelectionRefining] = useState<SelectionRefineMode | null>(null);
   const [quickMasking, setQuickMasking] = useState(false),
     [quickMask, setQuickMask] = useState<QuickMask | null>(null),
     [quickMaskReveal, setQuickMaskReveal] = useState(false),
@@ -1142,6 +1151,9 @@ export default function Home() {
   const transformSelectionValue = selectionTransforming
     ? current().selection
     : undefined;
+  const selectionRefineValue = selectionRefining && current().selection
+    ? selectionRefining
+    : null;
   const currentSavedSelections = (): SavedSelectionBook =>
     current().savedSelections || emptySavedSelectionBook();
   const imageToQuickMask = (image: CanvasImageSource): QuickMask => {
@@ -1600,6 +1612,58 @@ export default function Home() {
       );
     } finally {
       setSelectionTransforming(false);
+    }
+  };
+  const applySelectionRefinement = async (radius: number) => {
+    const mode = selectionRefining;
+    const f = current();
+    const beforeIndex = index.current;
+    const beforeFrame = f;
+    if (!mode || !f.selection) {
+      setNotice('Create a selection before refining it');
+      setSelectionRefining(null);
+      return;
+    }
+    try {
+      const rendered = await renderSelection(f.selection, f.w, f.h, assets.current);
+      const context = rendered.getContext('2d');
+      if (!context) throw new Error('Selection mask renderer is unavailable');
+      const pixels = context.getImageData(0, 0, f.w, f.h).data;
+      const alpha = new Uint8ClampedArray(f.w * f.h);
+      for (let source = 3, target = 0; source < pixels.length; source += 4, target += 1)
+        alpha[target] = pixels[source];
+      const refined = refineSelectionAlpha(alpha, f.w, f.h, mode, radius);
+      // A refined selection is a canvas-sized alpha mask. RGB is white so the
+      // asset remains inspectable without changing alpha compositing semantics.
+      const mask = surface(f.w, f.h);
+      const maskContext = mask.getContext('2d');
+      if (!maskContext) throw new Error('Selection mask surface is unavailable');
+      const output = maskContext.createImageData(f.w, f.h);
+      for (let source = 0, target = 0; source < refined.length; source += 1, target += 4) {
+        output.data[target] = 255;
+        output.data[target + 1] = 255;
+        output.data[target + 2] = 255;
+        output.data[target + 3] = refined[source];
+      }
+      maskContext.putImageData(output, 0, 0);
+      if (index.current !== beforeIndex || current() !== beforeFrame) return;
+      const maskId = addAsset(assets.current, mask);
+      const selection: Selection = {
+        shape: 'rectangle',
+        x: 0,
+        y: 0,
+        w: f.w,
+        h: f.h,
+        feather: 0,
+        inverted: false,
+        mask: maskId,
+      };
+      if (commit({ ...f, selection }))
+        setNotice(`Selection ${mode === 'grow' ? 'grown' : 'contracted'} by ${radius} px`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Selection refinement failed');
+    } finally {
+      setSelectionRefining(null);
     }
   };
   const selectAll = () => {
@@ -4837,6 +4901,9 @@ export default function Home() {
     else if (command === 'transform-selection') {
       if (current().selection) setSelectionTransforming(true);
       else setNotice('Create a selection before transforming it');
+    } else if (command === 'grow-selection' || command === 'contract-selection') {
+      if (current().selection) setSelectionRefining(command === 'grow-selection' ? 'grow' : 'contract');
+      else setNotice('Create a selection before refining it');
     } else if (command === 'mask-selection') void createMaskFromSelection();
     else if (command === 'remove-background') void removeBackground();
     else if (command === 'invert-layer-mask') invertLayerMask();
@@ -4954,6 +5021,9 @@ export default function Home() {
         return Boolean(frame.selection) || !frame.previousSelection;
       case 'transform-selection':
         return !frame.selection;
+      case 'grow-selection':
+      case 'contract-selection':
+        return !frame.selection;
       case 'hide-layer':
         return !layer || Boolean(groupForLayer(frame, layer)?.locked);
       case 'text-align-left':
@@ -5041,6 +5111,13 @@ export default function Home() {
           selection={transformSelectionValue}
           close={() => setSelectionTransforming(false)}
           apply={applySelectionTransform}
+        />
+      )}
+      {selectionRefineValue && (
+        <SelectionModifyDialog
+          mode={selectionRefineValue}
+          close={() => setSelectionRefining(null)}
+          apply={(radius) => void applySelectionRefinement(radius)}
         />
       )}
       {exporting && (
