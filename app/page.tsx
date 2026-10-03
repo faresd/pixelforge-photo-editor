@@ -130,6 +130,7 @@ import {
   type TonalRange,
   type SpongeMode,
 } from '../src/tonal';
+import { applySmudgeStroke } from '../src/smudge';
 type MenuName =
   | 'File'
   | 'Edit'
@@ -230,6 +231,7 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'dodge', label: 'Dodge', icon: Sun, key: 'O' },
   { id: 'burn', label: 'Burn', icon: Moon, key: 'O' },
   { id: 'sponge', label: 'Sponge', icon: Sparkles, key: 'O' },
+  { id: 'smudge', label: 'Smudge', icon: Brush, key: 'R' },
   { id: 'text', label: 'Text', icon: Type, key: 'T' },
   { id: 'rectangle', label: 'Shape', icon: Shapes, key: 'U' },
   { id: 'ellipse', label: 'Ellipse', icon: Shapes, key: 'U' },
@@ -268,12 +270,12 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   l: ['lasso', 'polygonal-lasso'],
   e: ['eraser', 'background-eraser', 'magic-eraser'],
   o: ['dodge', 'burn', 'sponge'],
+  r: ['smudge'],
 };
 /** Existing PixelForge aliases retained while the primary keys follow Photoshop. */
 const TOOL_ALIASES: Record<string, Tool> = {
   a: 'color-replace',
   p: 'pencil',
-  r: 'rectangle',
 };
 const FILTERS = [
   ['Original', 'none', '#315277', '#d59b6c'],
@@ -752,6 +754,40 @@ const tonalCanvasSegment = (
         mode: options.mode,
         selectionMask: options.selectionMask,
       });
+  destinationPixels.data.set(result.pixels);
+  if (result.changed) destinationContext.putImageData(destinationPixels, 0, 0);
+  return result.changed;
+};
+
+/** Apply one immutable Smudge segment and publish the preview pixels. */
+const smudgeCanvasSegment = (
+  source: HTMLCanvasElement,
+  destination: HTMLCanvasElement,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  options: {
+    size: number;
+    hardness: number;
+    flow: number;
+    selectionMask?: Uint8ClampedArray;
+  },
+) => {
+  const sourceContext = source.getContext('2d')!,
+    destinationContext = destination.getContext('2d')!,
+    sourcePixels = sourceContext.getImageData(0, 0, source.width, source.height),
+    destinationPixels = destinationContext.getImageData(0, 0, destination.width, destination.height),
+    result = applySmudgeStroke(sourcePixels.data, destinationPixels.data, {
+      width: destination.width,
+      height: destination.height,
+      x1: from.x,
+      y1: from.y,
+      x2: to.x,
+      y2: to.y,
+      size: options.size,
+      hardness: options.hardness,
+      flow: options.flow,
+      selectionMask: options.selectionMask,
+    });
   destinationPixels.data.set(result.pixels);
   if (result.changed) destinationContext.putImageData(destinationPixels, 0, 0);
   return result.changed;
@@ -2776,6 +2812,69 @@ export default function Home() {
       await g.pending;
       return;
     }
+    if (tool === 'smudge') {
+      if (
+        layerIsLocked(f, layer) ||
+        !layer.visible ||
+        layer.kind !== 'raster'
+      ) {
+        setNotice('Select a visible, unlocked raster layer before smudging');
+        return;
+      }
+      const g = {
+        tool,
+        start: local,
+        last: local,
+        frame: f,
+        layer,
+        lastPressure: pressure(e),
+        pointerType: e.pointerType,
+        moved: false,
+        queued: [{ ...local, pressure: pressure(e), pointerType: e.pointerType }],
+      } as Gesture;
+      gesture.current = g;
+      g.pending = (async () => {
+        try {
+          const image = await decodeAsset(assets.current[layer.asset]),
+            source = surface(image.naturalWidth, image.naturalHeight),
+            buffer = surface(image.naturalWidth, image.naturalHeight),
+            sourceContext = source.getContext('2d')!,
+            bufferContext = buffer.getContext('2d')!;
+          sourceContext.drawImage(image, 0, 0);
+          bufferContext.drawImage(image, 0, 0);
+          if (gesture.current !== g) return;
+          g.selectionMask = await selectionMaskForLayer(
+            f.selection,
+            f,
+            layer,
+            assets.current,
+            image.naturalWidth,
+            image.naturalHeight,
+          );
+          if (gesture.current !== g) return;
+          g.source = source;
+          g.buffer = buffer;
+          let from = g.start;
+          for (const queued of g.queued || []) {
+            const changed = smudgeCanvasSegment(source, buffer, from, queued, {
+              size: localSize(layer.matrix, size),
+              hardness,
+              flow: brushOpacity / 100,
+              selectionMask: g.selectionMask,
+            });
+            from = queued;
+            g.changed = Boolean(g.changed || changed);
+          }
+          g.queued = undefined;
+          void paint(f, { [layer.id]: buffer });
+        } catch {
+          gesture.current = null;
+          setNotice('Could not prepare Smudge tool');
+        }
+      })();
+      await g.pending;
+      return;
+    }
     if (tool === 'dodge' || tool === 'burn' || tool === 'sponge') {
       if (
         layerIsLocked(f, layer) ||
@@ -3227,6 +3326,25 @@ export default function Home() {
         colorTolerance,
         brushOpacity / 100,
       );
+      void paint(g.frame, { [g.layer!.id]: g.buffer });
+      g.last = local;
+      return;
+    }
+    if (g.tool === 'smudge' && !g.buffer) {
+      (g.queued || (g.queued = [])).push({
+        ...local,
+        pressure: g.lastPressure,
+        pointerType: g.pointerType,
+      });
+    }
+    if (g.tool === 'smudge' && g.buffer && g.source) {
+      const changed = smudgeCanvasSegment(g.source, g.buffer, g.last, local, {
+        size: localSize(g.layer!.matrix, size),
+        hardness,
+        flow: brushOpacity / 100,
+        selectionMask: g.selectionMask,
+      });
+      g.changed = Boolean(g.changed || changed);
       void paint(g.frame, { [g.layer!.id]: g.buffer });
       g.last = local;
       return;
@@ -3762,6 +3880,30 @@ export default function Home() {
         })
       )
         setNotice('Background Eraser stroke applied');
+    } else if (g.tool === 'smudge' && g.buffer && g.layer) {
+      let changed = Boolean(g.changed);
+      if (g.moved && g.source && (g.last.x !== local.x || g.last.y !== local.y))
+        changed = smudgeCanvasSegment(g.source, g.buffer, g.last, local, {
+          size: localSize(g.layer.matrix, size),
+          hardness,
+          flow: brushOpacity / 100,
+          selectionMask: g.selectionMask,
+        }) || changed;
+      if (!changed) {
+        void paint(f);
+        setNotice('No Smudge change applied');
+        return;
+      }
+      const asset = addAsset(assets.current, g.buffer);
+      if (
+        commit({
+          ...f,
+          layers: f.layers.map((item) =>
+            item.id === g.layer!.id ? { ...item, asset } : item,
+          ),
+        })
+      )
+        setNotice('Smudge stroke applied');
     } else if (
       (g.tool === 'dodge' || g.tool === 'burn' || g.tool === 'sponge') &&
       g.buffer &&
@@ -4963,6 +5105,7 @@ export default function Home() {
             tool === 'dodge' ||
             tool === 'burn' ||
             tool === 'sponge' ||
+            tool === 'smudge' ||
             tool === 'clone' ||
             tool === 'heal' ||
             tool === 'rectangle' ||
@@ -4990,6 +5133,7 @@ export default function Home() {
                 tool === 'dodge' ||
                 tool === 'burn' ||
                 tool === 'sponge' ||
+                tool === 'smudge' ||
                 tool === 'clone' ||
                 tool === 'heal') && (
                 <>
@@ -5005,7 +5149,7 @@ export default function Home() {
                   )}
                   {tool !== 'magic-eraser' && (
                     <Slider
-                      label={tool === 'dodge' || tool === 'burn' || tool === 'sponge' ? 'Flow' : 'Opacity'}
+                      label={tool === 'dodge' || tool === 'burn' || tool === 'sponge' || tool === 'smudge' ? 'Flow' : 'Opacity'}
                       value={brushOpacity}
                       min={1}
                       max={100}
@@ -5013,7 +5157,7 @@ export default function Home() {
                       suffix="%"
                     />
                   )}
-                  {tool !== 'pencil' && tool !== 'color-replace' && tool !== 'magic-eraser' && tool !== 'dodge' && tool !== 'burn' && tool !== 'sponge' && (
+                  {tool !== 'pencil' && tool !== 'color-replace' && tool !== 'magic-eraser' && tool !== 'dodge' && tool !== 'burn' && tool !== 'sponge' && tool !== 'smudge' && (
                     <>
                       <label className="check-row">
                         <input
