@@ -123,6 +123,82 @@ test('Dodge brightens and Burn darkens representative pixels with undo/redo and 
   expect(reloaded.history.length).toBe(burned.history.length);
 });
 
+for (const mode of ['saturate', 'desaturate'] as const) {
+  test(`Sponge ${mode} Flow scales pixel strength and survives undo, reload and project reopen`, async ({ page }) => {
+    const fixture = await page.evaluate(() => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 200;
+      canvas.height = 100;
+      const context = canvas.getContext('2d')!;
+      context.fillStyle = 'rgba(128, 96, 64, 0.75)';
+      context.fillRect(0, 0, 160, 100);
+      return canvas.toDataURL().split(',')[1];
+    });
+    await page.getByTestId('file-input').setInputFiles({
+      name: 'sponge-alpha.png', mimeType: 'image/png', buffer: Buffer.from(fixture, 'base64'),
+    });
+    await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '200');
+    const assetId = (value: Project) => value.history[value.index].layers.at(-1)!.asset!;
+    const points = [{ x: 0.5 }, { x: 0.1 }, { x: 0.9 }];
+    const before = await project(page);
+    const beforePixels = await sample(page, before.assets[assetId(before)]!, points);
+    expect(beforePixels[0][3]).toBeGreaterThan(0);
+    expect(beforePixels[0][3]).toBeLessThan(255);
+    expect(beforePixels[2][3]).toBe(0);
+    await page.getByRole('button', { name: 'Sponge tool', exact: true }).click();
+    await page.getByLabel('Size', { exact: true }).fill('40');
+    await page.getByLabel('Hardness', { exact: true }).fill('100');
+    await page.getByLabel('Sponge mode', { exact: true }).selectOption(mode);
+    await page.getByLabel('Vibrance', { exact: true }).fill('60');
+    await page.getByLabel('Flow', { exact: true }).fill('20');
+    await stroke(page, 0.5, 0.52);
+    const lowFlow = await project(page);
+    const lowPixels = await sample(page, lowFlow.assets[assetId(lowFlow)]!, points);
+    expect(lowFlow.index).toBe(before.index + 1);
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('menuitem', { name: /^Undo/ }).click();
+    const undone = await project(page);
+    expect(assetId(undone)).toBe(assetId(before));
+    expect(await sample(page, undone.assets[assetId(undone)]!, points)).toEqual(beforePixels);
+    await page.getByLabel('Flow', { exact: true }).fill('100');
+    await stroke(page, 0.5, 0.52, 'touch');
+    const fullFlow = await project(page);
+    const fullPixels = await sample(page, fullFlow.assets[assetId(fullFlow)]!, points);
+    const spread = (pixel: number[]) => Math.max(...pixel.slice(0, 3)) - Math.min(...pixel.slice(0, 3));
+    if (mode === 'saturate') {
+      expect(spread(lowPixels[0])).toBeGreaterThan(spread(beforePixels[0]));
+      expect(spread(fullPixels[0])).toBeGreaterThan(spread(lowPixels[0]));
+    } else {
+      expect(spread(lowPixels[0])).toBeLessThan(spread(beforePixels[0]));
+      expect(spread(fullPixels[0])).toBeLessThan(spread(lowPixels[0]));
+    }
+    expect(lowPixels[0][3]).toBe(beforePixels[0][3]);
+    expect(fullPixels[0][3]).toBe(beforePixels[0][3]);
+    expect(fullPixels.slice(1)).toEqual(beforePixels.slice(1));
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('menuitem', { name: /^Undo/ }).click();
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('menuitem', { name: /^Redo/ }).click();
+    await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Saved on this device');
+    await page.reload();
+    await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+    const reloaded = await project(page);
+    expect(assetId(reloaded)).toBe(assetId(fullFlow));
+    expect(reloaded.assets[assetId(reloaded)]).toEqual(fullFlow.assets[assetId(fullFlow)]);
+    expect(await sample(page, reloaded.assets[assetId(reloaded)]!, points)).toEqual(fullPixels);
+    await page.getByRole('button', { name: 'File', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
+    await page.getByTestId('project-input').setInputFiles({
+      name: 'sponge-roundtrip.pixelforge', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(fullFlow)),
+    });
+    await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '200');
+    const reopened = await project(page);
+    expect(assetId(reopened)).toBe(assetId(fullFlow));
+    expect(await sample(page, reopened.assets[assetId(reopened)]!, points)).toEqual(fullPixels);
+    expect(reopened.settings).toMatchObject({ tool: 'sponge', spongeMode: mode, spongeVibrance: 60, brushOpacity: 100 });
+  });
+}
+
 test('tonal strokes honor locked layers and cancel touch gestures without committing', async ({ page }) => {
   await newPaintLayer(page);
   await page.getByLabel('Drawing color', { exact: true }).fill('#b04040');

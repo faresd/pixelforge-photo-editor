@@ -12,8 +12,9 @@ undo/redo and is included in local/project round trips.
 - Exposure and flow are normalized amounts and are multiplied by radial
   coverage. Shadows, midtones and highlights use deterministic luminance range
   weights so a stroke can be targeted without changing alpha.
-- Sponge supports Saturate and Desaturate. Its vibrance amount raises or lowers
-  HSL saturation while preserving hue, lightness and alpha.
+- Sponge supports Saturate and Desaturate. Its vibrance amount is multiplied by
+  the brush Flow setting, then raises or lowers HSL saturation while preserving
+  hue, lightness and alpha.
 - Fully transparent pixels are skipped, including hidden RGB bytes. Opaque and
   partially transparent pixels retain their original alpha byte.
 - Hard and soft radial masks are clipped to canvas bounds and stroke segments

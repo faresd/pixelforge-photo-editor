@@ -86,6 +86,27 @@ test('Sponge saturation raises chroma, desaturation lowers it, and alpha remains
   assert.deepEqual(source, new Uint8ClampedArray([130, 100, 90, 201, 30, 200, 80, 72]));
 });
 
+for (const mode of ['saturate', 'desaturate']) test(`Sponge ${mode} flow scales vibrance strength while preserving alpha`, () => {
+  const source = new Uint8ClampedArray([130, 100, 90, 201]);
+  const full = applySpongeStroke(source, source, {
+    ...base({ width: 1, height: 1, x1: 0, y1: 0, x2: 0, y2: 0, size: 1 }),
+    amount: 1,
+    flow: 1,
+    mode,
+  });
+  const low = applySpongeStroke(source, source, {
+    ...base({ width: 1, height: 1, x1: 0, y1: 0, x2: 0, y2: 0, size: 1 }),
+    amount: 1,
+    flow: 0.2,
+    mode,
+  });
+  const spread = (pixels) => Math.max(...pixels.slice(0, 3)) - Math.min(...pixels.slice(0, 3));
+  if (mode === 'saturate') assert.ok(spread(full.pixels) > spread(low.pixels));
+  else assert.ok(spread(full.pixels) < spread(low.pixels));
+  assert.equal(full.pixels[3], 201);
+  assert.equal(low.pixels[3], 201);
+});
+
 test('Sponge zero amount is an identity and transparent pixels keep hidden RGB', () => {
   const source = rgba(2, 1, [10, 20, 30, 0]);
   source.set([220, 10, 30, 0], 4);
@@ -116,6 +137,7 @@ test('malformed dimensions, buffers, points, ranges and amounts are rejected', (
   assert.throws(() => applyDodgeBurnStroke(source, source, base({ x1: Number.NaN })), /points/);
   assert.throws(() => applyDodgeBurnStroke(source, source, base({ width: 2, height: 2, range: 'all' })), /range/);
   assert.throws(() => applyDodgeBurnStroke(source, source, base({ width: 2, height: 2, exposure: 2 })), /Exposure/);
+  assert.throws(() => applySpongeStroke(source, source, { ...base({ width: 2, height: 2 }), amount: 0.5, flow: 2, mode: 'saturate' }), /Flow/);
   assert.throws(() => applySpongeStroke(source, source, { ...base({ width: 2, height: 2 }), amount: -1, mode: 'saturate' }), /amount/);
   assert.throws(() => applySpongeStroke(source, source, { ...base({ width: 2, height: 2 }), mode: 'invert' }), /mode/);
 });
