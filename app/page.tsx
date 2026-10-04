@@ -474,7 +474,6 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Export as WebP', command: 'webp' },
   ],
   Edit: [
-    { label: 'Action recipes…', command: 'actions' },
     { label: 'Undo', shortcut: 'Ctrl+Z', command: 'undo' },
     { label: 'Redo', shortcut: 'Ctrl+Y', command: 'redo' },
     {
@@ -507,6 +506,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Find and Replace Text…', command: 'noop', disabled: true },
     { label: '', command: 'noop', separator: true },
     { label: 'Fill…', shortcut: 'Shift+F5', command: 'fill-layer' },
+    { label: 'Action recipes…', command: 'actions' },
     { label: 'Stroke…', command: 'noop', disabled: true },
     { label: 'Content-Aware Fill…', command: 'noop', disabled: true },
     { label: 'Prompt to Edit…', command: 'noop', disabled: true },
@@ -7043,6 +7043,13 @@ export default function Home() {
                   activeMenu === menuName ? closeMenu(true) : openMenu(menuName)
                 }
                 onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    if (activeMenu === menuName) closeMenu(true);
+                    else openMenu(menuName);
+                    return;
+                  }
                   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
                     event.preventDefault();
                     openMenu(
