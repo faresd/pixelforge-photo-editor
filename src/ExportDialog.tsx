@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { renderFrame, type Assets, type Frame } from './document';
+import { renderArtboard } from './artboardRender';
+import type { Artboard } from './artboards';
+import { type Assets, type Frame } from './document';
 import {
   encodeImage,
   encodeImageForTarget,
@@ -49,6 +51,7 @@ export default function ExportDialog({
   const dialog = useRef<HTMLDialogElement>(null);
   const snapshot = useRef({ frame, assets });
   const [image, setImage] = useState<HTMLCanvasElement | null>(null);
+  const [viewport, setViewport] = useState<Artboard | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [error, setError] = useState('');
   const [targetInput, setTargetInput] = useState(
@@ -60,9 +63,16 @@ export default function ExportDialog({
   useEffect(() => {
     dialog.current?.showModal();
     let cancelled = false;
-    void renderFrame(snapshot.current.frame, snapshot.current.assets)
+    void renderArtboard(
+      snapshot.current.frame,
+      snapshot.current.assets,
+      snapshot.current.frame.activeArtboardId,
+    )
       .then((result) => {
-        if (!cancelled) setImage(result);
+        if (!cancelled) {
+          setImage(result.canvas);
+          setViewport(result.artboard);
+        }
       })
       .catch(() => {
         if (!cancelled)
@@ -169,9 +179,11 @@ export default function ExportDialog({
         }}
       >
         <h2 id="export-heading">Export image</h2>
-        <p>
-          Download a flattened image at {frame.w} × {frame.h} px. Keep a project
-          file to continue editing layers.
+        <p data-testid="export-viewport">
+          {frame.artboards?.length
+            ? `Download the active artboard “${viewport?.name ?? 'Canvas'}” at ${viewport?.w ?? frame.w} × ${viewport?.h ?? frame.h} px.`
+            : `Download a flattened image at ${frame.w} × ${frame.h} px.`}{' '}
+          Keep a project file to continue editing layers.
         </p>
         <label>
           Format
