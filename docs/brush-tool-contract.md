@@ -7,8 +7,9 @@ immutable PNG asset and remains undoable.
 
 ## Current implementation audit
 
-The editor exposes `size`, `hardness` and `brushOpacity` for Brush, Pencil, Eraser,
-Clone and Healing. All four raster paths now use the same bounded local radial
+The editor exposes `size`, `hardness`, `brushOpacity`, spacing, angle and
+roundness for Brush, Pencil, Eraser, Clone, Healing and Pattern Stamp. All
+four raster paths now use the same bounded local radial/elliptical
 stamp primitive; no full-canvas mask is allocated for an individual pointer
 event. Mouse and unusable pen/touch pressure use a deterministic fallback of
 `1`. Pen and touch pressure affect diameter and opacity only when their separate
@@ -40,6 +41,11 @@ Extend `Settings` with validated, backward-compatible values:
 | `hardness` | 0–100 (percent) | 100 | Radius at which a stamp reaches full alpha; 0 is a fully soft edge and 100 is a hard circle |
 | `pressureSize` | boolean | false | Apply supported pen pressure to diameter |
 | `pressureOpacity` | boolean | false | Apply supported pen pressure to stamp alpha |
+| `spacing` | 1–100 (percent) | 25 | Distance between dabs as a percentage of the resolved diameter |
+| `angle` | -180–180 (degrees) | 0 | Rotation of the local tip ellipse |
+| `roundness` | 1–100 (percent) | 100 | Circular tip at 100; lower values compress the local vertical axis |
+| `flipX`, `flipY` | boolean | false | Explicit local tip mirror controls; symmetric tips may render identical pixels |
+| `brushPreset` | built-in id | `round-hard` | Deterministic local settings bundle; no pixels or network references |
 
 Older drafts omit these fields and must migrate to the defaults above. A
 mouse or touch device that reports no usable pressure must use a deterministic
@@ -62,10 +68,14 @@ Use one shared stamp primitive for Brush, Eraser, Clone and Healing:
    retain the configured diameter.
 3. If `pressureOpacity` is enabled, multiply `brushOpacity / 100` by pressure;
    otherwise use the configured opacity.
-4. Render a circular alpha mask. For hardness `h`, use an inner radius of
+4. Resolve the bounded tip geometry. A roundness below 100 compresses the
+   local vertical axis, and angle rotates that ellipse; flip controls are
+   retained in the resolved settings. Render an alpha mask inside the
+   circumscribing radius. For hardness `h`, use an inner radius of
    `radius × h / 100` at alpha `1` and a smooth radial falloff to alpha `0` at
    `radius`. Hardness 100 may use the existing filled circle fast path.
-5. Composite the color through that mask with `source-over` for Brush/Clone/
+5. Space repeated dabs at `diameter × spacing / 100`, preserving the existing
+   default 25% cadence. Composite the color through that mask with `source-over` for Brush/Clone/
    Healing and `destination-out` for Eraser. Every stamp uses the calculated
    opacity, including Eraser, so partial erasure is reversible and predictable.
 6. Clone keeps the source-to-destination offset fixed for the complete stroke.
@@ -132,7 +142,10 @@ status before reading pixels.
   re-rendered when a setting changes, and the original asset must stay
   recoverable through undo and project export.
 
-The radial stamp milestone is complete when the UI controls, validated
+The bounded tip/preset milestone is complete when the UI controls, validated
 persistence, shared stamp implementation, desktop/mobile tests, and protected
 CI/live revision evidence all pass. It does not claim Photoshop-equivalent
-brush simulation, mixer behavior, wet-media behavior, or pressure curves.
+brush simulation, scattering, texture, dual-brush behavior, color dynamics,
+transfer/pose/noise, wet edges, build-up, protect-texture, mixer behavior, wet-
+media behavior, or pressure curves; those controls remain staged behind a
+separate worker/tile rendering contract.

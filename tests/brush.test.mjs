@@ -2,12 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   applyRadialStamp,
+  brushCoverage,
+  effectiveBrushTipSettings,
   effectiveBrushPressureSettings,
   normalizeBrushPressure,
   radialCoverage,
   radialStampMask,
   resolveBrushStamp,
   validBrushPressureSettings,
+  validBrushTipSettings,
 } from '../src/brush.ts';
 
 const base = { width: 9, height: 9, x: 4, y: 4, size: 5, hardness: 100, opacity: 1, pointerType: 'mouse', pressure: 1 };
@@ -67,6 +70,45 @@ test('pressure size and opacity flags can be enabled independently', () => {
   assert.deepEqual(effectiveBrushPressureSettings(undefined), { pressureSize: false, pressureOpacity: false });
   assert.equal(validBrushPressureSettings({ pressureSize: false, pressureOpacity: true }), true);
   assert.equal(validBrushPressureSettings({ pressureSize: 'yes' }), false);
+});
+
+test('brush tip settings resolve deterministic defaults and bounded geometry', () => {
+  assert.deepEqual(effectiveBrushTipSettings(undefined), {
+    spacing: 25,
+    angle: 0,
+    roundness: 100,
+    flipX: false,
+    flipY: false,
+  });
+  const stamp = resolveBrushStamp({ ...base, spacing: 12, angle: 45, roundness: 50, flipX: true, flipY: true });
+  assert.equal(stamp.spacing, 12);
+  assert.equal(stamp.angle, 45);
+  assert.equal(stamp.roundness, 50);
+  assert.equal(stamp.flipX, true);
+  assert.equal(stamp.flipY, true);
+  assert.equal(validBrushTipSettings({ spacing: 1, angle: -180, roundness: 1, flipX: false, flipY: true }), true);
+  assert.equal(validBrushTipSettings({ spacing: 0 }), false);
+  assert.equal(validBrushTipSettings({ angle: 181 }), false);
+  assert.equal(validBrushTipSettings({ roundness: 0 }), false);
+  assert.equal(validBrushTipSettings({ flipX: 'yes' }), false);
+});
+
+test('roundness and angle produce an elliptical rotated tip without changing its bounds', () => {
+  const circular = radialStampMask({ ...base, size: 10, hardness: 100 });
+  const ellipse = radialStampMask({ ...base, size: 10, hardness: 100, roundness: 40 });
+  const rotated = radialStampMask({ ...base, size: 10, hardness: 100, roundness: 40, angle: 90 });
+  const at = (mask, x, y) => maskAt(mask.data, mask.width, x - mask.bounds.left, y - mask.bounds.top);
+  assert.ok(at(circular, 4, 8) > 0);
+  assert.equal(at(ellipse, 4, 8), 0);
+  assert.ok(at(ellipse, 8, 4) > 0);
+  assert.ok(at(rotated, 4, 8) > 0);
+  assert.equal(at(rotated, 8, 4), 0);
+  assert.deepEqual(ellipse.bounds, circular.bounds);
+  // The tip is symmetric, so flips preserve coverage while still round-tripping metadata.
+  const flipped = radialStampMask({ ...base, size: 10, hardness: 100, roundness: 40, angle: 25, flipX: true, flipY: true });
+  const plain = radialStampMask({ ...base, size: 10, hardness: 100, roundness: 40, angle: 25 });
+  assert.deepEqual(Array.from(flipped.data), Array.from(plain.data));
+  assert.equal(brushCoverage(0, 0, 5, 100, 100), 1);
 });
 
 test('source-over applies color and opacity monotonically without mutating a separate source', () => {
@@ -161,6 +203,9 @@ test('invalid sizes, hardness, pressure flags, dimensions, modes, sources and co
   assert.throws(() => resolveBrushStamp({ ...base, hardness: -1 }), /hardness/);
   assert.throws(() => resolveBrushStamp({ ...base, opacity: 2 }), /opacity/);
   assert.throws(() => resolveBrushStamp({ ...base, pressureSize: 'yes' }), /pressure/);
+  assert.throws(() => resolveBrushStamp({ ...base, spacing: 0 }), /tip/);
+  assert.throws(() => resolveBrushStamp({ ...base, angle: 181 }), /tip/);
+  assert.throws(() => resolveBrushStamp({ ...base, roundness: 0 }), /tip/);
   assert.throws(() => radialStampMask({ ...base, width: 0 }), /dimensions/);
   assert.throws(() => applyRadialStamp(pixels(2, 2), { ...base, width: 2, height: 2, mode: 'nope' }), /mode/);
   assert.throws(() => applyRadialStamp(pixels(2, 2), { ...base, width: 2, height: 2, mode: 'clone' }), /source/);

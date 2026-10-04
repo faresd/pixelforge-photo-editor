@@ -185,10 +185,18 @@ import {
 } from '../src/imageSize';
 import {
   applyRadialStamp,
+  BRUSH_DEFAULT_ANGLE,
+  BRUSH_DEFAULT_ROUNDNESS,
+  BRUSH_DEFAULT_SPACING,
   resolveBrushStamp,
   type BrushColor,
   type BrushMode,
 } from '../src/brush';
+import {
+  BRUSH_PRESETS,
+  brushPresetById,
+  type BrushPresetId,
+} from '../src/brushPresets';
 import {
   PATTERN_IDS,
   applyPatternStamp,
@@ -841,6 +849,11 @@ type StampCanvasOptions = {
   pressure?: number;
   pressureSize?: boolean;
   pressureOpacity?: boolean;
+  spacing?: number;
+  angle?: number;
+  roundness?: number;
+  flipX?: boolean;
+  flipY?: boolean;
   mode: BrushMode;
   color?: BrushColor;
   source?: HTMLCanvasElement;
@@ -900,6 +913,11 @@ const stampCanvas = (
     pressure: options.pressure,
     pressureSize: options.pressureSize,
     pressureOpacity: options.pressureOpacity,
+    spacing: options.spacing,
+    angle: options.angle,
+    roundness: options.roundness,
+    flipX: options.flipX,
+    flipY: options.flipY,
     mode: options.mode,
     color: options.color,
     source,
@@ -928,11 +946,16 @@ const stampCanvasSegment = (
       pressure: options.pressure,
       pressureSize: options.pressureSize,
       pressureOpacity: options.pressureOpacity,
+      spacing: options.spacing,
+      angle: options.angle,
+      roundness: options.roundness,
+      flipX: options.flipX,
+      flipY: options.flipY,
     }),
     distance = Math.hypot(to.x - from.x, to.y - from.y),
     steps = Math.max(
       1,
-      Math.ceil(distance / Math.max(1, resolved.radius * 0.5)),
+      Math.ceil(distance / Math.max(1, resolved.size * resolved.spacing / 100)),
     );
   let changed = false;
   for (let step = 0; step <= steps; step += 1) {
@@ -972,6 +995,11 @@ const patternCanvas = (
     pressure?: number;
     pressureSize?: boolean;
     pressureOpacity?: boolean;
+    spacing?: number;
+    angle?: number;
+    roundness?: number;
+    flipX?: boolean;
+    flipY?: boolean;
     pattern: PatternId;
     tileSize: number;
     foreground: BrushColor;
@@ -1000,6 +1028,11 @@ const patternCanvas = (
       pressure: options.pressure,
       pressureSize: options.pressureSize,
       pressureOpacity: options.pressureOpacity,
+      spacing: options.spacing,
+      angle: options.angle,
+      roundness: options.roundness,
+      flipX: options.flipX,
+      flipY: options.flipY,
       pattern: options.pattern,
       tileSize: options.tileSize,
       foreground: options.foreground,
@@ -1021,7 +1054,7 @@ const patternCanvasSegment = (
     distance = Math.hypot(to.x - from.x, to.y - from.y),
     steps = Math.max(
       1,
-      Math.ceil(distance / Math.max(1, resolved.radius * 0.5)),
+      Math.ceil(distance / Math.max(1, resolved.size * resolved.spacing / 100)),
     );
   let changed = false;
   for (let step = 0; step <= steps; step += 1) {
@@ -1285,6 +1318,12 @@ export default function Home() {
     [hardness, setHardness] = useState(100),
     [pressureSize, setPressureSize] = useState(false),
     [pressureOpacity, setPressureOpacity] = useState(false),
+    [brushPreset, setBrushPreset] = useState<BrushPresetId>('round-hard'),
+    [brushSpacing, setBrushSpacing] = useState(BRUSH_DEFAULT_SPACING),
+    [brushAngle, setBrushAngle] = useState(BRUSH_DEFAULT_ANGLE),
+    [brushRoundness, setBrushRoundness] = useState(BRUSH_DEFAULT_ROUNDNESS),
+    [brushFlipX, setBrushFlipX] = useState(false),
+    [brushFlipY, setBrushFlipY] = useState(false),
     [patternId, setPatternId] = useState<PatternId>('checker'),
     [patternTileSize, setPatternTileSize] = useState(32),
     [redEyeThreshold, setRedEyeThreshold] = useState(36),
@@ -1553,6 +1592,12 @@ export default function Home() {
     hardness,
     pressureSize,
     pressureOpacity,
+    brushPreset,
+    spacing: brushSpacing,
+    angle: brushAngle,
+    roundness: brushRoundness,
+    flipX: brushFlipX,
+    flipY: brushFlipY,
     patternId,
     patternTileSize,
     redEyeThreshold,
@@ -1587,6 +1632,12 @@ export default function Home() {
     setHardness(s.hardness ?? 100);
     setPressureSize(s.pressureSize ?? false);
     setPressureOpacity(s.pressureOpacity ?? false);
+    setBrushPreset(s.brushPreset ?? 'round-hard');
+    setBrushSpacing(s.spacing ?? BRUSH_DEFAULT_SPACING);
+    setBrushAngle(s.angle ?? BRUSH_DEFAULT_ANGLE);
+    setBrushRoundness(s.roundness ?? BRUSH_DEFAULT_ROUNDNESS);
+    setBrushFlipX(s.flipX ?? false);
+    setBrushFlipY(s.flipY ?? false);
     setPatternId(s.patternId ?? 'checker');
     setPatternTileSize(s.patternTileSize ?? 32);
     setRedEyeThreshold(s.redEyeThreshold ?? 36);
@@ -1601,6 +1652,21 @@ export default function Home() {
     setExportTargetBytes(s.exportTargetBytes);
     setText(s.text);
     setFontSize(s.fontSize);
+  };
+  const applyBrushPreset = (id: BrushPresetId) => {
+    const preset = brushPresetById(id);
+    if (!preset) return;
+    setBrushPreset(id);
+    setSize(preset.size);
+    setHardness(preset.hardness);
+    setBrushSpacing(preset.spacing ?? BRUSH_DEFAULT_SPACING);
+    setBrushAngle(preset.angle ?? BRUSH_DEFAULT_ANGLE);
+    setBrushRoundness(preset.roundness ?? BRUSH_DEFAULT_ROUNDNESS);
+    setBrushFlipX(preset.flipX ?? false);
+    setBrushFlipY(preset.flipY ?? false);
+    setPressureSize(preset.pressureSize);
+    setPressureOpacity(preset.pressureOpacity);
+    setNotice(`Brush preset “${preset.label}” applied`);
   };
   const resetColors = () => {
     setColor('#000000');
@@ -3053,6 +3119,12 @@ export default function Home() {
         hardness,
         pressureSize,
         pressureOpacity,
+        brushPreset,
+        spacing: brushSpacing,
+        angle: brushAngle,
+        roundness: brushRoundness,
+        flipX: brushFlipX,
+        flipY: brushFlipY,
         patternId,
         patternTileSize,
         redEyeThreshold,
@@ -3117,6 +3189,12 @@ export default function Home() {
     hardness,
     pressureSize,
     pressureOpacity,
+    brushPreset,
+    brushSpacing,
+    brushAngle,
+    brushRoundness,
+    brushFlipX,
+    brushFlipY,
     patternId,
     patternTileSize,
     redEyeThreshold,
@@ -4871,6 +4949,11 @@ export default function Home() {
             pressure: point.pressure,
             pressureSize,
             pressureOpacity,
+            spacing: brushSpacing,
+            angle: brushAngle,
+            roundness: brushRoundness,
+            flipX: brushFlipX,
+            flipY: brushFlipY,
             mode: tool === 'heal' ? 'heal' : 'clone',
             source,
             sourceAnchor,
@@ -4938,6 +5021,11 @@ export default function Home() {
                 pressure: point.pressure,
                 pressureSize,
                 pressureOpacity,
+                spacing: brushSpacing,
+                angle: brushAngle,
+                roundness: brushRoundness,
+                flipX: brushFlipX,
+                flipY: brushFlipY,
                 pattern: g.patternId!,
                 tileSize: g.patternTileSize!,
                 foreground: brushColor(color),
@@ -5305,6 +5393,11 @@ export default function Home() {
               pressure: point.pressure,
               pressureSize: tool !== 'pencil' && pressureSize,
               pressureOpacity: tool !== 'pencil' && pressureOpacity,
+              spacing: brushSpacing,
+              angle: brushAngle,
+              roundness: tool === 'pencil' ? 100 : brushRoundness,
+              flipX: brushFlipX,
+              flipY: brushFlipY,
               mode: tool === 'eraser' ? 'destination-out' : 'source-over',
               color: tool === 'eraser' ? undefined : brushColor(color),
             });
@@ -5437,6 +5530,11 @@ export default function Home() {
         pressure: g.lastPressure,
         pressureSize,
         pressureOpacity,
+        spacing: brushSpacing,
+        angle: brushAngle,
+        roundness: brushRoundness,
+        flipX: brushFlipX,
+        flipY: brushFlipY,
         mode: g.tool === 'heal' ? 'heal' : 'clone',
         source: g.source,
         sourceAnchor: cloneSource,
@@ -5456,6 +5554,11 @@ export default function Home() {
           pressure: g.lastPressure,
           pressureSize,
           pressureOpacity,
+          spacing: brushSpacing,
+          angle: brushAngle,
+          roundness: brushRoundness,
+          flipX: brushFlipX,
+          flipY: brushFlipY,
           pattern: g.patternId!,
           tileSize: g.patternTileSize!,
           foreground: brushColor(color),
@@ -5655,6 +5758,11 @@ export default function Home() {
         pressure: g.lastPressure,
         pressureSize: g.tool !== 'pencil' && pressureSize,
         pressureOpacity: g.tool !== 'pencil' && pressureOpacity,
+        spacing: brushSpacing,
+        angle: brushAngle,
+        roundness: g.tool === 'pencil' ? 100 : brushRoundness,
+        flipX: brushFlipX,
+        flipY: brushFlipY,
         mode: g.tool === 'eraser' ? 'destination-out' : 'source-over',
         color: g.tool === 'eraser' ? undefined : brushColor(color),
       });
@@ -6084,6 +6192,11 @@ export default function Home() {
           pressure: g.lastPressure,
           pressureSize: g.tool !== 'pencil' && pressureSize,
           pressureOpacity: g.tool !== 'pencil' && pressureOpacity,
+          spacing: brushSpacing,
+          angle: brushAngle,
+          roundness: g.tool === 'pencil' ? 100 : brushRoundness,
+          flipX: brushFlipX,
+          flipY: brushFlipY,
           mode: g.tool === 'eraser' ? 'destination-out' : 'source-over',
           color: g.tool === 'eraser' ? undefined : brushColor(color),
         });
@@ -6303,6 +6416,11 @@ export default function Home() {
             pressure: g.lastPressure ?? pressure(e),
             pressureSize,
             pressureOpacity,
+            spacing: brushSpacing,
+            angle: brushAngle,
+            roundness: brushRoundness,
+            flipX: brushFlipX,
+            flipY: brushFlipY,
             pattern: g.patternId!,
             tileSize: g.patternTileSize!,
             foreground: brushColor(color),
@@ -8535,6 +8653,24 @@ export default function Home() {
                 tool === 'pattern-stamp' ||
                 tool === 'selection-brush') && (
                 <>
+                  {(tool === 'brush' || tool === 'pencil') && (
+                    <label className="select-row">
+                      <span>Brush preset</span>
+                      <select
+                        aria-label="Brush preset"
+                        value={brushPreset}
+                        onChange={(event) =>
+                          applyBrushPreset(event.target.value as BrushPresetId)
+                        }
+                      >
+                        {BRUSH_PRESETS.map((preset) => (
+                          <option key={preset.id} value={preset.id}>
+                            {preset.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
                   {tool !== 'pencil' &&
                     tool !== 'color-replace' &&
                     tool !== 'magic-eraser' &&
@@ -8578,6 +8714,62 @@ export default function Home() {
                       set={setBrushOpacity}
                       suffix="%"
                     />
+                  )}
+                  {(tool === 'brush' ||
+                    tool === 'pencil' ||
+                    tool === 'eraser' ||
+                    tool === 'clone' ||
+                    tool === 'heal' ||
+                    tool === 'pattern-stamp') && (
+                    <>
+                      <Slider
+                        label="Spacing"
+                        value={brushSpacing}
+                        min={1}
+                        max={100}
+                        set={setBrushSpacing}
+                        suffix="%"
+                      />
+                      <Slider
+                        label="Angle"
+                        value={brushAngle}
+                        min={-180}
+                        max={180}
+                        set={setBrushAngle}
+                        suffix="°"
+                      />
+                      <Slider
+                        label="Roundness"
+                        value={brushRoundness}
+                        min={1}
+                        max={100}
+                        set={setBrushRoundness}
+                        suffix="%"
+                      />
+                      <label className="check-row">
+                        <input
+                          aria-label="Flip tip horizontal"
+                          type="checkbox"
+                          checked={brushFlipX}
+                          onChange={(event) => setBrushFlipX(event.target.checked)}
+                        />
+                        Flip tip horizontal
+                      </label>
+                      <label className="check-row">
+                        <input
+                          aria-label="Flip tip vertical"
+                          type="checkbox"
+                          checked={brushFlipY}
+                          onChange={(event) => setBrushFlipY(event.target.checked)}
+                        />
+                        Flip tip vertical
+                      </label>
+                      <p className="adjust-note">
+                        Tip settings apply to future local dabs. Advanced
+                        scattering, texture, dual-brush and wet-media dynamics
+                        remain staged for a later bounded renderer increment.
+                      </p>
+                    </>
                   )}
                   {tool !== 'pencil' &&
                     tool !== 'color-replace' &&

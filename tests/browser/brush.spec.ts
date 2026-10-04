@@ -222,6 +222,35 @@ test('brush pressure controls are accessible, opt-in, persisted, and backward-co
   await expect(page.locator('footer')).toContainText('Saved document is not supported');
 });
 
+test('brush tip presets and geometry controls persist across project reload', async ({ page }) => {
+  await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
+  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await page.getByLabel('Brush preset', { exact: true }).selectOption('ink-angled');
+  await expect(page.locator('footer')).toContainText('Brush preset “Ink angled” applied');
+  await page.getByLabel('Spacing', { exact: true }).fill('42');
+  await page.getByLabel('Angle', { exact: true }).fill('-27');
+  await page.getByLabel('Roundness', { exact: true }).fill('58');
+  await page.getByLabel('Flip tip horizontal', { exact: true }).check();
+  await page.getByLabel('Flip tip vertical', { exact: true }).check();
+  await saved(page);
+  const out = await project(page);
+  expect(out.settings).toMatchObject({
+    brushPreset: 'ink-angled',
+    spacing: 42,
+    angle: -27,
+    roundness: 58,
+    flipX: true,
+    flipY: true,
+  });
+  await page.reload();
+  await expect(page.getByLabel('Brush preset', { exact: true })).toHaveValue('ink-angled');
+  await expect(page.getByLabel('Spacing', { exact: true })).toHaveValue('42');
+  await expect(page.getByLabel('Angle', { exact: true })).toHaveValue('-27');
+  await expect(page.getByLabel('Roundness', { exact: true })).toHaveValue('58');
+  await expect(page.getByLabel('Flip tip horizontal', { exact: true })).toBeChecked();
+  await expect(page.getByLabel('Flip tip vertical', { exact: true })).toBeChecked();
+});
+
 test('pressure-off fallback keeps pen strokes at configured size and opacity', async ({ page }) => {
   await newTransparentPaintLayer(page);
   await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
