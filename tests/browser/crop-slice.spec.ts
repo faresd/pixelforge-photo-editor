@@ -105,7 +105,7 @@ test('slice tool stages a named export, supports menu/mobile cancellation and le
   const canvas = page.getByTestId('editor-canvas');
   const before = await dimensions(page);
   await page.getByRole('button', { name: 'Image', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Slice tool', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Slice tool/ }).click();
   await expect(page.getByRole('button', { name: 'Slice tool', exact: true })).toHaveAttribute('aria-pressed', 'true');
   const box = (await canvas.boundingBox())!;
   await page.mouse.move(box.x + box.width * 0.22, box.y + box.height * 0.18);
