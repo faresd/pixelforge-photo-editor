@@ -63,7 +63,7 @@ test('canvas alignment changes only layer translation and survives undo/reload',
   expect(alignedLayer.matrix[1]).toBe(0);
   expect(alignedLayer.matrix[2]).toBe(0);
   expect(alignedLayer.matrix[3]).toBe(1);
-  expect(alignedLayer.matrix[4] + Number(alignedLayer.width) + Number(alignedLayer.stroke || 0) / 2).toBe(before.w);
+  expect(alignedLayer.matrix[4] + Number(alignedLayer.width) + Number(alignedLayer.stroke || 0) / 2).toBe(before.history[before.index].w);
   expect(alignedLayer.matrix[5]).toBe(beforeLayer.matrix[5]);
   expect(alignedLayer.width).toBe(beforeLayer.width);
   expect(alignedLayer.asset).toBeUndefined();
