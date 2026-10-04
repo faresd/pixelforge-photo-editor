@@ -8027,9 +8027,6 @@ export default function Home() {
           {notice}
         </span>
         <span>{tool[0].toUpperCase() + tool.slice(1)} tool</span>
-        <output aria-label="Render status" data-testid="render-status" aria-live="polite">
-          {doc.rendering ? 'Rendering…' : 'Render ready'}
-        </output>
         <output
           aria-label="Render status"
           data-testid="render-status"
