@@ -69,9 +69,6 @@ export default function ExportDialog({
   useEffect(() => {
     if (!dialog.current?.open) dialog.current?.showModal();
     let cancelled = false;
-    setImage(null);
-    setViewport(null);
-    setPreview(null);
     void renderArtboard(
       snapshot.current.frame,
       snapshot.current.assets,
