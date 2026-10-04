@@ -162,6 +162,61 @@ function sourcePixel(
   ];
 }
 
+/**
+ * Sample a fractional source coordinate without pulling hidden RGB out of
+ * transparent pixels. Premultiplied-alpha interpolation keeps pinch edges
+ * free of halos while still producing a visible result on tiny canvases where
+ * nearest-neighbour rounding would map a subpixel displacement back to the
+ * original pixel.
+ */
+function sourcePixelBilinear(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+): [number, number, number, number] {
+  const sampleX = clamp(x, 0, width - 1),
+    sampleY = clamp(y, 0, height - 1),
+    left = Math.floor(sampleX),
+    top = Math.floor(sampleY),
+    right = Math.min(width - 1, left + 1),
+    bottom = Math.min(height - 1, top + 1),
+    tx = sampleX - left,
+    ty = sampleY - top,
+    weights = [
+      (1 - tx) * (1 - ty),
+      tx * (1 - ty),
+      (1 - tx) * ty,
+      tx * ty,
+    ],
+    offsets = [
+      (top * width + left) * 4,
+      (top * width + right) * 4,
+      (bottom * width + left) * 4,
+      (bottom * width + right) * 4,
+    ];
+  let alpha = 0,
+    red = 0,
+    green = 0,
+    blue = 0;
+  for (let index = 0; index < offsets.length; index += 1) {
+    const pixelAlpha = source[offsets[index] + 3] / 255,
+      weight = weights[index] * pixelAlpha;
+    alpha += weights[index] * pixelAlpha;
+    red += source[offsets[index]] * weight;
+    green += source[offsets[index] + 1] * weight;
+    blue += source[offsets[index] + 2] * weight;
+  }
+  if (alpha <= 0) return [0, 0, 0, 0];
+  return [
+    clampByte(red / alpha),
+    clampByte(green / alpha),
+    clampByte(blue / alpha),
+    clampByte(alpha * 255),
+  ];
+}
+
 function blendPixel(
   output: Uint8ClampedArray,
   offset: number,
@@ -563,7 +618,10 @@ function applyDistort(
         sampleX = x + (dx / Math.max(1, distance)) * wave;
         sampleY = y + (dy / Math.max(1, distance)) * wave;
       }
-      const sample = sourcePixel(source, width, height, sampleX, sampleY);
+      const sample =
+        effect.type === 'pinch'
+          ? sourcePixelBilinear(source, width, height, sampleX, sampleY)
+          : sourcePixel(source, width, height, sampleX, sampleY);
       if (sample[3] === 0) continue;
       output[offset] = sample[0];
       output[offset + 1] = sample[1];

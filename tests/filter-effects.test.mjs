@@ -285,6 +285,27 @@ test('pinch is a bounded radial remap with editable centre and alpha-safe edges'
   assert.equal(validFilterEffects(effectiveFilterEffects(effect)), true);
 });
 
+test('pinch uses deterministic alpha-safe bilinear sampling for subpixel maps', () => {
+  const source = rgba(2, 2, (x, y) => {
+    if (x === 0 && y === 0) return [250, 5, 240, 0];
+    if (x === 1 && y === 0) return [0, 255, 0, 255];
+    if (x === 0 && y === 1) return [10, 20, 30, 255];
+    return [40, 50, 60, 255];
+  });
+  const effect = { type: 'pinch', amount: 100, radius: 64, centerX: 0.5, centerY: 0.5 };
+  const result = applyFilterEffectsPixels(source, 2, 2, effect);
+  assert.deepEqual(result, applyFilterEffectsPixels(source, 2, 2, effect));
+  // The nearest-neighbour map rounds this point back to (0, 1). Bilinear
+  // sampling now exposes the fractional pull while retaining destination alpha.
+  assert.notDeepEqual(pixel(result, 2, 0, 1), pixel(source, 2, 0, 1));
+  assert.equal(pixel(result, 2, 0, 1)[3], 255);
+  // Transparent hidden magenta at (0, 0) must not bleed into the visible mix.
+  assert.ok(pixel(result, 2, 0, 1)[0] < 80);
+  assert.ok(pixel(result, 2, 0, 1)[2] < 100);
+  // A transparent destination keeps its original hidden RGB untouched.
+  assert.deepEqual(pixel(result, 2, 0, 0), [250, 5, 240, 0]);
+});
+
 test('invalid buffer dimensions fail closed', () => {
   assert.throws(() => applyFilterEffectsPixels(new Uint8ClampedArray(3), 1, 1, { type: 'mosaic', amount: 1, radius: 2 }), /length/);
 });
