@@ -12,7 +12,7 @@ The payload is the validated editable `Draft` JSON. It is split into chunks of a
 
 A save writes new chunks, deletes the previous bundle's chunks, and updates the manifest pointer in one read-write IndexedDB transaction. The pointer is therefore an atomic commit record: a crash before commit leaves the previous complete revision addressable, while a successful commit exposes all chunks together. The optimistic `localRevision` check still rejects competing tabs.
 
-Database version 1 records were complete Draft objects. The version upgrade preserves these records and reads them through the existing schema validator. Their next successful save writes a v2 manifest/blob bundle; no pixels or editable properties are discarded during this migration. Discard removes both the pointer and any chunks in the same transaction.
+Database version 1 records were complete Draft objects. The version upgrade preserves these records and reads them through the existing schema validator. A save under that same draft ID writes a v2 manifest/blob bundle; the editor's legacy migration may intentionally create a new bookmark so the original v1 bookmark remains recoverable. No pixels or editable properties are discarded during this migration. Discard removes both the pointer and any chunks in the same transaction.
 
 `sessionStorage` write-ahead snapshots remain bounded at 4 MiB. Larger drafts intentionally rely on the transactional IndexedDB bundle, and the UI continues to offer project export when local storage is unavailable. The browser never uploads anonymous assets as part of local recovery.
 
