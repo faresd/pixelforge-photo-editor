@@ -99,6 +99,25 @@ test('box and Gaussian blur are deterministic editable effects with bounded meta
     assert.equal(pixel(gaussian, 9, x, 0)[3], 255);
 });
 
+test('motion blur is a deterministic directional effect with source-safe alpha handling', () => {
+  const source = rgba(11, 3, (x, y) => {
+    if (x === 5 && y === 1) return [255, 20, 10, 255];
+    if (x === 0) return [17, 28, 39, 0];
+    return [0, 0, 0, 255];
+  });
+  const original = source.slice();
+  const effect = { type: 'motion-blur', amount: 100, radius: 2, angle: 0 };
+  const first = applyFilterEffectsPixels(source, 11, 3, effect);
+  const second = applyFilterEffectsPixels(source, 11, 3, effect);
+  assert.deepEqual(first, second);
+  assert.deepEqual(source, original);
+  assert.equal(pixel(first, 11, 0, 0)[3], 0);
+  assert.deepEqual(pixel(first, 11, 0, 0).slice(0, 3), [17, 28, 39]);
+  assert.ok(pixel(first, 11, 5, 1)[0] < 255);
+  assert.ok(pixel(first, 11, 4, 1)[0] > 0);
+  assert.equal(pixel(first, 11, 5, 1)[3], 255);
+});
+
 test('blur identity and tiny-canvas boundaries preserve source and alpha', () => {
   const source = new Uint8ClampedArray([12, 34, 56, 127]);
   for (const type of ['box-blur', 'gaussian-blur']) {

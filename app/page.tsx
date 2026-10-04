@@ -319,6 +319,7 @@ type Command =
   | 'filter-cool'
   | 'filter-box-blur'
   | 'filter-gaussian-blur'
+  | 'filter-motion-blur'
   | 'filter-field-blur'
   | 'filter-tilt-shift'
   | 'filter-mosaic'
@@ -669,7 +670,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Blur More', command: 'noop', disabled: true },
     { label: 'Box Blur…', command: 'filter-box-blur' },
     { label: 'Gaussian Blur…', command: 'filter-gaussian-blur' },
-    { label: 'Motion Blur…', command: 'noop', disabled: true },
+    { label: 'Motion Blur…', command: 'filter-motion-blur' },
     { label: 'Radial Blur…', command: 'noop', disabled: true },
     { label: 'Smart Blur…', command: 'noop', disabled: true },
     { label: 'Blur Gallery', command: 'noop', disabled: true },
@@ -6480,6 +6481,8 @@ export default function Home() {
       chooseFilterEffect('box-blur', 'Box Blur');
     else if (command === 'filter-gaussian-blur')
       chooseFilterEffect('gaussian-blur', 'Gaussian Blur');
+    else if (command === 'filter-motion-blur')
+      chooseFilterEffect('motion-blur', 'Motion Blur');
     else if (command === 'filter-field-blur')
       chooseFilterEffect('field-blur', 'Field Blur');
     else if (command === 'filter-tilt-shift')
@@ -8163,8 +8166,9 @@ export default function Home() {
                     filterEffects.type === 'color-halftone'
                       ? 'Cell size'
                       : filterEffects.type === 'box-blur' ||
-                          filterEffects.type === 'gaussian-blur'
-                        ? 'Blur radius'
+                          filterEffects.type === 'gaussian-blur' ||
+                          filterEffects.type === 'motion-blur'
+                          ? 'Blur radius'
                       : 'Radius'
                   }
                   value={filterEffects.radius}
@@ -8176,6 +8180,16 @@ export default function Home() {
                 {filterEffects.type === 'twirl' && (
                   <Slider
                     label="Twirl angle"
+                    value={filterEffects.angle}
+                    min={-180}
+                    max={180}
+                    set={(value) => setFilterEffects({ angle: value })}
+                    suffix="°"
+                  />
+                )}
+                {filterEffects.type === 'motion-blur' && (
+                  <Slider
+                    label="Motion angle"
                     value={filterEffects.angle}
                     min={-180}
                     max={180}
