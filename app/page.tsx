@@ -145,6 +145,10 @@ import {
   refineSelectionAlpha,
   type SelectionRefineMode,
 } from '../src/selectionRefine';
+import {
+  combineSelectionBrushMasks,
+  paintSelectionBrushSegment,
+} from '../src/selectionBrush';
 import { colorRangeMask } from '../src/colorRange';
 import {
   createQuickMask,
@@ -395,6 +399,12 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
     icon: WandSparkles,
     key: 'L',
   },
+  {
+    id: 'selection-brush',
+    label: 'Selection Brush',
+    icon: WandSparkles,
+    key: 'L',
+  },
   { id: 'magic-wand', label: 'Magic Wand', icon: Wand2, key: 'W' },
 ];
 const MARQUEE_TOOLS: Tool[] = [
@@ -411,7 +421,7 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   u: ['rectangle', 'ellipse', 'line', 'polygon'],
   m: MARQUEE_TOOLS,
   i: ['eyedropper', 'color-sampler', 'ruler', 'note', 'count'],
-  l: ['lasso', 'polygonal-lasso'],
+  l: ['lasso', 'polygonal-lasso', 'selection-brush'],
   e: ['eraser', 'background-eraser', 'magic-eraser'],
   o: ['dodge', 'burn', 'sponge'],
   r: ['smudge'],
@@ -722,6 +732,18 @@ type Gesture = {
   redEyeAmount?: number;
   /** Selection alpha sampled once in the edited layer's local pixel space. */
   selectionMask?: Uint8ClampedArray;
+  /** Existing selection alpha retained while a Selection Brush stroke is built. */
+  selectionBase?: Uint8ClampedArray;
+  /** Existing resolved alpha is retained for replace no-op detection. */
+  selectionExisting?: Uint8ClampedArray;
+  /** Detached alpha painted by the in-progress Selection Brush gesture. */
+  selectionBrushMask?: Uint8ClampedArray;
+  selectionBrushOperation?: SelectionOperation;
+  selectionBrushSize?: number;
+  selectionBrushHardness?: number;
+  selectionBrushOpacity?: number;
+  selectionBrushPressureSize?: boolean;
+  selectionBrushPressureOpacity?: boolean;
   changed?: boolean;
   replaceTarget?: [number, number, number, number];
   /** Local node index for an in-progress Direct Selection drag. */
@@ -1389,6 +1411,8 @@ export default function Home() {
     pressureOpacity,
     patternId,
     patternTileSize,
+    redEyeThreshold,
+    redEyeAmount,
     colorTolerance,
     tonalExposure,
     tonalRange,
@@ -1704,6 +1728,24 @@ export default function Home() {
     }
     context.putImageData(data, 0, 0);
     return addAsset(assets.current, image);
+  };
+  const selectionBrushPreview = (g: Gesture) => {
+    const points = g.points || [];
+    if (!points.length) return;
+    void paint(g.frame).then(() => {
+      if (gesture.current !== g) return;
+      const context = canvas.current?.getContext('2d');
+      if (!context) return;
+      context.save();
+      context.strokeStyle = '#7dd3fc';
+      context.lineWidth = Math.max(1, Math.min(8, size / 6));
+      context.setLineDash([7, 4]);
+      context.beginPath();
+      context.moveTo(points[0].x, points[0].y);
+      for (const point of points.slice(1)) context.lineTo(point.x, point.y);
+      context.stroke();
+      context.restore();
+    });
   };
   const drawQuickMaskOverlay = (mask: QuickMask) => {
     const target = quickMaskOverlayCanvas.current;
@@ -3958,6 +4000,83 @@ export default function Home() {
       setNotice('Pen: click to place points, click the first point to close');
       return;
     }
+    if (tool === 'selection-brush') {
+      if (gesture.current || !frame || doc.rendering) return;
+      const f = current(),
+        p = point(e),
+        g: Gesture = {
+          tool,
+          start: p,
+          last: p,
+          frame: f,
+          moved: false,
+          points: [p],
+          queued: [
+            { x: p.x, y: p.y, pressure: pressure(e), pointerType: e.pointerType },
+          ],
+          selectionBrushOperation: selectionOperation,
+          selectionBrushSize: size,
+          selectionBrushHardness: hardness,
+          selectionBrushOpacity: brushOpacity / 100,
+          selectionBrushPressureSize: pressureSize,
+          selectionBrushPressureOpacity: pressureOpacity,
+        };
+      gesture.current = g;
+      canvas.current?.setPointerCapture(e.pointerId);
+      g.pending = (async () => {
+        try {
+          if (f.selection) {
+            const rendered = await renderSelection(
+              f.selection,
+              f.w,
+              f.h,
+              assets.current,
+            );
+            const alpha = rendered
+              .getContext('2d')!
+              .getImageData(0, 0, f.w, f.h).data;
+            g.selectionExisting = new Uint8ClampedArray(f.w * f.h);
+            for (let index = 0; index < g.selectionExisting.length; index += 1)
+              g.selectionExisting[index] = alpha[index * 4 + 3];
+            if (g.selectionBrushOperation !== 'replace')
+              g.selectionBase = g.selectionExisting.slice();
+          }
+          if (gesture.current !== g) return;
+          g.selectionBrushMask = new Uint8ClampedArray(f.w * f.h);
+          let from = p;
+          for (const queued of g.queued || []) {
+            const next = paintSelectionBrushSegment(g.selectionBrushMask, {
+              width: f.w,
+              height: f.h,
+              x1: from.x,
+              y1: from.y,
+              x2: queued.x,
+              y2: queued.y,
+              size: g.selectionBrushSize!,
+              hardness: g.selectionBrushHardness!,
+              opacity: g.selectionBrushOpacity!,
+              pressure: queued.pressure,
+              pressureSize: g.selectionBrushPressureSize,
+              pressureOpacity: g.selectionBrushPressureOpacity,
+            });
+            g.selectionBrushMask = next.mask;
+            g.changed = Boolean(g.changed || next.changed);
+            from = queued;
+          }
+          g.queued = undefined;
+          g.last = from;
+          if (gesture.current !== g) return;
+          selectionBrushPreview(g);
+        } catch {
+          if (gesture.current === g) {
+            gesture.current = null;
+            setNotice('Could not prepare Selection Brush');
+          }
+        }
+      })();
+      await g.pending;
+      return;
+    }
     if (gesture.current || !frame) return;
     if (
       quickMasking ||
@@ -4941,6 +5060,39 @@ export default function Home() {
       g.last = local;
       return;
     }
+    if (g.tool === 'selection-brush') {
+      const points = g.points || (g.points = [g.start]);
+      if (Math.hypot(p.x - g.last.x, p.y - g.last.y) >= 1) points.push(p);
+      if (!g.selectionBrushMask) {
+        (g.queued || (g.queued = [])).push({
+          x: p.x,
+          y: p.y,
+          pressure: g.lastPressure,
+          pointerType: g.pointerType,
+        });
+        g.last = p;
+        return;
+      }
+      const result = paintSelectionBrushSegment(g.selectionBrushMask, {
+        width: g.frame.w,
+        height: g.frame.h,
+        x1: g.last.x,
+        y1: g.last.y,
+        x2: p.x,
+        y2: p.y,
+        size: g.selectionBrushSize ?? size,
+        hardness: g.selectionBrushHardness ?? hardness,
+        opacity: g.selectionBrushOpacity ?? brushOpacity / 100,
+        pressure: g.lastPressure,
+        pressureSize: g.selectionBrushPressureSize ?? pressureSize,
+        pressureOpacity: g.selectionBrushPressureOpacity ?? pressureOpacity,
+      });
+      g.selectionBrushMask = result.mask;
+      g.changed = Boolean(g.changed || result.changed);
+      selectionBrushPreview(g);
+      g.last = p;
+      return;
+    }
     if (
       g.tool === 'background-eraser' &&
       g.buffer &&
@@ -5680,6 +5832,58 @@ export default function Home() {
         })
       )
         setNotice('Pattern Stamp stroke applied');
+    } else if (g.tool === 'selection-brush' && g.selectionBrushMask) {
+      if (g.moved && (g.last.x !== p.x || g.last.y !== p.y)) {
+        const finalSegment = paintSelectionBrushSegment(g.selectionBrushMask, {
+          width: f.w,
+          height: f.h,
+          x1: g.last.x,
+          y1: g.last.y,
+          x2: p.x,
+          y2: p.y,
+          size: g.selectionBrushSize ?? size,
+          hardness: g.selectionBrushHardness ?? hardness,
+          opacity: g.selectionBrushOpacity ?? brushOpacity / 100,
+          pressure: g.lastPressure ?? pressure(e),
+          pressureSize: g.selectionBrushPressureSize ?? pressureSize,
+          pressureOpacity: g.selectionBrushPressureOpacity ?? pressureOpacity,
+        });
+        g.selectionBrushMask = finalSegment.mask;
+        g.changed = Boolean(g.changed || finalSegment.changed);
+      }
+      if (!g.changed) {
+        void paint(f);
+        setNotice('No Selection Brush change applied');
+        return;
+      }
+      const composed = combineSelectionBrushMasks(
+        g.selectionBase,
+        g.selectionBrushMask,
+        g.selectionBrushOperation ?? selectionOperation,
+      );
+      const sameAsExisting =
+        g.selectionExisting &&
+        g.selectionExisting.length === composed.mask.length &&
+        g.selectionExisting.every((value, index) => value === composed.mask[index]);
+      if (!composed.changed || sameAsExisting) {
+        void paint(f);
+        setNotice('No Selection Brush change applied');
+        return;
+      }
+      const selectionMask = createQuickMask(f.w, f.h, composed.mask),
+        maskId = quickMaskAsset(selectionMask),
+        selection: Selection = {
+          shape: 'rectangle',
+          x: 0,
+          y: 0,
+          w: f.w,
+          h: f.h,
+          feather: 0,
+          inverted: false,
+          mask: maskId,
+        };
+      if (commit({ ...f, selection }))
+        setNotice('Selection Brush selection created');
     } else if (g.tool === 'red-eye' && g.buffer && g.layer) {
       if (g.moved && (g.last.x !== local.x || g.last.y !== local.y))
         redEyeCanvasStroke(g.buffer, g.last, local, {
@@ -5917,7 +6121,8 @@ export default function Home() {
       if (
         e.key === 'Escape' &&
         (gesture.current?.tool === 'pen' ||
-          gesture.current?.tool === 'direct-select')
+          gesture.current?.tool === 'direct-select' ||
+          gesture.current?.tool === 'selection-brush')
       ) {
         const canceledTool = gesture.current.tool;
         gesture.current = null;
@@ -5925,7 +6130,9 @@ export default function Home() {
         setNotice(
           canceledTool === 'pen'
             ? 'Pen path cancelled'
-            : 'Path node selection cancelled',
+            : canceledTool === 'selection-brush'
+              ? 'Selection Brush cancelled'
+              : 'Path node selection cancelled',
         );
         return;
       }
@@ -6960,7 +7167,12 @@ export default function Home() {
               </button>
             </fieldset>
           )}
-          <div className="canvas-wrap" style={{ width: `${zoom}%` }}>
+          <div
+            className="canvas-wrap"
+            style={{ width: `${zoom}%` }}
+            data-artboard-count={frame?.artboards?.length ?? 0}
+            data-active-artboard={frame?.activeArtboardId ?? ''}
+          >
             <canvas
               ref={canvas}
               data-testid="editor-canvas"
@@ -7635,6 +7847,7 @@ export default function Home() {
             tool === 'heal' ||
             tool === 'red-eye' ||
             tool === 'pattern-stamp' ||
+            tool === 'selection-brush' ||
             tool === 'rectangle' ||
             tool === 'ellipse' ||
             tool === 'line' ||
@@ -7664,7 +7877,8 @@ export default function Home() {
                 tool === 'clone' ||
                 tool === 'heal' ||
                 tool === 'red-eye' ||
-                tool === 'pattern-stamp') && (
+                tool === 'pattern-stamp' ||
+                tool === 'selection-brush') && (
                 <>
                   {tool !== 'pencil' &&
                     tool !== 'color-replace' &&
@@ -7829,6 +8043,13 @@ export default function Home() {
                         device.
                       </p>
                     </>
+                  )}
+                  {tool === 'selection-brush' && (
+                    <p className="adjust-note">
+                      Paint an editable alpha selection. Use Selection mode in
+                      the Layers panel for replace, add, subtract or intersect;
+                      the source pixels remain unchanged.
+                    </p>
                   )}
                   {tool === 'red-eye' && (
                     <>

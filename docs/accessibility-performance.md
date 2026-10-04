@@ -37,9 +37,12 @@ path with
 cooperative cancellation and a monotonic completed-layer status; the same
 status and cancellation guard the Canvas2D fallback. The documented 16
 megapixel canvas, 64 megapixel raster-frame, 64 MiB portable project, and 64
-megapixel decoded-cache limits are safety budgets. Tile scheduling, tile
-eviction, partial-pixel streaming and device-specific telemetry remain planned
-follow-up work and are not implied by this contract.
+megapixel decoded-cache limits are safety budgets. Worker image encoding now
+uses the shared bounded row-major tile schedule (16 MiB expanded-RGBA batch
+budget, 64 MiB hard ceiling), while document rendering still publishes a
+full-frame result. Tile compositing, eviction, partial-pixel streaming and
+device-specific telemetry remain planned follow-up work and are not implied by
+this contract.
 
 ## Verification
 

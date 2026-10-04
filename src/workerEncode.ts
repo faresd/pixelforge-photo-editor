@@ -1,5 +1,5 @@
 import { EXPORT_FORMATS, encodeImage, validExportQuality, type ExportFormat } from './export.ts';
-import { planTiles } from './tilePlan.ts';
+import { planTiles, scheduleTiles } from './tilePlan.ts';
 
 export type WorkerEncodeOptions = {
   signal?: AbortSignal;
@@ -58,6 +58,11 @@ export async function encodeImageWithWorker(image: HTMLCanvasElement, format: Ex
   if (!EXPORT_FORMATS.includes(format) || !validExportQuality(quality))
     throw new Error('Choose a supported format and quality from 1 to 100.');
   const plan = planTiles(image.width, image.height, { tileSize: options.tileSize });
+  const schedule = scheduleTiles(plan);
+  // Validate the bounded schedule before any worker or fallback allocation.
+  // The worker repeats the schedule from the transferred dimensions.
+  if (schedule.tileCount !== plan.tiles.length)
+    throw new Error('Tile schedule does not match the planned tile count.');
   if (options.signal?.aborted) throw abortError();
   if (!canEncodeInWorker()) return encodeFallback(image, format, quality, options);
 

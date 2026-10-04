@@ -1,5 +1,5 @@
 import { EXPORT_FORMATS, validExportQuality, type ExportFormat } from './export.ts';
-import { planTiles, type TilePlan } from './tilePlan.ts';
+import { planTiles, scheduleTiles, type TilePlan } from './tilePlan.ts';
 
 type EncodeRequest = {
   kind: 'encode'; id: number; width: number; height: number;
@@ -38,6 +38,9 @@ async function encode(value: unknown): Promise<void> {
   let canvas: OffscreenCanvas | undefined;
   try {
     const { request, plan } = validateEncodeRequest(value);
+    const schedule = scheduleTiles(plan);
+    if (schedule.tileCount !== plan.tiles.length)
+      throw new Error('Tile schedule does not match the planned tile count.');
     if (activeId !== undefined) throw new Error('Worker is already encoding an image');
     activeId = id;
     const { width, height } = request;
@@ -46,9 +49,10 @@ async function encode(value: unknown): Promise<void> {
     const context = canvas.getContext('2d');
     if (!context) throw new Error('OffscreenCanvas encoding is unavailable');
     const source = new Uint8ClampedArray(request.pixels);
-    for (let index = 0; index < plan.tiles.length; index += 1) {
-      checkCancelled(id);
-      const tile = plan.tiles[index];
+    let completed = 0;
+    for (const batch of schedule.batches) {
+      for (const tile of batch.tiles) {
+        checkCancelled(id);
       const image = new ImageData(tile.width, tile.height);
       for (let row = 0; row < tile.height; row += 1) {
         const sourceOffset = ((tile.y + row) * width + tile.x) * 4;
@@ -65,8 +69,10 @@ async function encode(value: unknown): Promise<void> {
         }
       }
       context.putImageData(image, tile.x, tile.y);
-      scope.postMessage({ kind: 'progress', id, completed: index + 1, total: plan.tiles.length });
-      if (index + 1 < plan.tiles.length) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        completed += 1;
+        scope.postMessage({ kind: 'progress', id, completed, total: plan.tiles.length });
+        if (completed < plan.tiles.length) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
     }
     checkCancelled(id);
     const mime = `image/${request.format}`;

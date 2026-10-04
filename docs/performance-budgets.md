@@ -104,8 +104,12 @@ state.
 
 The path remains provisional until repeated physical-device measurements show
 that worker scheduling improves responsiveness without unacceptable memory
-pressure. It does not yet provide tiled rendering, a persistent worker pool,
-tile eviction or worker-aware interactive brush/adjustment overrides. Fonts,
+pressure. Worker image encoding now consumes a shared row-major tile schedule
+with a 16 MiB expanded-RGBA batch budget and a 64 MiB hard ceiling; this is a
+safety and planning seed for document rendering, not evidence that document
+pixels are already tiled. The document path does not yet provide tiled
+rendering, a persistent worker pool, tile eviction or worker-aware interactive
+brush/adjustment overrides. Fonts,
 CSS filters and colour management may also vary by browser, so representative
 pixel/alpha fixtures remain required for each effect family.
 
@@ -123,9 +127,11 @@ industrial-scale, the implementation needs:
    pass indicator, not a streaming or tiled-render claim. The main thread must
    stay responsive while a large frame or adjustment renders.
 2. Extend the bounded tile plan (with explicit edge overlap for blur, healing
-   and other neighborhood operations) from batch encoding into document
-   rendering so one edit does not allocate several full-size surfaces. Tile
-   cache size and eviction must be measured on desktop and mobile.
+   and other neighborhood operations) from the current batch-encoding seed
+   into document rendering so one edit does not allocate several full-size
+   surfaces. The scheduler now validates row-major batches and expanded-byte
+   budgets; document compositing, tile cache size and eviction still require
+   measured desktop and mobile gates.
 3. Repeat the operation-level marks for pointer-to-paint, render completion,
    export and IndexedDB save as p50/p95 reports on physical devices. The first
    local instrumentation slice is active and covered by the focused desktop
