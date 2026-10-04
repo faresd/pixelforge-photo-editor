@@ -22,6 +22,7 @@ test('parameterized actions bind primitive full tokens and embedded labels witho
     now,
   );
   const bound = bindActionParameters(action, { strength: 70 });
+  assert.equal(bound.steps[0].label, 'Vivid 70%');
   assert.equal(bound.steps[0].parameters?.amount, 70);
   assert.equal(bound.steps[0].parameters?.label, 'finish-70');
   assert.equal(action.steps[0].parameters?.amount, '{{strength}}');

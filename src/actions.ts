@@ -111,6 +111,7 @@ export function bindActionParameters(
     ...action,
     steps: action.steps.map((step) => ({
       ...step,
+      label: String(replacement(step.label)),
       ...(step.parameters
         ? {
             parameters: Object.fromEntries(
