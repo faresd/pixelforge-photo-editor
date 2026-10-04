@@ -244,3 +244,53 @@ test('Mosaic, Tilt-Shift, Ripple and Twirl commands expose editable effect metad
     expect(project.history[project.index].layers.at(-1)!.adjustments.filterEffects).toMatchObject({ type });
   }
 });
+
+test('Pinch is enabled as a nondestructive Distort effect with centred controls and round-trip persistence', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset;
+  const sourcePixel = await pixel(page, 4, 2);
+
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Pinch…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByText('Pinch applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('pinch');
+  await expect(page.getByLabel('Pinch radius', { exact: true })).toHaveValue('40');
+  await expect(page.getByLabel('Pinch center X', { exact: true })).toHaveValue('50');
+  await expect(page.getByLabel('Pinch center Y', { exact: true })).toHaveValue('50');
+  await page.getByLabel('Pinch center X', { exact: true }).press('ArrowRight');
+  await page.getByLabel('Pinch radius', { exact: true }).press('ArrowRight');
+  await expect(page.getByLabel('Pinch center X', { exact: true })).toHaveValue('51');
+  await expect(page.getByLabel('Pinch radius', { exact: true })).toHaveValue('41');
+  await expect.poll(() => pixel(page, 4, 2)).not.toEqual(sourcePixel);
+  expect((await pixel(page, 0, 0))[3]).toBe(0);
+
+  const adjusted = await downloadProject(page);
+  const adjustedLayer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(adjustedLayer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
+  expect(adjustedLayer.adjustments.filterEffects).toMatchObject({
+    type: 'pinch',
+    amount: 70,
+    radius: 41,
+    centerX: 0.51,
+  });
+
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('pinch');
+  await expect(page.getByLabel('Pinch center X', { exact: true })).toHaveValue('51');
+  await openProject(page, adjusted);
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('pinch');
+  await expect(page.getByLabel('Pinch radius', { exact: true })).toHaveValue('41');
+
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
+  await expect.poll(() => pixel(page, 4, 2)).toEqual(sourcePixel);
+});

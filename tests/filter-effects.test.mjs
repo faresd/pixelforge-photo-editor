@@ -255,6 +255,36 @@ test('ripple and twirl are stable remaps and retain transparent pixels', () => {
   }
 });
 
+test('pinch is a bounded radial remap with editable centre and alpha-safe edges', () => {
+  const source = rgba(13, 9, (x, y) => {
+    if (x === 0 && y === 0) return [19, 29, 39, 0];
+    return [(x * 31 + y * 7) % 256, (x * 11 + y * 23) % 256, (x * 5 + y * 17) % 256, 255];
+  });
+  const original = source.slice();
+  const effect = {
+    type: 'pinch',
+    amount: 100,
+    radius: 64,
+    centerX: 0.5,
+    centerY: 0.5,
+  };
+  const first = applyFilterEffectsPixels(source, 13, 9, effect);
+  const second = applyFilterEffectsPixels(source, 13, 9, effect);
+  assert.deepEqual(first, second);
+  assert.deepEqual(source, original);
+  assert.equal(pixel(first, 13, 0, 0)[3], 0);
+  assert.deepEqual(pixel(first, 13, 0, 0).slice(0, 3), [19, 29, 39]);
+  // The exact centre remains stable while an adjacent covered pixel samples
+  // from the pulled-in neighbourhood.
+  assert.deepEqual(pixel(first, 13, 6, 4), pixel(source, 13, 6, 4));
+  assert.notDeepEqual(pixel(first, 13, 4, 4), pixel(source, 13, 4, 4));
+  assert.deepEqual(
+    applyFilterEffectsPixels(source, 13, 9, { ...effect, amount: 0 }),
+    source,
+  );
+  assert.equal(validFilterEffects(effectiveFilterEffects(effect)), true);
+});
+
 test('invalid buffer dimensions fail closed', () => {
   assert.throws(() => applyFilterEffectsPixels(new Uint8ClampedArray(3), 1, 1, { type: 'mosaic', amount: 1, radius: 2 }), /length/);
 });

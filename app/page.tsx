@@ -348,6 +348,7 @@ type Command =
   | 'filter-tilt-shift'
   | 'filter-mosaic'
   | 'filter-color-halftone'
+  | 'filter-pinch'
   | 'filter-ripple'
   | 'filter-twirl'
   | 'filter-clear-effect'
@@ -705,7 +706,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Iris Blur…', command: 'noop', disabled: true },
     { label: 'Distort', command: 'noop', disabled: true },
     { label: 'Displace…', command: 'noop', disabled: true },
-    { label: 'Pinch…', command: 'noop', disabled: true },
+    { label: 'Pinch…', command: 'filter-pinch' },
     { label: 'Ripple…', command: 'filter-ripple' },
     { label: 'Shear…', command: 'noop', disabled: true },
     { label: 'Spherize…', command: 'noop', disabled: true },
@@ -2789,6 +2790,8 @@ export default function Home() {
                 radius:
                   type === 'mosaic' || type === 'color-halftone'
                     ? 10
+                    : type === 'pinch'
+                      ? 40
                     : type === 'radial-blur'
                       ? 18
                       : 6,
@@ -6772,6 +6775,8 @@ export default function Home() {
       chooseFilterEffect('color-halftone', 'Color Halftone');
     else if (command === 'filter-ripple')
       chooseFilterEffect('ripple', 'Ripple');
+    else if (command === 'filter-pinch')
+      chooseFilterEffect('pinch', 'Pinch');
     else if (command === 'filter-twirl') chooseFilterEffect('twirl', 'Twirl');
     else if (command === 'crop') {
       if (slicePreview) cancelSlicePreview();
@@ -8564,8 +8569,10 @@ export default function Home() {
                           filterEffects.type === 'gaussian-blur' ||
                           filterEffects.type === 'motion-blur'
                           ? 'Blur radius'
-                        : filterEffects.type === 'radial-blur'
+                      : filterEffects.type === 'radial-blur'
                           ? 'Angular sweep'
+                      : filterEffects.type === 'pinch'
+                          ? 'Pinch radius'
                       : 'Radius'
                   }
                   value={filterEffects.radius}
@@ -8583,6 +8590,26 @@ export default function Home() {
                     set={(value) => setFilterEffects({ angle: value })}
                     suffix="°"
                   />
+                )}
+                {filterEffects.type === 'pinch' && (
+                  <>
+                    <Slider
+                      label="Pinch center X"
+                      value={Math.round(filterEffects.centerX * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      suffix="%"
+                    />
+                    <Slider
+                      label="Pinch center Y"
+                      value={Math.round(filterEffects.centerY * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      suffix="%"
+                    />
+                  </>
                 )}
                 {filterEffects.type === 'motion-blur' && (
                   <Slider

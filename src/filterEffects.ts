@@ -17,6 +17,7 @@ export const FILTER_EFFECT_TYPES = [
   'tilt-shift',
   'mosaic',
   'color-halftone',
+  'pinch',
   'ripple',
   'twirl',
 ] as const;
@@ -523,7 +524,13 @@ function applyDistort(
   const amount = effect.amount / 100,
     centerX = effect.centerX * (width - 1),
     centerY = effect.centerY * (height - 1),
-    radius = Math.max(1, Math.min(width, height) * 0.7),
+    radius =
+      effect.type === 'pinch'
+        ? Math.max(
+            1,
+            (Math.min(width, height) * 0.7 * Math.max(1, effect.radius)) / 64,
+          )
+        : Math.max(1, Math.min(width, height) * 0.7),
     angle = (effect.angle * Math.PI) / 180;
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
@@ -541,6 +548,16 @@ function applyDistort(
           sine = Math.sin(turn);
         sampleX = centerX + dx * cosine - dy * sine;
         sampleY = centerY + dx * sine + dy * cosine;
+      } else if (effect.type === 'pinch' && distance < radius) {
+        // Inverse-map the destination into a bounded radial influence. A
+        // positive amount pulls pixels toward the editable centre while the
+        // squared falloff leaves the edge of the influence continuous. The
+        // source is sampled only; output never feeds a later pixel, so the
+        // operation remains deterministic and nondestructive.
+        const falloff = 1 - normalized;
+        const scale = 1 - amount * falloff * falloff;
+        sampleX = centerX + dx * scale;
+        sampleY = centerY + dy * scale;
       } else if (effect.type === 'ripple') {
         const wave = Math.sin(distance / Math.max(1, effect.radius || 8) * Math.PI * 2) * amount * Math.max(1, effect.radius || 8);
         sampleX = x + (dx / Math.max(1, distance)) * wave;
