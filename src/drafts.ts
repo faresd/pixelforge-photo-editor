@@ -31,6 +31,10 @@ export type Tool =
   | 'hand'
   | 'zoom'
   | 'eyedropper'
+  | 'color-sampler'
+  | 'ruler'
+  | 'note'
+  | 'count'
   | 'fill'
   | 'gradient'
   | 'clone'
@@ -162,6 +166,10 @@ function validSettings(settings: unknown): settings is Settings {
       'hand',
       'zoom',
       'eyedropper',
+      'color-sampler',
+      'ruler',
+      'note',
+      'count',
       'fill',
       'gradient',
       'clone',

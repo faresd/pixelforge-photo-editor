@@ -14,6 +14,7 @@ import {
   FlipVertical2,
   ImagePlus,
   Hand,
+  Hash,
   Hexagon,
   Minus,
   Pipette,
@@ -24,9 +25,11 @@ import {
   Rows3,
   RotateCcw,
   RotateCw,
+  Ruler,
   Save,
   Shapes,
   Sparkles,
+  StickyNote,
   Sun,
   Moon,
   Type,
@@ -101,6 +104,7 @@ import LayerTransformDialog, {
   type LayerTransformBounds,
 } from '../src/LayerTransformDialog';
 import SelectionModifyDialog from '../src/SelectionModifyDialog';
+import ColorRangeDialog from '../src/ColorRangeDialog';
 import CanvasSizeDialog from '../src/CanvasSizeDialog';
 import TrimDialog from '../src/TrimDialog';
 import {
@@ -127,6 +131,7 @@ import {
   refineSelectionAlpha,
   type SelectionRefineMode,
 } from '../src/selectionRefine';
+import { colorRangeMask } from '../src/colorRange';
 import {
   createQuickMask,
   loadSelection,
@@ -168,6 +173,15 @@ import {
   type PathModel,
 } from '../src/paths';
 import { applySmudgeStroke } from '../src/smudge';
+import {
+  formatMeasurement,
+  measurementAngle,
+  measurementDistance,
+  newMeasurementId,
+  nextCountIndex,
+  type MeasurementAnnotation,
+  type MeasurementPoint,
+} from '../src/measurements';
 type MenuName =
   | 'File'
   | 'Edit'
@@ -222,6 +236,7 @@ type Command =
   | 'transform-selection'
   | 'grow-selection'
   | 'contract-selection'
+  | 'color-range'
   | 'mask-selection'
   | 'remove-background'
   | 'invert-layer-mask'
@@ -267,6 +282,10 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'hand', label: 'Hand', icon: Hand, key: 'H' },
   { id: 'zoom', label: 'Zoom', icon: ZoomIn, key: 'Z' },
   { id: 'eyedropper', label: 'Eyedropper', icon: Pipette, key: 'I' },
+  { id: 'color-sampler', label: 'Color Sampler', icon: Pipette, key: 'I' },
+  { id: 'ruler', label: 'Ruler', icon: Ruler, key: 'I' },
+  { id: 'note', label: 'Note', icon: StickyNote, key: 'I' },
+  { id: 'count', label: 'Count', icon: Hash, key: 'I' },
   { id: 'fill', label: 'Fill', icon: PaintBucket, key: 'G' },
   { id: 'gradient', label: 'Gradient', icon: Palette, key: 'G' },
   { id: 'clone', label: 'Clone', icon: Copy, key: 'S' },
@@ -329,6 +348,7 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   b: ['brush', 'pencil', 'color-replace'],
   u: ['rectangle', 'ellipse', 'line', 'polygon'],
   m: MARQUEE_TOOLS,
+  i: ['eyedropper', 'color-sampler', 'ruler', 'note', 'count'],
   l: ['lasso', 'polygonal-lasso'],
   e: ['eraser', 'background-eraser', 'magic-eraser'],
   o: ['dodge', 'burn', 'sponge'],
@@ -525,7 +545,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Deselect Layers', command: 'noop', disabled: true },
     { label: 'Find Layers', command: 'noop', disabled: true },
     { label: 'Isolate Layers', command: 'noop', disabled: true },
-    { label: 'Color Range…', command: 'noop', disabled: true },
+    { label: 'Color Range…', command: 'color-range' },
     { label: 'Focus Area…', command: 'noop', disabled: true },
     { label: 'Subject', command: 'noop', disabled: true },
     { label: 'Sky', command: 'noop', disabled: true },
@@ -1018,6 +1038,7 @@ export default function Home() {
   const [selectionTransforming, setSelectionTransforming] = useState(false);
   const [layerTransforming, setLayerTransforming] = useState(false);
   const [selectionRefining, setSelectionRefining] = useState<SelectionRefineMode | null>(null);
+  const [colorRanging, setColorRanging] = useState(false);
   const [quickMasking, setQuickMasking] = useState(false),
     [quickMask, setQuickMask] = useState<QuickMask | null>(null),
     [quickMaskReveal, setQuickMaskReveal] = useState(false),
@@ -1029,6 +1050,10 @@ export default function Home() {
       selected: boolean;
       before: Uint8ClampedArray;
     } | null>(null);
+  const [measurementPreview, setMeasurementPreview] = useState<{
+    start: MeasurementPoint;
+    end: MeasurementPoint;
+  } | null>(null);
 
   /**
    * Menus use a small roving-focus model rather than relying on browser tab
@@ -1173,6 +1198,12 @@ export default function Home() {
     setNotice('Foreground and background colors swapped');
   };
   const current = () => history.current[index.current];
+  const appendMeasurement = (annotation: MeasurementAnnotation) => {
+    const f = current();
+    if (commit({ ...f, measurements: [...(f.measurements || []), annotation] }))
+      return true;
+    return false;
+  };
   const transformSelectionValue = selectionTransforming
     ? current().selection
     : undefined;
@@ -1626,6 +1657,58 @@ export default function Home() {
             ? 'Polygonal'
             : 'Rectangular';
       setNotice(selection ? `${label} selection created` : 'Selection cleared');
+    }
+  };
+  const applyColorRange = async (sample: string, fuzziness: number) => {
+    const f = current();
+    setColorRanging(false);
+    const match = /^#([a-f\d]{6})$/i.exec(sample);
+    if (!match) {
+      setNotice('Color Range sample color is invalid');
+      return;
+    }
+    try {
+      const rendered = await renderFrame(f, assets.current),
+        pixels = rendered.getContext('2d')!.getImageData(0, 0, f.w, f.h).data,
+        rgb: [number, number, number] = [
+          Number.parseInt(match[1].slice(0, 2), 16),
+          Number.parseInt(match[1].slice(2, 4), 16),
+          Number.parseInt(match[1].slice(4, 6), 16),
+        ],
+        alpha = colorRangeMask(pixels, {
+          width: f.w,
+          height: f.h,
+          target: rgb,
+          fuzziness,
+        }),
+        mask = surface(f.w, f.h),
+        image = mask.getContext('2d')!.createImageData(f.w, f.h);
+      for (let index = 0; index < alpha.length; index += 1) {
+        const offset = index * 4;
+        image.data[offset] = 255;
+        image.data[offset + 1] = 255;
+        image.data[offset + 2] = 255;
+        image.data[offset + 3] = alpha[index];
+      }
+      mask.getContext('2d')!.putImageData(image, 0, 0);
+      const maskId = addAsset(assets.current, mask);
+      if (commit({
+        ...f,
+        selection: {
+          shape: 'rectangle',
+          x: 0,
+          y: 0,
+          w: f.w,
+          h: f.h,
+          feather: 0,
+          inverted: false,
+          mask: maskId,
+        },
+      })) {
+        setNotice(`Color Range selection created (fuzziness ${fuzziness})`);
+      }
+    } catch {
+      setNotice('Could not create a Color Range selection');
     }
   };
   const reselect = () => {
@@ -3355,6 +3438,65 @@ export default function Home() {
       setNotice('Color sampled from image');
       return;
     }
+    if (tool === 'color-sampler') {
+      const pixel = canvas
+        .current!.getContext('2d')!
+        .getImageData(Math.floor(p.x), Math.floor(p.y), 1, 1).data;
+      const hex =
+        '#' +
+        [pixel[0], pixel[1], pixel[2]]
+          .map((value) => value.toString(16).padStart(2, '0'))
+          .join('');
+      if (
+        appendMeasurement({
+          id: newMeasurementId(),
+          kind: 'sample',
+          x: p.x,
+          y: p.y,
+          color: hex,
+          alpha: pixel[3],
+        })
+      )
+        setNotice(`Color sampler: ${hex.toUpperCase()} · alpha ${pixel[3]}`);
+      return;
+    }
+    if (tool === 'ruler') {
+      canvas.current!.setPointerCapture(e.pointerId);
+      gesture.current = { tool, start: p, last: p, frame: f, moved: false };
+      setMeasurementPreview({ start: p, end: p });
+      setNotice('Ruler: drag to measure pixels and angle');
+      return;
+    }
+    if (tool === 'note') {
+      const text = window.prompt('Note for this image', '');
+      if (text?.trim()) {
+        if (
+          appendMeasurement({
+            id: newMeasurementId(),
+            kind: 'note',
+            x: p.x,
+            y: p.y,
+            text: text.trim().slice(0, 500),
+          })
+        )
+          setNotice('Note added to the draft');
+      } else setNotice('Note cancelled');
+      return;
+    }
+    if (tool === 'count') {
+      const index = nextCountIndex(f.measurements || []);
+      if (
+        appendMeasurement({
+          id: newMeasurementId(),
+          kind: 'count',
+          x: p.x,
+          y: p.y,
+          index,
+        })
+      )
+        setNotice(`Count marker ${index} added`);
+      return;
+    }
     if (tool === 'hand') {
       gesture.current = { tool, start: p, last: p, frame: f, moved: false };
       return;
@@ -3984,6 +4126,12 @@ export default function Home() {
       g.last = p;
       return;
     }
+    if (g.tool === 'ruler') {
+      g.moved = true;
+      g.last = p;
+      setMeasurementPreview({ start: g.start, end: p });
+      return;
+    }
     if (
       g.tool === 'direct-select' &&
       g.layer?.kind === 'path' &&
@@ -4405,13 +4553,36 @@ export default function Home() {
         ? latest.layers.find((layer) => layer.id === g.layer!.id)
         : undefined;
     if (latest !== f || (g.layer && latestLayer !== g.layer)) {
+      if (g.tool === 'ruler') setMeasurementPreview(null);
       void paint(latest);
       setNotice('Gesture cancelled because the document changed');
       return;
     }
     if (e.type === 'pointercancel') {
+      if (g.tool === 'ruler') setMeasurementPreview(null);
       void paint(current());
       setNotice('Gesture cancelled');
+      return;
+    }
+    if (g.tool === 'ruler') {
+      setMeasurementPreview(null);
+      if (!g.moved || measurementDistance(g.start, p) < 1) {
+        void paint(f);
+        setNotice('Ruler needs a drag of at least one pixel');
+        return;
+      }
+      const pixels = measurementDistance(g.start, p);
+      if (
+        appendMeasurement({
+          id: newMeasurementId(),
+          kind: 'ruler',
+          start: g.start,
+          end: p,
+          pixels,
+          angle: measurementAngle(g.start, p),
+        })
+      )
+        setNotice(`Ruler: ${formatMeasurement(pixels, measurementAngle(g.start, p))}`);
       return;
     }
     if (
@@ -5092,7 +5263,8 @@ export default function Home() {
     } else if (command === 'grow-selection' || command === 'contract-selection') {
       if (current().selection) setSelectionRefining(command === 'grow-selection' ? 'grow' : 'contract');
       else setNotice('Create a selection before refining it');
-    } else if (command === 'mask-selection') void createMaskFromSelection();
+    } else if (command === 'color-range') setColorRanging(true);
+    else if (command === 'mask-selection') void createMaskFromSelection();
     else if (command === 'remove-background') void removeBackground();
     else if (command === 'free-transform') beginLayerTransform();
     else if (command === 'invert-layer-mask') invertLayerMask();
@@ -5332,6 +5504,14 @@ export default function Home() {
           mode={selectionRefineValue}
           close={() => setSelectionRefining(null)}
           apply={(radius) => void applySelectionRefinement(radius)}
+        />
+      )}
+      {colorRanging && (
+        <ColorRangeDialog
+          initialColor={color}
+          initialFuzziness={colorTolerance}
+          close={() => setColorRanging(false)}
+          apply={(sample, fuzziness) => void applyColorRange(sample, fuzziness)}
         />
       )}
       {exporting && (
@@ -5587,6 +5767,57 @@ export default function Home() {
                 aria-hidden="true"
               />
             )}
+            {frame && (frame.measurements?.length || measurementPreview) ? (
+              <svg
+                className="measurement-overlay"
+                data-testid="measurement-overlay"
+                viewBox={`0 0 ${frame.w} ${frame.h}`}
+                preserveAspectRatio="none"
+                aria-label="Sampling and measurement overlays"
+              >
+                {(frame.measurements || []).map((item) => {
+                  if (item.kind === 'sample')
+                    return (
+                      <g key={item.id} className="measurement-sample">
+                        <circle cx={item.x} cy={item.y} r="8" />
+                        <circle cx={item.x} cy={item.y} r="5" fill={item.color} />
+                        <title>{`${item.color.toUpperCase()} · alpha ${item.alpha}`}</title>
+                      </g>
+                    );
+                  if (item.kind === 'ruler') {
+                    const labelX = (item.start.x + item.end.x) / 2;
+                    const labelY = (item.start.y + item.end.y) / 2 - 8;
+                    return (
+                      <g key={item.id} className="measurement-ruler">
+                        <line x1={item.start.x} y1={item.start.y} x2={item.end.x} y2={item.end.y} />
+                        <text x={labelX} y={labelY}>{formatMeasurement(item.pixels, item.angle)}</text>
+                      </g>
+                    );
+                  }
+                  if (item.kind === 'note')
+                    return (
+                      <g key={item.id} className="measurement-note">
+                        <circle cx={item.x} cy={item.y} r="7" />
+                        <text x={item.x + 11} y={item.y + 4}>{item.text}</text>
+                      </g>
+                    );
+                  return (
+                    <g key={item.id} className="measurement-count">
+                      <circle cx={item.x} cy={item.y} r="11" />
+                      <text x={item.x} y={item.y + 4}>{item.index}</text>
+                    </g>
+                  );
+                })}
+                {measurementPreview && (
+                  <g className="measurement-ruler measurement-preview">
+                    <line x1={measurementPreview.start.x} y1={measurementPreview.start.y} x2={measurementPreview.end.x} y2={measurementPreview.end.y} />
+                    <text x={(measurementPreview.start.x + measurementPreview.end.x) / 2} y={(measurementPreview.start.y + measurementPreview.end.y) / 2 - 8}>
+                      {formatMeasurement(measurementDistance(measurementPreview.start, measurementPreview.end), measurementAngle(measurementPreview.start, measurementPreview.end))}
+                    </text>
+                  </g>
+                )}
+              </svg>
+            ) : null}
           </div>
           <div className="zoom">
             <button

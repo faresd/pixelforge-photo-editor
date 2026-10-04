@@ -9,6 +9,7 @@ import {
   type Layer,
   type SelectionOperation,
 } from './document';
+import type { ParametricShapeVariant } from './vectorShapes';
 
 type Props = {
   frame: Frame;
@@ -479,15 +480,32 @@ export default function LayersPanel({
             onChange={(e) => edit({ color: e.target.value })}
           />
           {layer.kind === 'polygon' && (
-            <NumberField
-              key={layer.id + layer.sides}
-              label="Polygon sides"
-              value={layer.sides}
-              min={3}
-              max={32}
-              disabled={layerLocked}
-              apply={(sides) => edit({ sides })}
-            />
+            <>
+              <label className="layer-field">
+                Shape type
+                <select
+                  aria-label="Shape type"
+                  value={layer.variant ?? 'polygon'}
+                  disabled={layerLocked}
+                  onChange={(event) =>
+                    edit({ variant: event.target.value as ParametricShapeVariant })
+                  }
+                >
+                  <option value="polygon">Polygon</option>
+                  <option value="triangle">Triangle</option>
+                  <option value="star">Star</option>
+                </select>
+              </label>
+              <NumberField
+                key={layer.id + layer.sides}
+                label="Polygon sides"
+                value={layer.sides}
+                min={3}
+                max={32}
+                disabled={layerLocked}
+                apply={(sides) => edit({ sides })}
+              />
+            </>
           )}
         </div>
       )}
