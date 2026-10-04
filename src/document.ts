@@ -285,6 +285,13 @@ export type SelectionTransform = {
   flipY: boolean;
 };
 
+export type LayerTransformBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 /** Parse a single locale-neutral decimal, accepting a decimal comma. */
 export function selectionDecimal(value: string): number {
   if (!/^[+-]?(?:\d+(?:[.,]\d*)?|[.,]\d+)$/.test(value.trim())) return NaN;
@@ -351,6 +358,43 @@ export function selectionTransformMatrix(
       'This skew combination collapses the selection. Choose different angles.',
     );
   return result.map((value) => (Math.abs(value) < 1e-12 ? 0 : value)) as Matrix;
+}
+
+/**
+ * Build a nondestructive transform delta for an editable layer. The caller
+ * composes the returned delta with the layer's existing matrix, so source
+ * assets and masks remain untouched and the operation is undoable.
+ */
+export function layerTransformMatrix(
+  bounds: LayerTransformBounds,
+  layerMatrix: Matrix,
+  values: SelectionTransform,
+): Matrix {
+  if (
+    !validMatrix(layerMatrix) ||
+    !Number.isFinite(bounds.x) ||
+    !Number.isFinite(bounds.y) ||
+    !Number.isFinite(bounds.width) ||
+    !Number.isFinite(bounds.height) ||
+    bounds.width <= 0 ||
+    bounds.height <= 0 ||
+    bounds.width > 16000 ||
+    bounds.height > 16000
+  )
+    throw new Error('Layer transform bounds are invalid');
+  return selectionTransformMatrix(
+    {
+      shape: 'rectangle',
+      x: bounds.x,
+      y: bounds.y,
+      w: bounds.width,
+      h: bounds.height,
+      feather: 0,
+      inverted: false,
+      matrix: layerMatrix,
+    },
+    values,
+  );
 }
 export const commonLayer = (name: string): Common => ({
   id: crypto.randomUUID(),

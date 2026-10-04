@@ -1,0 +1,142 @@
+/**
+ * File-format capability labels used at the import boundary.
+ *
+ * PixelForge currently stores imported source pixels as an editable raster
+ * asset. It does not promise a lossless round trip for camera/container
+ * formats or layered documents. Keeping this classification separate from
+ * the browser decoder lets the UI give an honest message before it touches a
+ * draft, even when a file has an unusual MIME type.
+ */
+export type ImportFormat = 'raster' | 'heic' | 'psd' | 'raw' | 'unknown';
+
+export type ImportCapability = 'supported' | 'conditional' | 'unsupported';
+
+export type ImportFormatInfo = {
+  format: ImportFormat;
+  label: string;
+  capability: ImportCapability;
+  /** Whether the browser decoder may be attempted for this source. */
+  tryDecode: boolean;
+  /** User-facing disclosure for the flattened imported representation. */
+  disclosure: string;
+};
+
+const HEIC_EXTENSIONS = new Set(['heic', 'heif', 'heics', 'heifs']);
+const PSD_EXTENSIONS = new Set(['psd', 'psb']);
+const RASTER_EXTENSIONS = new Set([
+  'apng',
+  'avif',
+  'bmp',
+  'gif',
+  'jpeg',
+  'jpg',
+  'png',
+  'webp',
+]);
+const RAW_EXTENSIONS = new Set([
+  '3fr',
+  'arw',
+  'cr2',
+  'cr3',
+  'dcr',
+  'dng',
+  'erf',
+  'iiq',
+  'k25',
+  'kdc',
+  'mef',
+  'mos',
+  'mrw',
+  'nef',
+  'nrw',
+  'orf',
+  'pef',
+  'raf',
+  'raw',
+  'rw2',
+  'rwl',
+  'sr2',
+  'srf',
+  'x3f',
+]);
+
+function extensionOf(fileName: string): string {
+  const basename = fileName.trim().replaceAll('\\', '/').split('/').pop() || '';
+  const dot = basename.lastIndexOf('.');
+  return dot < 0 ? '' : basename.slice(dot + 1).toLowerCase();
+}
+
+function hasMime(mime: string, ...values: string[]): boolean {
+  const normalized = mime.trim().toLowerCase().split(';', 1)[0];
+  return values.includes(normalized);
+}
+
+export function describeImportFormat(
+  fileName: string,
+  mimeType = '',
+): ImportFormatInfo {
+  const extension = extensionOf(fileName);
+  if (
+    PSD_EXTENSIONS.has(extension) ||
+    hasMime(mimeType, 'image/vnd.adobe.photoshop', 'application/vnd.adobe.photoshop', 'application/x-photoshop')
+  ) {
+    return {
+      format: 'psd',
+      label: 'PSD/PSB',
+      capability: 'unsupported',
+      tryDecode: false,
+      disclosure:
+        'PSD/PSB import is not supported yet. Export a flattened PNG or JPEG, or use a PixelForge project file to keep editable layers.',
+    };
+  }
+  if (
+    RAW_EXTENSIONS.has(extension) ||
+    hasMime(mimeType, 'image/x-raw', 'image/raw', 'application/x-raw')
+  ) {
+    return {
+      format: 'raw',
+      label: 'RAW',
+      capability: 'unsupported',
+      tryDecode: false,
+      disclosure:
+        'Camera RAW import is not supported yet. Develop the source to a PNG or JPEG first; camera metadata and the RAW mosaic are not retained.',
+    };
+  }
+  if (
+    HEIC_EXTENSIONS.has(extension) ||
+    hasMime(mimeType, 'image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence')
+  ) {
+    return {
+      format: 'heic',
+      label: 'HEIC/HEIF',
+      capability: 'conditional',
+      tryDecode: true,
+      disclosure:
+        'HEIC/HEIF is imported as a flattened editable raster when this browser can decode it. Source metadata and the original container are not retained.',
+    };
+  }
+  if (mimeType.trim().toLowerCase().startsWith('image/') || RASTER_EXTENSIONS.has(extension)) {
+    return {
+      format: 'raster',
+      label: 'image',
+      capability: 'supported',
+      tryDecode: true,
+      disclosure:
+        'Imported as a flattened editable raster. Original metadata and the source container are not retained.',
+    };
+  }
+  return {
+    format: 'unknown',
+    label: 'file',
+    capability: 'unsupported',
+    tryDecode: false,
+    disclosure: 'Choose a browser-readable PNG, JPEG or WebP image.',
+  };
+}
+
+export function importFailureMessage(info: ImportFormatInfo): string {
+  if (info.format === 'heic') {
+    return 'HEIC/HEIF decoding is unavailable in this browser. Convert it to PNG or JPEG; the current draft is unchanged.';
+  }
+  return `${info.label} could not be decoded. Convert it to PNG or JPEG; the current draft is unchanged.`;
+}

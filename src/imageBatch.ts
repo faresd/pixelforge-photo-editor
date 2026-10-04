@@ -6,6 +6,7 @@ import {
   type ZipEntry,
 } from './export.ts';
 import { encodeImageWithWorker } from './workerEncode.ts';
+import { describeImportFormat } from './importFormats.ts';
 
 /** Keep anonymous multi-file work bounded on memory-constrained devices. */
 export const MAX_BATCH_INPUTS = 64;
@@ -102,6 +103,9 @@ export async function decodeBatchImage(source: BatchImageSource): Promise<HTMLCa
   if (!(source.file instanceof Blob)) throw new Error('The selected item is not a file.');
   if (source.file.size > MAX_BATCH_INPUT_BYTES)
     throw new Error('The selected file exceeds the 64 MB safety limit.');
+  const format = describeImportFormat(source.name, source.file.type);
+  if (!format.tryDecode && format.format !== 'unknown')
+    throw new Error(format.disclosure);
   const imageBitmapFactory = globalThis.createImageBitmap;
   if (typeof imageBitmapFactory === 'function') {
     const bitmap = await imageBitmapFactory(source.file);

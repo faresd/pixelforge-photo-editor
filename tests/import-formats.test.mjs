@@ -1,0 +1,54 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  describeImportFormat,
+  importFailureMessage,
+} from '../src/importFormats.ts';
+
+test('PSD and PSB are explicitly unsupported before decoding', () => {
+  for (const name of ['layer.psd', 'large.PSB']) {
+    const info = describeImportFormat(name, 'application/octet-stream');
+    assert.deepEqual(
+      { format: info.format, capability: info.capability, tryDecode: info.tryDecode },
+      { format: 'psd', capability: 'unsupported', tryDecode: false },
+    );
+    assert.match(info.disclosure, /flattened PNG or JPEG/);
+  }
+  assert.match(importFailureMessage(describeImportFormat('layer.psd')), /PSD\/PSB/);
+});
+
+test('camera RAW extensions are classified without confusing them with raster images', () => {
+  const info = describeImportFormat('IMG_0001.CR3', 'application/octet-stream');
+  assert.equal(info.format, 'raw');
+  assert.equal(info.capability, 'unsupported');
+  assert.equal(info.tryDecode, false);
+  assert.match(info.disclosure, /camera metadata/);
+});
+
+test('HEIC is conditional and discloses flattened raster import', () => {
+  const byName = describeImportFormat('photo.heic', 'application/octet-stream');
+  const byMime = describeImportFormat('photo.bin', 'image/heif; codecs= hvc1');
+  for (const info of [byName, byMime]) {
+    assert.equal(info.format, 'heic');
+    assert.equal(info.capability, 'conditional');
+    assert.equal(info.tryDecode, true);
+    assert.match(info.disclosure, /flattened editable raster/);
+  }
+  assert.match(importFailureMessage(byName), /Convert it to PNG or JPEG/);
+});
+
+test('ordinary browser raster sources are supported but explicitly flattened', () => {
+  const info = describeImportFormat('portrait.jpeg', 'image/jpeg; charset=binary');
+  assert.deepEqual(
+    { format: info.format, capability: info.capability, tryDecode: info.tryDecode },
+    { format: 'raster', capability: 'supported', tryDecode: true },
+  );
+  assert.match(info.disclosure, /flattened editable raster/);
+});
+
+test('unknown files are rejected with a useful conversion hint', () => {
+  const info = describeImportFormat('notes.txt', 'text/plain');
+  assert.equal(info.format, 'unknown');
+  assert.equal(info.tryDecode, false);
+  assert.match(info.disclosure, /PNG, JPEG or WebP/);
+});

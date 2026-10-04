@@ -25,6 +25,7 @@ import {
   validBrushPressureSettings,
   type BrushPressureSettings,
 } from './brush.ts';
+import { beginPerformanceSpan } from './performanceMarks.ts';
 export type Tool =
   | 'move'
   | 'hand'
@@ -484,24 +485,44 @@ export async function saveDraft(
   if (!validRevision(expectedRevision))
     throw new Error('Invalid draft revision');
   const safeValue = prepareDraftForStorage(value);
-  const db = await openDatabase();
+  const saveSpan = beginPerformanceSpan('save');
+  let db: IDBDatabase;
+  try {
+    db = await openDatabase();
+  } catch (error) {
+    saveSpan.finish();
+    throw error;
+  }
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction('drafts', 'readwrite');
-    const store = transaction.objectStore('drafts');
-    let conflict = false;
-    const revision = expectedRevision + 1;
-    const read = store.get(id);
-    read.onsuccess = () => {
-      if ((read.result?.localRevision || 0) !== expectedRevision) {
-        conflict = true;
-        transaction.abort();
-        return;
-      }
-      store.put({ ...safeValue, localRevision: revision }, id);
-    };
-    transaction.oncomplete = () => resolve(revision);
-    transaction.onabort = () =>
-      reject(conflict ? new Error(LOCAL_CONFLICT) : transaction.error);
-    transaction.onerror = () => reject(transaction.error);
+    try {
+      const transaction = db.transaction('drafts', 'readwrite');
+      const store = transaction.objectStore('drafts');
+      let conflict = false;
+      const revision = expectedRevision + 1;
+      const read = store.get(id);
+      read.onsuccess = () => {
+        if ((read.result?.localRevision || 0) !== expectedRevision) {
+          conflict = true;
+          transaction.abort();
+          return;
+        }
+        store.put({ ...safeValue, localRevision: revision }, id);
+      };
+      transaction.oncomplete = () => {
+        saveSpan.finish();
+        resolve(revision);
+      };
+      transaction.onabort = () => {
+        saveSpan.finish();
+        reject(conflict ? new Error(LOCAL_CONFLICT) : transaction.error);
+      };
+      transaction.onerror = () => {
+        saveSpan.finish();
+        reject(transaction.error);
+      };
+    } catch (error) {
+      saveSpan.finish();
+      reject(error);
+    }
   });
 }

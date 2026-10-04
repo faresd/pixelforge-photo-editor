@@ -7,6 +7,7 @@ import {
   validExportTargetBytes,
   type ExportFormat,
 } from './export';
+import { beginPerformanceSpan, type PerformanceSpan } from './performanceMarks';
 
 type Props = {
   frame: Frame;
@@ -54,6 +55,7 @@ export default function ExportDialog({
     targetBytes ? String(Math.round(targetBytes / 1024)) : '',
   );
   const [targetError, setTargetError] = useState('');
+  const exportSpan = useRef<PerformanceSpan | null>(null);
 
   useEffect(() => {
     dialog.current?.showModal();
@@ -75,6 +77,8 @@ export default function ExportDialog({
     if (!image) return;
     let cancelled = false;
     let url: string | undefined;
+    const span = beginPerformanceSpan('export');
+    exportSpan.current = span;
     const targetMode = Boolean(targetBytes && format !== 'png');
     const encoded = targetMode
       ? encodeImageForTarget(image, format, targetBytes!)
@@ -87,6 +91,7 @@ export default function ExportDialog({
     void encoded
       .then((result) => {
         if (cancelled) return;
+        span.finish();
         setError('');
         url = URL.createObjectURL(result.blob);
         setPreview({
@@ -99,6 +104,7 @@ export default function ExportDialog({
         });
       })
       .catch((reason: unknown) => {
+        span.finish();
         if (!cancelled)
           setError(
             reason instanceof Error
@@ -108,7 +114,9 @@ export default function ExportDialog({
       });
     return () => {
       cancelled = true;
+      span.cancel();
       if (url) URL.revokeObjectURL(url);
+      if (exportSpan.current === span) exportSpan.current = null;
     };
   }, [image, format, quality, targetBytes]);
 

@@ -8,6 +8,7 @@ import {
   type Frame,
 } from './document';
 import type { Draft } from './drafts';
+import { beginPerformanceSpan } from './performanceMarks';
 
 export function useDocument(onError: (message: string) => void) {
   const canvas = useRef<HTMLCanvasElement>(null),
@@ -21,6 +22,7 @@ export function useDocument(onError: (message: string) => void) {
   const paint = useCallback(
     async (value: Frame, overrides?: Record<string, HTMLCanvasElement>) => {
       const sequence = ++renderSequence.current;
+      const renderSpan = beginPerformanceSpan('render');
       setRendering(true);
       try {
         const image = await renderFrame(value, assets.current, overrides);
@@ -39,6 +41,7 @@ export function useDocument(onError: (message: string) => void) {
               : 'Could not render document',
           );
       } finally {
+        renderSpan.finish();
         if (sequence === renderSequence.current) setRendering(false);
       }
     },
