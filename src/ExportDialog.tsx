@@ -50,6 +50,12 @@ export default function ExportDialog({
 }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const snapshot = useRef({ frame, assets });
+  const selectableArtboards = frame.artboards?.filter((item) => item.visible) ?? [];
+  const initialArtboardId =
+    selectableArtboards.find((item) => item.id === frame.activeArtboardId)?.id ??
+    selectableArtboards[0]?.id;
+  const [selectedArtboardId, setSelectedArtboardId] =
+    useState<string | undefined>(initialArtboardId);
   const [image, setImage] = useState<HTMLCanvasElement | null>(null);
   const [viewport, setViewport] = useState<Artboard | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -61,12 +67,15 @@ export default function ExportDialog({
   const exportSpan = useRef<PerformanceSpan | null>(null);
 
   useEffect(() => {
-    dialog.current?.showModal();
+    if (!dialog.current?.open) dialog.current?.showModal();
     let cancelled = false;
+    setImage(null);
+    setViewport(null);
+    setPreview(null);
     void renderArtboard(
       snapshot.current.frame,
       snapshot.current.assets,
-      snapshot.current.frame.activeArtboardId,
+      selectedArtboardId,
     )
       .then((result) => {
         if (!cancelled) {
@@ -81,7 +90,7 @@ export default function ExportDialog({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [selectedArtboardId]);
 
   useEffect(() => {
     if (!image) return;
@@ -185,6 +194,22 @@ export default function ExportDialog({
             : `Download a flattened image at ${frame.w} × ${frame.h} px.`}{' '}
           Keep a project file to continue editing layers.
         </p>
+        {selectableArtboards.length > 0 && (
+          <label>
+            Artboard
+            <select
+              aria-label="Export artboard"
+              value={selectedArtboardId ?? ''}
+              onChange={(event) => setSelectedArtboardId(event.target.value)}
+            >
+              {selectableArtboards.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name} ({item.w} × {item.h} px)
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label>
           Format
           <select

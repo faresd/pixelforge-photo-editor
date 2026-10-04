@@ -99,6 +99,17 @@ test('active named artboard renders and exports at viewport dimensions', async (
       locked: false,
       background: '#00ff00',
     },
+    {
+      id: 'social',
+      name: 'Social',
+      x: 500,
+      y: 100,
+      w: 180,
+      h: 120,
+      visible: true,
+      locked: false,
+      background: '#0000ff',
+    },
   ];
   frame.activeArtboardId = 'hero';
   await uploadProject(page, project);
@@ -126,6 +137,11 @@ test('active named artboard renders and exports at viewport dimensions', async (
   expect(bytes.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');
   expect(bytes.readUInt32BE(16)).toBe(320);
   expect(bytes.readUInt32BE(20)).toBe(200);
+  await page.getByLabel('Export artboard').selectOption('social');
+  await expect(page.getByTestId('export-viewport')).toHaveText(
+    /active artboard “Social” at 180 × 120 px/,
+  );
+  await expect(page.getByRole('img', { name: 'PNG export preview' })).toBeVisible();
   await page.getByRole('button', { name: 'Close', exact: true }).click();
   const roundTrip = await downloadProject(page);
   expect(roundTrip.history[roundTrip.index].artboards?.[0]).toMatchObject({ id: 'hero', w: 320, h: 200 });
