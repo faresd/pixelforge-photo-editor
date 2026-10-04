@@ -1,14 +1,16 @@
 # Performance budgets and current limits
 
 PixelForge renders the editable document locally with Canvas 2D. A render is
-asynchronous from React's point of view, and stale renders are dropped, but
-paint, clone, healing and adjustment work still run on the main thread and can
-touch a full-canvas buffer. The first bounded worker slice now encodes
-multi-input batch exports through OffscreenCanvas when supported, using
-row-major tiles and a Canvas2D fallback; it does not yet move document
-rendering or adjustment strokes off the main thread. These measurements and
-limits describe the current safety envelope; they do not establish
-Photoshop-class or industrial-scale performance.
+asynchronous from React's point of view, and stale renders are dropped. The
+current increment adds a bounded module-worker path for immutable full-frame
+document renders through OffscreenCanvas, with cancellation, exact-dimension
+validation and a safe Canvas2D fallback. Interactive per-layer overrides (for
+example an in-progress brush buffer) still render on the main thread, and both
+paths can touch full-canvas buffers. Batch export also uses bounded
+OffscreenCanvas work when available. These measurements and limits describe
+the current safety envelope; they do not establish Photoshop-class or
+industrial-scale performance. See [`worker-render-contract.md`](./worker-render-contract.md)
+for the protocol and its remaining limits.
 
 ## Current hard limits
 
@@ -87,16 +89,36 @@ instrumentation failure never interrupts editing. They still cannot prove a
 250 ms frame budget. Do not raise the limits or publish these targets as
 support guarantees until physical device samples and memory traces exist.
 
+## Worker-render milestone
+
+The worker path is an isolation and responsiveness improvement for committed
+frames, not a larger-document guarantee. It sends only the current frame's
+referenced raster and mask assets, checks cancellation between layer passes,
+transfers an `ImageBitmap` (or a bounded PNG buffer), and terminates the worker
+after each request. The browser suite covers capability detection, cancellation,
+malformed or forged responses, exact output dimensions, pixel round trips and
+Canvas2D fallback. A browser that lacks a usable worker/OffscreenCanvas pair
+continues to use the main-thread renderer.
+
+The path remains provisional until repeated physical-device measurements show
+that worker scheduling improves responsiveness without unacceptable memory
+pressure. It does not yet provide tiled rendering, a persistent worker pool,
+tile eviction or worker-aware interactive brush/adjustment overrides. Fonts,
+CSS filters and colour management may also vary by browser, so representative
+pixel/alpha fixtures remain required for each effect family.
+
 ## Required scale work before larger documents
 
 The current full-canvas model should remain bounded while the roadmap adds
 professional tools. Before increasing the 16 MP limit or calling the editor
 industrial-scale, the implementation needs:
 
-1. A worker/`OffscreenCanvas` render path for document frames and adjustments,
-   with cancellation and a visible progress state. The main thread must stay
-   responsive while a large frame or adjustment renders; batch export already
-   uses this pattern when the browser supports it.
+1. Harden the worker/`OffscreenCanvas` render path for document frames and
+   adjustments. The first full-frame worker slice is now present with
+   cancellation and a safe fallback; the remaining gate is a visible progress
+   state, worker-aware interactive adjustments and measured responsiveness on
+   representative physical desktop and mobile devices. The main thread must
+   stay responsive while a large frame or adjustment renders.
 2. Extend the bounded tile plan (with explicit edge overlap for blur, healing
    and other neighborhood operations) from batch encoding into document
    rendering so one edit does not allocate several full-size surfaces. Tile

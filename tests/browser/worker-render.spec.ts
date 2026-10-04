@@ -1,0 +1,66 @@
+import { test, expect } from '@playwright/test';
+
+test.beforeEach(async ({ page }) => {
+  await page.route(
+    'https://marketplace.cheaply.fr/marketplace/api/photoeditor**',
+    (route) => route.fulfill({ json: { authenticated: false } }),
+  );
+});
+
+test('committed document renders through OffscreenCanvas worker and survives reload', async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as Window & { __PIXELFORGE_FORCE_WORKER__?: boolean }).__PIXELFORGE_FORCE_WORKER__ = true;
+    const NativeWorker = window.Worker;
+    (window as Window & { __pixelForgeRenderMessages?: number }).__pixelForgeRenderMessages = 0;
+    window.Worker = class extends NativeWorker {
+      constructor(...args: ConstructorParameters<typeof Worker>) {
+        super(...args);
+        const original = this.postMessage.bind(this);
+        this.postMessage = ((message: unknown, transfer?: Transferable[]) => {
+          if (message && typeof message === 'object' && (message as { kind?: unknown }).kind === 'render') {
+            const state = window as Window & { __pixelForgeRenderMessages?: number };
+            state.__pixelForgeRenderMessages = (state.__pixelForgeRenderMessages || 0) + 1;
+          }
+          return original(message, transfer as Transferable[]);
+        }) as typeof this.postMessage;
+      }
+    } as typeof Worker;
+  });
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  const supported = await page.evaluate(() =>
+    typeof Worker === 'function' && typeof OffscreenCanvas === 'function' && typeof createImageBitmap === 'function' &&
+    Boolean(new OffscreenCanvas(1, 1).getContext('2d')),
+  );
+  test.skip(!supported, 'OffscreenCanvas document rendering is unavailable in this browser');
+  await expect.poll(() => page.evaluate(() =>
+    (window as Window & { __pixelForgeRenderMessages?: number }).__pixelForgeRenderMessages || 0,
+  )).toBeGreaterThan(0);
+  const canvas = page.getByTestId('editor-canvas');
+  await expect(canvas).toHaveAttribute('data-rendering', 'false');
+  await expect(page.getByTestId('render-status')).toHaveText('Render ready');
+  const before = await page.evaluate(() => {
+    const canvas = document.querySelector<HTMLCanvasElement>('[data-testid="editor-canvas"]')!;
+    return Array.from(canvas.getContext('2d')!.getImageData(0, 0, 1, 1).data);
+  });
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(canvas).toHaveAttribute('data-rendering', 'false');
+  const after = await page.evaluate(() => {
+    const canvas = document.querySelector<HTMLCanvasElement>('[data-testid="editor-canvas"]')!;
+    return Array.from(canvas.getContext('2d')!.getImageData(0, 0, 1, 1).data);
+  });
+  expect(after).toEqual(before);
+});
+
+test('main-thread fallback remains usable when worker rendering is unavailable', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'Worker', { configurable: true, value: undefined });
+    Object.defineProperty(window, 'OffscreenCanvas', { configurable: true, value: undefined });
+  });
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
+  await expect(page.getByTestId('render-status')).toHaveText('Render ready');
+  await expect(page.getByLabel('Draft save status')).toHaveText('Saved on this device');
+});

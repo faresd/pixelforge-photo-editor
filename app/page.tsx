@@ -40,7 +40,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import {
   LOCAL_CONFLICT,
@@ -50,6 +50,7 @@ import {
   isNewerDraftRevision,
   readDraft,
   saveDraft,
+  stagePendingDraft,
   validateDraft,
   type Tool,
   type Draft,
@@ -2558,7 +2559,7 @@ export default function Home() {
     };
     // Settings are loaded once from the opening bookmark.
   }, [assets, commit, install, paint]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!ready || index.current < 0 || discarding.current) return;
     const sequence = ++saveSequence.current;
     saving.current = true;
@@ -2593,6 +2594,11 @@ export default function Home() {
         ...neutral,
       },
     };
+    stagePendingDraft(
+      draftId,
+      value,
+      (localVersions.current.get(draftId) || 0) + 1,
+    );
     saveQueue.current = saveQueue.current
       .then(async () => {
         if (discarding.current) return;
@@ -3729,7 +3735,7 @@ export default function Home() {
       setNotice('Pen: click to place points, click the first point to close');
       return;
     }
-    if (gesture.current || doc.rendering || !frame) return;
+    if (gesture.current || !frame) return;
     if (
       quickMasking ||
       [
@@ -5973,7 +5979,7 @@ export default function Home() {
       className="editor-shell"
       role="application"
       aria-label="PixelForge photo editor"
-      aria-busy={!ready}
+      aria-busy={!ready || doc.rendering}
       inert={!ready || cloudBusy || recovering}
       tabIndex={-1}
       onDragOver={(e) => {
@@ -7352,6 +7358,9 @@ export default function Home() {
           {notice}
         </span>
         <span>{tool[0].toUpperCase() + tool.slice(1)} tool</span>
+        <output aria-label="Render status" data-testid="render-status" aria-live="polite">
+          {doc.rendering ? 'Rendering…' : 'Render ready'}
+        </output>
         <output
           aria-label="Draft save status"
           title="This bookmark restores the document in this browser. Clearing browser data removes local documents; export a backup."

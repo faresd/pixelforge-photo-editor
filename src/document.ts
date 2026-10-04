@@ -1101,20 +1101,38 @@ export function decodeAsset(asset: Asset): Promise<HTMLImageElement> {
   }
   return pending;
 }
-async function decodeNewAsset(asset: Asset) {
+async function decodeNewAsset(asset: Asset): Promise<HTMLImageElement> {
   if (!validAsset(asset)) throw new Error('Invalid or oversized project image');
-  const image = new Image();
-  image.src = asset.url;
-  await image.decode();
-  if (image.naturalWidth !== asset.w || image.naturalHeight !== asset.h)
-    throw new Error('Project image dimensions do not match');
-  return image;
+  if (typeof Image === 'function') {
+    const image = new Image();
+    image.src = asset.url;
+    await image.decode();
+    if (image.naturalWidth !== asset.w || image.naturalHeight !== asset.h)
+      throw new Error('Project image dimensions do not match');
+    return image;
+  }
+  if (typeof createImageBitmap === 'function' && typeof Blob === 'function') {
+    const encoded = asset.url.slice(asset.url.indexOf(',') + 1),
+      binary = atob(encoded),
+      bytes = Uint8Array.from(binary, (value) => value.charCodeAt(0)),
+      image = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+    if (image.width !== asset.w || image.height !== asset.h)
+      throw new Error('Project image dimensions do not match');
+    return image as unknown as HTMLImageElement;
+  }
+  throw new Error('Image decoding is unavailable in this browser.');
 }
 export function surface(w: number, h: number) {
-  const canvas = document.createElement('canvas');
+  const canvas =
+    typeof document !== 'undefined'
+      ? document.createElement('canvas')
+      : typeof OffscreenCanvas === 'function'
+        ? new OffscreenCanvas(w, h)
+        : undefined;
+  if (!canvas) throw new Error('Canvas rendering is unavailable in this browser.');
   canvas.width = w;
   canvas.height = h;
-  return canvas;
+  return canvas as unknown as HTMLCanvasElement;
 }
 /** Paints a contiguous region, preserving antialias-free source pixels for undo. */
 export function floodFill(
@@ -1283,15 +1301,30 @@ export function colorSelectMask(
   return mask;
 }
 /** Render into an isolated surface. Callers publish only the newest completed render. */
+export type RenderOptions = {
+  /** Return true between layers to cancel a worker render without publishing it. */
+  isCancelled?: () => boolean;
+  /** Yield to the worker event loop every N layers so cancellation is observable. */
+  yieldEveryLayers?: number;
+};
+
 export async function renderFrame(
   frame: Frame,
   assets: Assets,
   overrides?: Record<string, HTMLCanvasElement>,
+  options?: RenderOptions,
 ): Promise<HTMLCanvasElement> {
   const out = surface(frame.w, frame.h),
     context = out.getContext('2d')!,
     groups = new Map((frame.groups || []).map((group) => [group.id, group]));
-  for (const layer of frame.layers) {
+  for (const [layerIndex, layer] of frame.layers.entries()) {
+    if (options?.isCancelled?.()) throw new DOMException('Document rendering cancelled', 'AbortError');
+    if (
+      options?.yieldEveryLayers &&
+      layerIndex > 0 &&
+      layerIndex % options.yieldEveryLayers === 0
+    )
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
     const group = layer.groupId ? groups.get(layer.groupId) : undefined;
     if (!layer.visible || (group && !group.visible)) continue;
     const groupOpacity = group?.opacity ?? 1;
@@ -1351,6 +1384,7 @@ export async function renderFrame(
         },
         assets,
         overrides,
+        options,
       );
       applyHue(coloured, layer.adjustments);
       applyColorBalance(coloured, layer.adjustments);

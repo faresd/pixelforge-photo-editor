@@ -435,6 +435,46 @@ export function initialDraftId() {
 
 export const LOCAL_CONFLICT =
   'This draft changed in another tab. Save a local copy to keep your edits.';
+const PENDING_DRAFT_PREFIX = 'pixelforge:pending-draft:';
+const MAX_PENDING_DRAFT_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Write a tab-scoped write-ahead snapshot before IndexedDB completes. This
+ * closes the small reload window without sharing an in-flight draft between
+ * tabs; oversized projects simply rely on IndexedDB as before.
+ */
+export function stagePendingDraft(id: string, value: Draft, revision: number): void {
+  if (!validId(id) || !validRevision(revision)) return;
+  try {
+    const safe = prepareDraftForStorage({ ...value, localRevision: revision });
+    const encoded = JSON.stringify(safe);
+    if (encoded.length > MAX_PENDING_DRAFT_BYTES) return;
+    sessionStorage.setItem(PENDING_DRAFT_PREFIX + id, encoded);
+  } catch {
+    /* Session storage can be unavailable or too small; IndexedDB remains authoritative. */
+  }
+}
+
+function readPendingDraft(id: string): Draft | undefined {
+  try {
+    const encoded = sessionStorage.getItem(PENDING_DRAFT_PREFIX + id);
+    if (!encoded) return undefined;
+    return validateDraft(JSON.parse(encoded));
+  } catch {
+    try { sessionStorage.removeItem(PENDING_DRAFT_PREFIX + id); } catch { /* Ignore blocked storage. */ }
+    return undefined;
+  }
+}
+
+function clearPendingDraft(id: string, revision: number): void {
+  try {
+    const pending = readPendingDraft(id);
+    if (!pending || (pending.localRevision || 0) <= revision)
+      sessionStorage.removeItem(PENDING_DRAFT_PREFIX + id);
+  } catch {
+    /* Ignore blocked storage. */
+  }
+}
 
 export async function discardDraft(id: string, expectedRevision: number) {
   if (!validId(id)) throw new Error('Invalid draft ID');
@@ -462,6 +502,7 @@ export async function discardDraft(id: string, expectedRevision: number) {
   try {
     if (localStorage.getItem('pixelforge:last-draft') === id)
       localStorage.removeItem('pixelforge:last-draft');
+    sessionStorage.removeItem(PENDING_DRAFT_PREFIX + id);
   } catch {
     /* Already unavailable. */
   }
@@ -469,6 +510,7 @@ export async function discardDraft(id: string, expectedRevision: number) {
 
 export async function readDraft(id: string): Promise<Draft | undefined> {
   if (!validId(id)) throw new Error('Invalid draft ID');
+  const pending = readPendingDraft(id);
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const request = db.transaction('drafts').objectStore('drafts').get(id);
@@ -476,11 +518,24 @@ export async function readDraft(id: string): Promise<Draft | undefined> {
     request.onsuccess = () => {
       const value = request.result as Draft | undefined;
       if (value === undefined) {
-        resolve(undefined);
+        resolve(pending);
         return;
       }
       try {
-        resolve(validateDraft(value));
+        const saved = validateDraft(value);
+        if (!pending || (pending.localRevision || 0) < (saved.localRevision || 0)) {
+          resolve(saved);
+          return;
+        }
+        // The session snapshot may have been staged just before a reload while
+        // its IndexedDB transaction was still in flight. Rebase the pending
+        // value onto the revision that actually exists so the first save after
+        // recovery can commit it instead of reporting a false conflict.
+        if ((pending.localRevision || 0) === (saved.localRevision || 0)) {
+          resolve(saved);
+          return;
+        }
+        resolve({ ...pending, localRevision: saved.localRevision || 0 });
       } catch (error) {
         reject(error);
       }
@@ -521,6 +576,7 @@ export async function saveDraft(
         store.put({ ...safeValue, localRevision: revision }, id);
       };
       transaction.oncomplete = () => {
+        clearPendingDraft(id, revision);
         saveSpan.finish();
         resolve(revision);
       };
