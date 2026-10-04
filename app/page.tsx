@@ -442,6 +442,10 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   },
   { id: 'magic-wand', label: 'Magic Wand', icon: Wand2, key: 'W' },
 ];
+const toolSelectionNotice = (tool: Tool, label: string) =>
+  tool === 'magnetic-lasso'
+    ? 'Magnetic Lasso: drag along an edge, release to close'
+    : `${label} tool selected`;
 const MARQUEE_TOOLS: Tool[] = [
   'select',
   'ellipse-select',
@@ -794,6 +798,8 @@ type Gesture = {
   /** Composite RGBA sample used by the bounded Magnetic Lasso snapper. */
   magneticData?: Uint8ClampedArray;
   magneticRadius?: number;
+  /** Pointer movement received while the async edge sample is prepared. */
+  magneticPendingPoints?: { x: number; y: number }[];
   pending?: Promise<void>;
   queued?: Array<{
     x: number;
@@ -5030,6 +5036,7 @@ export default function Home() {
         setNotice('Select a visible, unlocked raster layer before using Magnetic Lasso');
         return;
       }
+      setNotice('Magnetic Lasso: drag along an edge, release to close');
       const g: Gesture = {
         tool,
         start: p,
@@ -5048,6 +5055,24 @@ export default function Home() {
           const context = rendered.getContext('2d');
           if (!context) throw new Error('Magnetic Lasso could not sample the layer');
           g.magneticData = context.getImageData(0, 0, f.w, f.h).data;
+          const pending = g.magneticPendingPoints;
+          if (pending?.length && gesture.current === g) {
+            for (const point of pending) {
+              const snapped = snapMagneticPoint(
+                g.magneticData,
+                f.w,
+                f.h,
+                point,
+                g.magneticRadius ?? 12,
+              );
+              if (Math.hypot(snapped.x - g.last.x, snapped.y - g.last.y) >= 2) {
+                g.points?.push(snapped);
+                g.moved = true;
+                g.last = snapped;
+              }
+            }
+            g.magneticPendingPoints = undefined;
+          }
           setNotice('Magnetic Lasso: drag along an edge, release to close');
         } catch {
           if (gesture.current === g) {
@@ -5674,15 +5699,22 @@ export default function Home() {
       });
     } else if (g.tool === 'magnetic-lasso') {
       const points = g.points || (g.points = [g.start]);
-      const snapped = g.magneticData
-        ? snapMagneticPoint(
-            g.magneticData,
-            g.frame.w,
-            g.frame.h,
-            p,
-            g.magneticRadius ?? 12,
-          )
-        : p;
+      if (!g.magneticData) {
+        const pending = g.magneticPendingPoints || [];
+        // Keep enough of a fast drag to reconstruct a useful polygon after
+        // the asynchronous layer sample completes, while bounding memory for
+        // a stalled render on very high-frequency pointer devices.
+        g.magneticPendingPoints =
+          pending.length < 512 ? [...pending, p] : [...pending.slice(1), p];
+        return;
+      }
+      const snapped = snapMagneticPoint(
+        g.magneticData,
+        g.frame.w,
+        g.frame.h,
+        p,
+        g.magneticRadius ?? 12,
+      );
       if (Math.hypot(snapped.x - g.last.x, snapped.y - g.last.y) >= 2) {
         points.push(snapped);
         g.moved = true;
@@ -5807,10 +5839,23 @@ export default function Home() {
       // clicking its first vertex or by the double-click handler below.
       return;
     }
-    if (g.tool === 'magnetic-lasso' && e.type === 'pointercancel') {
-      gesture.current = null;
-      void paint(current());
-      setNotice('Magnetic Lasso cancelled');
+    if (g.tool === 'magnetic-lasso') {
+      await g.pending;
+      if (gesture.current !== g) return;
+      if (e.type === 'pointercancel') {
+        gesture.current = null;
+        void paint(current());
+        setNotice('Magnetic Lasso cancelled');
+      } else if (!g.moved) {
+        // A tap only arms the tool. Keep the gesture alive so Escape can
+        // cancel it, matching Photoshop's staged lasso interaction on touch.
+        void paint(g.frame);
+        setNotice('Magnetic Lasso: drag along an edge, release to close');
+      } else {
+        gesture.current = null;
+        finishPolygonalLasso(g);
+        setNotice('Magnetic selection created');
+      }
       return;
     }
     if (g.tool === 'pen') {
@@ -6037,9 +6082,6 @@ export default function Home() {
           inverted: false,
         });
       } else void paint(f);
-    } else if (g.tool === 'magnetic-lasso' && g.moved) {
-      finishPolygonalLasso(g);
-      setNotice('Magnetic selection created');
     } else if (g.tool === 'crop' && g.moved) {
       try {
         const plan = planRectangularCrop(f.w, f.h, g.start, p);
@@ -6678,7 +6720,10 @@ export default function Home() {
           ];
         setTool(next);
         setNotice(
-          `${TOOLS.find((item) => item.id === next)?.label || next} tool selected`,
+          toolSelectionNotice(
+            next,
+            TOOLS.find((item) => item.id === next)?.label || next,
+          ),
         );
         return;
       }
@@ -6687,7 +6732,10 @@ export default function Home() {
         e.preventDefault();
         setTool(alias);
         setNotice(
-          `${TOOLS.find((item) => item.id === alias)?.label || alias} tool selected`,
+          toolSelectionNotice(
+            alias,
+            TOOLS.find((item) => item.id === alias)?.label || alias,
+          ),
         );
         return;
       }
@@ -7377,7 +7425,7 @@ export default function Home() {
                 if (slicePreview) cancelSlicePreview();
                 setTool(id);
                 setCloneSource(null);
-                setNotice(`${label} tool selected`);
+                setNotice(toolSelectionNotice(id, label));
               }}
               aria-label={`${label} tool`}
               aria-pressed={tool === id}

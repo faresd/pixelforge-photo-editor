@@ -139,11 +139,15 @@ test.beforeEach(async ({ page }) => {
 
 test('large local bundle survives reload and exposes a versioned manifest', async ({ page }) => {
   const id = draftId(page);
+  const preservedName = await page.getByLabel('Document name').inputValue();
   await replaceWithLargeBundle(page, id);
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await saved(page);
-  await expect(page.getByLabel('Document name')).toHaveValue('untitled');
+  // The bundle envelope carries the draft metadata forward. Keep this tied to
+  // the current fixture name so a product rename does not turn the recovery
+  // test into a false failure.
+  await expect(page.getByLabel('Document name')).toHaveValue(preservedName);
 });
 
 test('checksum corruption fails closed without adopting damaged draft bytes', async ({ page }) => {

@@ -200,7 +200,7 @@ test('layer folders persist visibility, opacity, locking and collapsed workspace
   expect(reloadedFrame.layers[0].groupId).toBeUndefined();
 });
 
-test('legacy projects migrate with history and the original bookmark is preserved', async ({
+test('legacy projects migrate with history while the original pointer stays recoverable', async ({
   page,
 }) => {
   const oldId = '739d75a0-66c0-4c52-a11c-2b6548dff828';
@@ -234,24 +234,44 @@ test('legacy projects migrate with history and the original bookmark is preserve
   await page.goto('/editor#draft=' + oldId);
   await expect(page.getByLabel('Document name')).toHaveValue('Legacy safe');
   await saved(page);
+  const newId = new URL(page.url()).hash.match(/^#draft=([a-f0-9-]{36})$/)?.[1];
+  expect(newId).toBeTruthy();
+  expect(newId).not.toBe(oldId);
   expect(page.url()).not.toContain(oldId);
-  const migratedPointer = await page.evaluate(
-    async (oldId) =>
-      await new Promise<{ kind?: string; version?: number } | undefined>((resolve) => {
+  const pointers = await page.evaluate(
+    async ({ oldId, newId }) =>
+      await new Promise<{
+        oldPointer?: { kind?: string; version?: number; name?: string };
+        newPointer?: { kind?: string; version?: number; name?: string };
+      }>((resolve) => {
         const request = indexedDB.open('pixelforge-documents', 2);
         request.onsuccess = () => {
-          const db = request.result,
-            read = db.transaction('drafts').objectStore('drafts').get(oldId);
-          read.onsuccess = () => {
-            resolve(read.result);
+          const db = request.result;
+          const transaction = db.transaction('drafts');
+          const store = transaction.objectStore('drafts');
+          const oldRead = store.get(oldId);
+          const newRead = store.get(newId);
+          let oldPointer: { kind?: string; version?: number; name?: string } | undefined;
+          let newPointer: { kind?: string; version?: number; name?: string } | undefined;
+          oldRead.onsuccess = () => { oldPointer = oldRead.result; };
+          newRead.onsuccess = () => { newPointer = newRead.result; };
+          transaction.oncomplete = () => {
+            resolve({ oldPointer, newPointer });
             db.close();
           };
         };
       }),
-    oldId,
+    { oldId, newId: newId! },
   );
-  expect(migratedPointer?.kind).toBe('pixelforge-draft-bundle');
-  expect(migratedPointer?.version).toBe(1);
+  // Loading a v1 record migrates it in memory, then creates a fresh bookmark
+  // and persists the converted v2 document there. The old pointer remains a
+  // valid v1 recovery source for users who still have that URL bookmarked.
+  expect(pointers.oldPointer?.kind).toBeUndefined();
+  expect(pointers.oldPointer?.version).toBe(1);
+  expect(pointers.oldPointer?.name).toBe('Legacy safe');
+  expect(pointers.newPointer?.kind).toBe('pixelforge-draft-bundle');
+  expect(pointers.newPointer?.version).toBe(1);
+  expect(pointers.newPointer?.name).toBe('Legacy safe');
   const out = await project(page);
   expect(out.value.version).toBe(2);
   expect(out.value.history[0].layers[0].kind).toBe('raster');
