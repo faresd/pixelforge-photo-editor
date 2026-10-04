@@ -220,6 +220,10 @@ import {
   type PatchStroke,
 } from '../src/patchTool';
 import {
+  CONTENT_AWARE_MAX_OPERATIONS,
+  type ContentAwareFill,
+} from '../src/contentAwareCleanup';
+import {
   FILTER_EFFECT_TYPES,
   effectiveFilterEffects,
   neutralFilterEffects,
@@ -260,6 +264,7 @@ type Command =
   | 'noop'
   | 'actions'
   | 'patch-tool'
+  | 'content-aware-fill'
   | 'resize'
   | 'canvas-size'
   | 'trim'
@@ -528,7 +533,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Action recipes…', command: 'actions' },
     { label: 'Patch Tool', shortcut: 'J', command: 'patch-tool' },
     { label: 'Stroke…', command: 'noop', disabled: true },
-    { label: 'Content-Aware Fill…', command: 'noop', disabled: true },
+    { label: 'Content-Aware Fill…', command: 'content-aware-fill' },
     { label: 'Prompt to Edit…', command: 'noop', disabled: true },
     { label: 'Generative Fill…', command: 'noop', disabled: true },
     { label: 'Generate Image…', command: 'noop', disabled: true },
@@ -2705,6 +2710,78 @@ export default function Home() {
           ? error.message
           : 'Background removal could not be applied',
       );
+    }
+  };
+  const applyContentAwareFill = async () => {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!f.selection) {
+      setNotice('Create a selection before using Content-Aware Fill');
+      return;
+    }
+    if (!layer || layer.kind !== 'raster' || !layer.visible) {
+      setNotice('Select a visible raster layer before using Content-Aware Fill');
+      return;
+    }
+    if (layerIsLocked(f, layer)) {
+      setNotice('Unlock this layer before using Content-Aware Fill');
+      return;
+    }
+    if ((layer.contentAwareFills?.length ?? 0) >= CONTENT_AWARE_MAX_OPERATIONS) {
+      setNotice(
+        `This layer has ${CONTENT_AWARE_MAX_OPERATIONS} Content-Aware Fill operations; export a copy before adding more`,
+      );
+      return;
+    }
+    try {
+      const image = await decodeAsset(assets.current[layer.asset]),
+        width = image.naturalWidth,
+        height = image.naturalHeight,
+        mask = await selectionMaskForLayer(
+          f.selection,
+          f,
+          layer,
+          assets.current,
+          width,
+          height,
+        );
+      if (!mask || !mask.some((alpha) => alpha > 0)) {
+        setNotice('The selection does not intersect the active raster layer');
+        return;
+      }
+      if (current() !== f || current().active !== layer.id) {
+        setNotice('The document changed while Content-Aware Fill was prepared');
+        return;
+      }
+      const maskCanvas = surface(width, height),
+        context = maskCanvas.getContext('2d');
+      if (!context) throw new Error('Content-Aware Fill mask is unavailable');
+      const imageData = context.createImageData(width, height);
+      for (let index = 0; index < mask.length; index += 1) {
+        const offset = index * 4;
+        imageData.data[offset] = 255;
+        imageData.data[offset + 1] = 255;
+        imageData.data[offset + 2] = 255;
+        imageData.data[offset + 3] = mask[index];
+      }
+      context.putImageData(imageData, 0, 0);
+      const maskId = addAsset(assets.current, maskCanvas),
+        fill: ContentAwareFill = {
+          version: 1,
+          mask: maskId,
+          radius: Math.max(1, Math.min(128, Math.round(Math.max(4, size / 2)))),
+          opacity: brushOpacity / 100,
+        };
+      if (
+        editLayer({
+          contentAwareFills: [...(layer.contentAwareFills ?? []), fill],
+        })
+      )
+        setNotice(
+          'Content-Aware Fill applied locally; source and alpha remain unchanged',
+        );
+    } catch {
+      setNotice('Content-Aware Fill could not be applied');
     }
   };
   const adjust = (patch: Partial<Adjustments>) => {
@@ -6837,6 +6914,8 @@ export default function Home() {
       setTool('patch');
       setCloneSource(null);
       setNotice('Patch tool selected; click a source, then drag a destination');
+    } else if (command === 'content-aware-fill') {
+      await applyContentAwareFill();
     } else if (command === 'text-tool') {
       setTool('text');
       setNotice('Text tool selected');
@@ -7040,6 +7119,15 @@ export default function Home() {
         return !layer || layer.kind !== 'raster' || locked || !layer.visible;
       case 'patch-tool':
         return !layer || layer.kind !== 'raster' || locked || !layer.visible;
+      case 'content-aware-fill':
+        return (
+          !layer ||
+          layer.kind !== 'raster' ||
+          locked ||
+          !layer.visible ||
+          !frame.selection ||
+          (layer.contentAwareFills?.length ?? 0) >= CONTENT_AWARE_MAX_OPERATIONS
+        );
       case 'invert-layer-mask':
       case 'toggle-layer-mask':
       case 'remove-layer-mask':

@@ -84,6 +84,11 @@ import {
   applyPatchStrokes,
   type PatchStroke,
 } from './patchTool.ts';
+import {
+  validContentAwareFills,
+  applyContentAwareFills,
+  type ContentAwareFill,
+} from './contentAwareCleanup.ts';
 
 /** Version 2 stores immutable raster assets once; history contains editable layer metadata. */
 export const BLENDS = [
@@ -178,6 +183,8 @@ type Common = {
   spotHealing?: SpotHealingStroke[];
   /** Optional nondestructive local source-offset patch strokes. */
   patchStrokes?: PatchStroke[];
+  /** Optional constrained local cleanup operations over layer-local masks. */
+  contentAwareFills?: ContentAwareFill[];
 };
 export type Layer = Common &
   (
@@ -957,7 +964,8 @@ export function validateFrame(
         layer.maskEnabled !== undefined ||
         layer.maskInverted !== undefined ||
         layer.spotHealing !== undefined ||
-        layer.patchStrokes !== undefined)
+        layer.patchStrokes !== undefined ||
+        layer.contentAwareFills !== undefined)
     )
       return fail();
     if (layer.kind === 'raster') {
@@ -991,6 +999,21 @@ export function validateFrame(
         !validPatchStrokes(layer.patchStrokes, assets[layer.asset].w, assets[layer.asset].h)
       )
         return fail();
+      const contentAwareFills = layer.contentAwareFills as
+        | ContentAwareFill[]
+        | undefined;
+      if (contentAwareFills !== undefined) {
+        if (!validContentAwareFills(contentAwareFills)) return fail();
+        for (const fill of contentAwareFills) {
+          const maskId = String(fill.mask);
+          if (
+            !Object.hasOwn(assets, maskId) ||
+            assets[maskId].w !== assets[layer.asset].w ||
+            assets[maskId].h !== assets[layer.asset].h
+          )
+            return fail();
+        }
+      }
       pixels += assets[layer.asset].w * assets[layer.asset].h;
     } else if (layer.kind === 'text') {
       if (
@@ -1142,6 +1165,8 @@ export function referencedAssets(history: Frame[], assets: Assets): Assets {
       if (layer.kind === 'raster') {
         used[layer.asset] = assets[layer.asset];
         if (layer.mask) used[layer.mask] = assets[layer.mask];
+        for (const fill of layer.contentAwareFills || [])
+          if (assets[fill.mask]) used[fill.mask] = assets[fill.mask];
       }
   }
   return used;
@@ -1472,6 +1497,42 @@ export async function renderFrame(
       );
       patchedContext.putImageData(imageData, 0, 0);
       rasterSource = patched;
+    }
+    if (layer.kind === 'raster' && rasterSource && layer.contentAwareFills?.length) {
+      // Content-aware cleanup is intentionally constrained to persisted local
+      // masks. Every mask is decoded beside the immutable layer asset and the
+      // deterministic median sampler never performs semantic or network work.
+      const asset = assets[layer.asset],
+        cleaned = surface(override?.width ?? asset.w, override?.height ?? asset.h),
+        cleanedContext = cleaned.getContext('2d')!;
+      cleanedContext.drawImage(rasterSource, 0, 0);
+      const imageData = cleanedContext.getImageData(0, 0, cleaned.width, cleaned.height),
+        masks: Record<string, Uint8ClampedArray> = {};
+      for (const fill of layer.contentAwareFills) {
+        const maskAsset = assets[fill.mask];
+        if (!maskAsset) continue;
+        const maskImage = await decodeAsset(maskAsset),
+          maskCanvas = surface(maskImage.naturalWidth, maskImage.naturalHeight),
+          maskContext = maskCanvas.getContext('2d')!;
+        maskContext.drawImage(maskImage, 0, 0);
+        masks[fill.mask] = maskContext.getImageData(
+          0,
+          0,
+          maskCanvas.width,
+          maskCanvas.height,
+        ).data.filter((_value, index) => index % 4 === 3);
+      }
+      imageData.data.set(
+        applyContentAwareFills(
+          imageData.data,
+          cleaned.width,
+          cleaned.height,
+          layer.contentAwareFills,
+          masks,
+        ),
+      );
+      cleanedContext.putImageData(imageData, 0, 0);
+      rasterSource = cleaned;
     }
     const filterEffect = effectiveFilterEffects(
       layer.adjustments.filterEffects,
