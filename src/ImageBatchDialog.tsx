@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   buildImageBatchExport,
+  buildImageBatchActionExport,
   type BatchImageExportResult,
   type BatchImageProgress,
   type BatchImageSource,
 } from './imageBatch.ts';
+import { actionParameterNames, type ActionParameterValues, type ActionSet } from './actions.ts';
 import { safeBatchStem, type ExportFormat } from './export.ts';
 
 type Props = {
@@ -12,6 +14,7 @@ type Props = {
   name?: string;
   close: () => void;
   downloaded: (message: string) => void;
+  action?: ActionSet;
 };
 
 /** Local multi-input image export. Source files are intentionally owned by the caller. */
@@ -20,6 +23,7 @@ export default function ImageBatchDialog({
   name,
   close,
   downloaded,
+  action,
 }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const controller = useRef<AbortController | null>(null);
@@ -29,6 +33,8 @@ export default function ImageBatchDialog({
   const [progress, setProgress] = useState<BatchImageProgress | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const parameterNames = action ? actionParameterNames(action) : [];
+  const [parameters, setParameters] = useState<ActionParameterValues>({});
 
   useEffect(() => {
     dialog.current?.showModal();
@@ -48,13 +54,23 @@ export default function ImageBatchDialog({
     const nextController = new AbortController();
     controller.current = nextController;
     try {
-      const next = await buildImageBatchExport({
-        sources,
-        format,
-        quality,
-        signal: nextController.signal,
-        onProgress: setProgress,
-      });
+      const next = action
+        ? await buildImageBatchActionExport({
+            sources,
+            format,
+            quality,
+            action,
+            parameters,
+            signal: nextController.signal,
+            onProgress: setProgress,
+          })
+        : await buildImageBatchExport({
+            sources,
+            format,
+            quality,
+            signal: nextController.signal,
+            onProgress: setProgress,
+          });
       if (!nextController.signal.aborted) setResult(next);
     } catch (reason) {
       if (!nextController.signal.aborted) {
@@ -99,12 +115,33 @@ export default function ImageBatchDialog({
           else void build();
         }}
       >
-        <h2 id="image-batch-heading">Batch export images</h2>
+        <h2 id="image-batch-heading">
+          {action ? `Batch apply “${action.name}”` : 'Batch export images'}
+        </h2>
         <p>
-          Process {sources.length} local image{sources.length === 1 ? '' : 's'}
-          into one ZIP. Each file is rendered locally; the original files and
-          metadata stay on this device.
+          {action
+            ? `Apply this local Action to ${sources.length} image${sources.length === 1 ? '' : 's'} and download one ZIP.`
+            : `Process ${sources.length} local image${sources.length === 1 ? '' : 's'} into one ZIP.`}{' '}
+          Each file is rendered locally; the original files and metadata stay on this device.
         </p>
+        {action && parameterNames.length > 0 && (
+          <fieldset aria-label="Batch Action parameters">
+            <legend>Action parameters</legend>
+            {parameterNames.map((parameter) => (
+              <label key={parameter}>
+                {parameter}
+                <input
+                  aria-label={`Action parameter ${parameter}`}
+                  value={String(parameters[parameter] ?? '')}
+                  disabled={busy}
+                  onChange={(event) =>
+                    setParameters((current) => ({ ...current, [parameter]: event.target.value }))
+                  }
+                />
+              </label>
+            ))}
+          </fieldset>
+        )}
         <label>
           Format
           <select
@@ -149,7 +186,9 @@ export default function ImageBatchDialog({
             ? `Rendering images… ${completed}/${total}`
             : result
               ? `${result.manifest.exportedCount}/${result.manifest.sourceCount} images · ${result.blob.size.toLocaleString()} bytes`
-              : 'Ready to render'}
+              : action
+                ? `Ready to apply ${action.steps.length} step${action.steps.length === 1 ? '' : 's'}`
+                : 'Ready to render'}
         </output>
         {result && result.manifest.failures.length > 0 && (
           <section aria-label="Batch image export failures">
@@ -177,7 +216,7 @@ export default function ImageBatchDialog({
             {busy ? 'Cancel batch export' : 'Close'}
           </button>
           <button type="submit" disabled={busy || !sources.length}>
-            {result ? 'Download batch ZIP' : 'Build batch ZIP'}
+            {result ? 'Download batch ZIP' : action ? 'Apply Action and build ZIP' : 'Build batch ZIP'}
           </button>
         </div>
       </form>

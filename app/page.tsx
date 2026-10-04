@@ -1332,6 +1332,7 @@ export default function Home() {
       name: string;
     } | null>(null),
     [batchImages, setBatchImages] = useState<BatchImageSource[] | null>(null),
+    [batchActionId, setBatchActionId] = useState<string>(),
     [drag, setDrag] = useState(false),
     [resizing, setResizing] = useState<{
       width: number;
@@ -1343,7 +1344,8 @@ export default function Home() {
     height: number;
   } | null>(null);
   const recordingActionRef = useRef<string | undefined>(undefined),
-    replayingActionRef = useRef(false);
+    replayingActionRef = useRef(false),
+    batchActionRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     try {
       window.localStorage.setItem(
@@ -1383,6 +1385,16 @@ export default function Home() {
     setActions((currentActions) => currentActions.filter((action) => action.id !== id));
     if (recordingActionRef.current === id) stopActionRecording();
     setNotice('Action recipe deleted from this device');
+  };
+  const beginBatchAction = (id: string) => {
+    const action = actions.find((candidate) => candidate.id === id);
+    if (!action || !action.steps.length) {
+      setNotice('Record at least one command before running a batch Action');
+      return;
+    }
+    batchActionRef.current = id;
+    setNotice(`Choose images for Action “${action.name}”`);
+    batchImageFile.current?.click();
   };
   const recordActionCommand = (command: Command) => {
     const id = recordingActionRef.current;
@@ -6875,7 +6887,11 @@ export default function Home() {
         assets: { ...assets.current },
         name,
       });
-    else if (command === 'batch-images') batchImageFile.current?.click();
+    else if (command === 'batch-images') {
+      batchActionRef.current = undefined;
+      setBatchActionId(undefined);
+      batchImageFile.current?.click();
+    }
     else if (command === 'project-open') projectFile.current?.click();
     else if (command === 'new-white') newDocument(false);
     else if (command === 'new-transparent') newDocument(true);
@@ -7259,8 +7275,12 @@ export default function Home() {
         multiple
         onChange={(event) => {
           const files = Array.from(event.target.files || []);
-          if (files.length)
+          const actionId = batchActionRef.current;
+          batchActionRef.current = undefined;
+          if (files.length) {
             setBatchImages(files.map((file) => ({ name: file.name, file })));
+            setBatchActionId(actionId);
+          }
           event.currentTarget.value = '';
         }}
       />
@@ -7337,7 +7357,11 @@ export default function Home() {
       {batchImages && (
         <ImageBatchDialog
           sources={batchImages}
-          close={() => setBatchImages(null)}
+          action={actions.find((candidate) => candidate.id === batchActionId)}
+          close={() => {
+            setBatchImages(null);
+            setBatchActionId(undefined);
+          }}
           downloaded={setNotice}
         />
       )}
@@ -7350,6 +7374,7 @@ export default function Home() {
           start={beginActionRecording}
           stop={stopActionRecording}
           run={(id) => void runActionRecipe(id)}
+          batch={beginBatchAction}
           remove={removeActionRecipe}
         />
       )}

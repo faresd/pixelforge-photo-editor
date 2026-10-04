@@ -18,6 +18,11 @@ export const MAX_ACTION_COMMAND = 80;
 export const MAX_ACTION_FILE_BYTES = 256 * 1024;
 
 export type ActionParameter = string | number | boolean | null;
+/** Values supplied when a reusable action is applied to another document. */
+export type ActionParameterValues = Record<string, ActionParameter>;
+
+export const MAX_ACTION_PARAMETER_VALUES = 16;
+export const ACTION_PARAMETER_TOKEN = /\{\{([A-Za-z][A-Za-z0-9_-]{0,47})\}\}/g;
 
 export type ActionStep = {
   id: string;
@@ -45,6 +50,77 @@ export type ActionReplayResult = {
   completed: number;
   failure?: ActionReplayFailure;
 };
+
+/** Return the named parameter tokens used by a recipe, in stable first-use order. */
+export function actionParameterNames(action: ActionSet): string[] {
+  if (!validActionSet(action)) throw new TypeError('Invalid action set');
+  const names: string[] = [];
+  const seen = new Set<string>();
+  for (const step of action.steps) {
+    for (const value of Object.values(step.parameters || {})) {
+      if (typeof value !== 'string') continue;
+      ACTION_PARAMETER_TOKEN.lastIndex = 0;
+      let match: RegExpExecArray | null;
+      while ((match = ACTION_PARAMETER_TOKEN.exec(value))) {
+        if (!seen.has(match[1])) {
+          seen.add(match[1]);
+          names.push(match[1]);
+        }
+      }
+    }
+  }
+  return names;
+}
+
+/**
+ * Resolve {{parameter}} tokens without mutating the saved recipe. Full-token
+ * substitutions retain their primitive type; embedded tokens become text.
+ * This makes one recorded action reusable for a bounded batch while keeping
+ * the persisted recipe free of per-file values and source pixels.
+ */
+export function bindActionParameters(
+  action: ActionSet,
+  values: ActionParameterValues = {},
+): ActionSet {
+  if (!validActionSet(action)) throw new TypeError('Invalid action set');
+  const names = actionParameterNames(action);
+  const valueKeys = Object.keys(values);
+  if (valueKeys.length > MAX_ACTION_PARAMETER_VALUES)
+    throw new RangeError(`An action accepts at most ${MAX_ACTION_PARAMETER_VALUES} parameters`);
+  for (const key of valueKeys) {
+    if (!/^[A-Za-z][A-Za-z0-9_-]{0,47}$/.test(key))
+      throw new TypeError(`Invalid action parameter name: ${key}`);
+    if (!validParameter(values[key])) throw new TypeError(`Invalid action parameter: ${key}`);
+  }
+  for (const name of names) {
+    if (!Object.prototype.hasOwnProperty.call(values, name))
+      throw new Error(`Missing action parameter: ${name}`);
+  }
+  const replacement = (value: ActionParameter): ActionParameter => {
+    if (typeof value !== 'string') return value;
+    const full = /^\{\{([A-Za-z][A-Za-z0-9_-]{0,47})\}\}$/.exec(value);
+    if (full) return values[full[1]];
+    ACTION_PARAMETER_TOKEN.lastIndex = 0;
+    const expanded = value.replace(ACTION_PARAMETER_TOKEN, (_, key: string) =>
+      String(values[key]),
+    );
+    if (expanded.length > 1024) throw new RangeError('Expanded action parameter is too long');
+    return expanded;
+  };
+  return {
+    ...action,
+    steps: action.steps.map((step) => ({
+      ...step,
+      ...(step.parameters
+        ? {
+            parameters: Object.fromEntries(
+              Object.entries(step.parameters).map(([key, value]) => [key, replacement(value)]),
+            ),
+          }
+        : {}),
+    })),
+  };
+}
 
 export const REPLAYABLE_ACTION_COMMANDS = new Set([
   'reset',
