@@ -40,6 +40,8 @@ export type Tool =
   | 'clone'
   | 'heal'
   | 'crop'
+  | 'perspective-crop'
+  | 'slice'
   | 'brush'
   | 'pencil'
   | 'color-replace'
@@ -175,6 +177,8 @@ function validSettings(settings: unknown): settings is Settings {
       'clone',
       'heal',
       'crop',
+      'perspective-crop',
+      'slice',
       'brush',
       'pencil',
       'color-replace',
