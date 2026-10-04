@@ -7629,35 +7629,39 @@ export default function Home() {
               set={setBlur}
               suffix="px"
             />
-            <div className="adjustment-subtitle">Photo finishing</div>
-            <Slider
-              label="Exposure"
-              value={photoAdjustments.exposure}
-              min={-5}
-              max={5}
-              step={0.1}
-              set={(value) => setPhotoAdjustments({ exposure: value })}
-              suffix=" EV"
-            />
-            <Slider
-              label="Vibrance"
-              value={photoAdjustments.vibrance}
-              min={-100}
-              max={100}
-              set={(value) => setPhotoAdjustments({ vibrance: value })}
-              suffix=""
-            />
-            <label className="check-row">
-              <input
-                aria-label="Black and White"
-                type="checkbox"
-                checked={photoAdjustments.blackAndWhite}
-                onChange={(event) =>
-                  setPhotoAdjustments({ blackAndWhite: event.target.checked })
-                }
-              />
-              Black and White
-            </label>
+            {tool !== 'dodge' && tool !== 'burn' && tool !== 'sponge' && (
+              <>
+                <div className="adjustment-subtitle">Photo finishing</div>
+                <Slider
+                  label="Exposure"
+                  value={photoAdjustments.exposure}
+                  min={-5}
+                  max={5}
+                  step={0.1}
+                  set={(value) => setPhotoAdjustments({ exposure: value })}
+                  suffix=" EV"
+                />
+                <Slider
+                  label="Vibrance"
+                  value={photoAdjustments.vibrance}
+                  min={-100}
+                  max={100}
+                  set={(value) => setPhotoAdjustments({ vibrance: value })}
+                  suffix=""
+                />
+                <label className="check-row">
+                  <input
+                    aria-label="Black and White"
+                    type="checkbox"
+                    checked={photoAdjustments.blackAndWhite}
+                    onChange={(event) =>
+                      setPhotoAdjustments({ blackAndWhite: event.target.checked })
+                    }
+                  />
+                  Black and White
+                </label>
+              </>
+            )}
             <div className="adjustment-subtitle">Levels (nondestructive)</div>
             <Slider
               label="Levels black point"
