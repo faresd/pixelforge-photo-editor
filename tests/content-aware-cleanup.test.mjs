@@ -8,6 +8,8 @@ import {
   validContentAwareFill,
   validContentAwareFills,
 } from '../src/contentAwareCleanup.ts';
+import { neutral } from '../src/document.ts';
+import { prepareDraftForStorage, validateDraft } from '../src/drafts.ts';
 
 const rgba = (width, height, fill = [80, 120, 160, 255]) => {
   const output = new Uint8ClampedArray(width * height * 4);
@@ -86,4 +88,45 @@ test('metadata validation bounds identifiers, radius, opacity and count', () => 
   assert.equal(validContentAwareFill(fill({ radius: CONTENT_AWARE_MAX_RADIUS + 1 })), false);
   assert.equal(validContentAwareFill(fill({ opacity: 2 })), false);
   assert.equal(validContentAwareFills(Array.from({ length: CONTENT_AWARE_MAX_OPERATIONS + 1 }, () => fill())), false);
+});
+
+test('content-aware mask references survive draft validation and malformed assets fail closed', () => {
+  const assetId = '11111111-1111-4111-8111-111111111111';
+  const maskId = '22222222-2222-4222-8222-222222222222';
+  const layerId = '33333333-3333-4333-8333-333333333333';
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a4j8AAAAASUVORK5CYII=';
+  const document = {
+    version: 2,
+    name: 'Content-aware fixture',
+    index: 0,
+    settings: { tool: 'select', zoom: 72, color: '#000000', size: 18, text: '', fontSize: 56, ...neutral },
+    assets: {
+      [assetId]: { url: `data:image/png;base64,${png}`, w: 1, h: 1 },
+      [maskId]: { url: `data:image/png;base64,${png}`, w: 1, h: 1 },
+    },
+    history: [{
+      w: 1,
+      h: 1,
+      active: layerId,
+      layers: [{
+        id: layerId,
+        name: 'Cleanup layer',
+        visible: true,
+        locked: false,
+        opacity: 1,
+        blend: 'source-over',
+        matrix: [1, 0, 0, 1, 0, 0],
+        adjustments: { ...neutral },
+        kind: 'raster',
+        asset: assetId,
+        contentAwareFills: [fill({ mask: maskId })],
+      }],
+    }],
+  };
+  const reopened = validateDraft(JSON.parse(JSON.stringify(prepareDraftForStorage(document))));
+  assert.deepEqual(reopened.history[0].layers[0].contentAwareFills, [fill({ mask: maskId })]);
+  assert.throws(() => validateDraft({
+    ...document,
+    assets: { [assetId]: document.assets[assetId] },
+  }), /Invalid layer document/);
 });
