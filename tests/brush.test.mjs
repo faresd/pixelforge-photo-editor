@@ -101,6 +101,31 @@ test('clone uses an immutable source and returns a reusable mask', () => {
   assert.equal(result.mask[(3 - result.bounds.top) * result.width + (3 - result.bounds.left)], 255);
 });
 
+test('clone keeps one source offset across adjacent stamps in a stroke', () => {
+  const destination = pixels(8, 3, [0, 0, 0, 0]);
+  const source = pixels(8, 3, [0, 0, 0, 255]);
+  source.set([200, 10, 30, 255], (1 * 8 + 1) * 4);
+  source.set([20, 180, 240, 255], (1 * 8 + 2) * 4);
+  const request = {
+    width: 8,
+    height: 3,
+    size: 1,
+    hardness: 100,
+    opacity: 1,
+    mode: 'clone',
+    source,
+    sourceX: 1,
+    sourceY: 1,
+  };
+  applyRadialStamp(destination, { ...request, x: 4, y: 1 });
+  // The source centre advances with the destination centre so the source
+  // offset remains constant across the complete gesture.
+  applyRadialStamp(destination, { ...request, x: 5, y: 1, sourceX: 2 });
+  assert.deepEqual(Array.from(destination.slice((1 * 8 + 4) * 4, (1 * 8 + 4) * 4 + 4)), [200, 10, 30, 255]);
+  assert.deepEqual(Array.from(destination.slice((1 * 8 + 5) * 4, (1 * 8 + 5) * 4 + 4)), [20, 180, 240, 255]);
+  assert.deepEqual(Array.from(source.slice((1 * 8 + 1) * 4, (1 * 8 + 1) * 4 + 4)), [200, 10, 30, 255]);
+});
+
 test('clone validates the shifted source rectangle rather than destination coordinates', () => {
   const destination = pixels(7, 7, [0, 0, 0, 255]);
   const source = Array.from(pixels(7, 7, [0, 0, 0, 255]), (value) => value);

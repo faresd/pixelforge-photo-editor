@@ -13,7 +13,9 @@ stamp primitive; no full-canvas mask is allocated for an individual pointer
 event. Mouse and unusable pen/touch pressure use a deterministic fallback of
 `1`. Pen and touch pressure affect diameter and opacity only when their separate
 opt-in controls are enabled. Brush and Eraser use radial alpha coverage,
-Clone keeps a fixed source offset, and Healing uses the same mask with its
+Clone keeps a fixed source offset. On the Clone tool, an Option/Alt-click
+sets or re-anchors that source point without creating history; the following
+stroke keeps the new offset for its complete gesture. Healing uses the same mask with its
 bounded `0.65` blend. A pointer move publishes a preview and pointer-up commits
 one PNG asset to the selected raster layer.
 
@@ -110,8 +112,10 @@ status before reading pixels.
 6. **Clone/healing invariants.** Set a source point, paint with different
    hardness/opacity values, and assert the offset is constant, edge alpha follows
    hardness, the original source asset remains present, and undo/reload preserve
-   the committed result. Healing must be bounded to the stroke mask and must not
-   blur unrelated pixels.
+   the committed result. Option/Alt-click a second source between strokes and
+   verify only the next stroke uses the re-anchored offset; the source click does
+   not add history. Healing must be bounded to the stroke mask and must not blur
+   unrelated pixels.
 
 ## Risks and non-goals
 

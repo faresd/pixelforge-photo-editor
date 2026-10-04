@@ -4823,6 +4823,14 @@ export default function Home() {
         setNotice('Select a visible, unlocked raster layer before retouching');
         return;
       }
+      // Match Photoshop's Option/Alt-click source workflow.  A source can be
+      // re-anchored between strokes without switching tools; the click only
+      // updates the source point and must never create a history entry.
+      if (tool === 'clone' && e.altKey) {
+        setCloneSource(local);
+        setNotice('Clone source set; drag on the image to paint it');
+        return;
+      }
       if (!cloneSource) {
         setCloneSource(local);
         setNotice('Clone source set; drag on the image to paint it');
@@ -8706,6 +8714,14 @@ export default function Home() {
                         device.
                       </p>
                     </>
+                  )}
+                  {(tool === 'clone' || tool === 'heal') && (
+                    <p className="adjust-note">
+                      Option/Alt-click the canvas to set or re-anchor the
+                      source point. Drag to paint with a fixed source offset;
+                      the source pixels stay unchanged until you commit the
+                      stroke.
+                    </p>
                   )}
                   {tool === 'selection-brush' && (
                     <p className="adjust-note">

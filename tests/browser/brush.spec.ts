@@ -404,6 +404,51 @@ test('clone source stays fixed and healing commits through the shared stamp path
   expect(clippedDestination[3]).toBe(sourcePixel[3]);
   expect(retainedSource).toEqual(sourcePixel);
 
+  // Photoshop-compatible Option/Alt-click re-anchors the source while the
+  // Clone tool remains selected. The source click must not create history;
+  // the following stroke should copy the newly painted colour instead of the
+  // original source at 0.3.
+  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await page.getByLabel('Drawing color', { exact: true }).fill('#1c5bd9');
+  await pointerStroke(page, 1, 0.6, 'mouse');
+  const secondSourceFrame = await project(page);
+  const secondSourceAsset = secondSourceFrame.assets[
+    secondSourceFrame.history[secondSourceFrame.index].layers.at(-1)!.asset!
+  ];
+  const secondSourcePixel = (await samplePixels(page, secondSourceAsset, [{ xRatio: 0.6 }]))[0];
+  expect(secondSourcePixel[3]).toBeGreaterThan(180);
+
+  await page.getByRole('button', { name: 'Clone tool', exact: true }).click();
+  const altSourcePoint = await canvasPoint(page, 0.6);
+  await canvas.dispatchEvent('pointerdown', {
+    pointerId: 20,
+    pointerType: 'mouse',
+    pressure: 1,
+    altKey: true,
+    clientX: altSourcePoint.clientX,
+    clientY: altSourcePoint.clientY,
+    buttons: 1,
+    isPrimary: true,
+  });
+  await canvas.dispatchEvent('pointerup', {
+    pointerId: 20,
+    pointerType: 'mouse',
+    pressure: 1,
+    altKey: true,
+    clientX: altSourcePoint.clientX,
+    clientY: altSourcePoint.clientY,
+    buttons: 0,
+    isPrimary: true,
+  });
+  await expect(page.locator('footer')).toContainText('Clone source set; drag on the image to paint it');
+  await toolStroke(page, 'Clone', 'Clone stroke applied', 0.88, false);
+  const reanchored = await project(page);
+  const reanchoredAsset = reanchored.assets[
+    reanchored.history[reanchored.index].layers.at(-1)!.asset!
+  ];
+  const reanchoredDestination = (await samplePixels(page, reanchoredAsset, [{ xRatio: 0.88 }]))[0];
+  expect(reanchoredDestination.slice(0, 3)).toEqual(secondSourcePixel.slice(0, 3));
+
   await page.getByRole('button', { name: 'Healing tool', exact: true }).click();
   const healingSource = await canvasPoint(page, 0.3);
   await canvas.dispatchEvent('pointerdown', { pointerId: 19, pointerType: 'mouse', pressure: 1, clientX: healingSource.clientX, clientY: healingSource.clientY, buttons: 1, isPrimary: true });
