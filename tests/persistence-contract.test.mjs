@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   CURRENT_DRAFT_VERSION,
   isNewerDraftRevision,
+  nextPendingDraftRevision,
+  pendingDraftCanBeCleared,
   prepareDraftForStorage,
   validCloudLink,
   validateDraft,
@@ -83,6 +85,23 @@ test('recovery only adopts a strictly newer local revision', () => {
   assert.equal(isNewerDraftRevision(4, undefined), false);
   assert.equal(isNewerDraftRevision(-1, 5), false);
   assert.equal(isNewerDraftRevision(4, Number.MAX_SAFE_INTEGER + 1), false);
+});
+
+test('write-ahead cleanup is token-scoped so an earlier save keeps a newer snapshot', () => {
+  assert.equal(pendingDraftCanBeCleared('new-token', 'old-token', 2, 1), false);
+  assert.equal(pendingDraftCanBeCleared('new-token', 'new-token', 2, 2), true);
+  // Legacy snapshots without a token retain the previous revision rule.
+  assert.equal(pendingDraftCanBeCleared(undefined, undefined, 1, 1), true);
+  assert.equal(pendingDraftCanBeCleared(undefined, undefined, 2, 1), false);
+  assert.equal(pendingDraftCanBeCleared(undefined, 'new-token', 2, 2), false);
+});
+
+test('queued write-ahead snapshots receive strictly increasing revisions', () => {
+  assert.equal(nextPendingDraftRevision(1, undefined), 1);
+  assert.equal(nextPendingDraftRevision(1, 1), 2);
+  assert.equal(nextPendingDraftRevision(1, 2), 3);
+  assert.equal(nextPendingDraftRevision(7, 2), 7);
+  assert.equal(nextPendingDraftRevision(Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER), undefined);
 });
 
 test('v1 migration creates a complete editable v2 document and v2 validation is stable', () => {

@@ -2594,7 +2594,7 @@ export default function Home() {
         ...neutral,
       },
     };
-    stagePendingDraft(
+    const pendingToken = stagePendingDraft(
       draftId,
       value,
       (localVersions.current.get(draftId) || 0) + 1,
@@ -2606,6 +2606,7 @@ export default function Home() {
           draftId,
           value,
           localVersions.current.get(draftId) || 0,
+          pendingToken,
         );
         localVersions.current.set(draftId, version);
       })
