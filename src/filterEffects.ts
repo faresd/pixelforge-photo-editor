@@ -11,6 +11,7 @@ export const FILTER_EFFECT_TYPES = [
   'none',
   'box-blur',
   'gaussian-blur',
+  'motion-blur',
   'field-blur',
   'tilt-shift',
   'mosaic',
@@ -334,6 +335,50 @@ function applyGaussianBlur(
   }
 }
 
+/**
+ * Apply a bounded directional blur while preserving source alpha and
+ * transparent RGB padding. Samples are nearest-neighbour and symmetric
+ * around each destination pixel, which keeps the result deterministic across
+ * browsers and makes the effect safe for small images.
+ */
+function applyMotionBlur(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  angle: number,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const bounded = Math.max(1, Math.min(64, Math.round(radius)));
+  const radians = (angle * Math.PI) / 180;
+  const dx = Math.cos(radians);
+  const dy = Math.sin(radians);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      if (source[destination + 3] === 0) continue;
+      const sums = [0, 0, 0];
+      let weight = 0;
+      for (let step = -bounded; step <= bounded; step += 1) {
+        const sample = sourcePixel(source, width, height, x + dx * step, y + dy * step);
+        const alpha = sample[3] / 255;
+        if (!alpha) continue;
+        sums[0] += sample[0] * alpha;
+        sums[1] += sample[1] * alpha;
+        sums[2] += sample[2] * alpha;
+        weight += alpha;
+      }
+      if (!weight) continue;
+      const mix = clamp(strength, 0, 1);
+      output[destination] = clampByte(source[destination] * (1 - mix) + (sums[0] / weight) * mix);
+      output[destination + 1] = clampByte(source[destination + 1] * (1 - mix) + (sums[1] / weight) * mix);
+      output[destination + 2] = clampByte(source[destination + 2] * (1 - mix) + (sums[2] / weight) * mix);
+      output[destination + 3] = source[destination + 3];
+    }
+  }
+}
+
 function applyMosaic(
   source: Uint8ClampedArray,
   width: number,
@@ -460,6 +505,8 @@ export function applyFilterEffectsPixels(
     applyBoxBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'gaussian-blur') {
     applyGaussianBlur(data, width, height, effect.radius, output, strength);
+  } else if (effect.type === 'motion-blur') {
+    applyMotionBlur(data, width, height, effect.radius, effect.angle, output, strength);
   } else if (effect.type === 'mosaic') {
     applyMosaic(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'color-halftone') {

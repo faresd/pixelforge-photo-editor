@@ -24,6 +24,19 @@ sanitized and path traversal or duplicate names are rejected. Rendering stops
 at a 256 MB encoded-output safety limit; the editable draft remains available
 when the limit or an encoder fails.
 
+## Named artboard export
+
+When a versioned frame contains named artboards, the image export dialog starts
+with `activeArtboardId` and lets the user choose any visible validated
+artboard. The preview, dimensions and downloaded pixels are limited to that
+selected rectangle. A solid `background` swatch is painted beneath transparent
+composite pixels, while the editable frame and source assets remain unchanged.
+Frames without artboards use the virtual full canvas viewport, preserving legacy
+dimensions and export behavior. The bounded implementation composites one
+document surface and crops the selected view; it does not yet render each
+artboard as an isolated layer tree or provide an artboard-specific visibility
+override.
+
 ## Acceptance evidence
 
 The desktop/mobile browser tests export all three formats and check PNG, JPEG and WebP signatures, check that WebP quality changes the encoded byte count, check the transparency disclosure, exercise the JPEG/WebP target-size search against actual downloaded bytes, assert the target preference survives reload, and check that rendered exports contain no EXIF/GPS marker. Batch tests create multiple history states, inspect the ZIP entries and manifest, verify dimensions/byte counts and assert that source data URLs are absent. Pure tests cover CRC-32, archive entry order and path-traversal/duplicate-name rejection. A browser that cannot encode WebP receives an explicit unsupported-format message rather than a corrupt download.

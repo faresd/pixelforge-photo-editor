@@ -26,11 +26,15 @@ named viewports) and an `activeArtboardId`. Each artboard stores only an ID,
 name, integer frame-space rectangle, visibility/lock flags and an optional
 solid background swatch. Artboards are validated against the containing frame,
 are transformed with canvas geometry operations, and are dropped when a crop
-removes their entire rectangle. They never duplicate raster assets, alter the
-composite render, or imply independent multi-canvas export yet. Legacy frames
-without this metadata expose a virtual locked `Canvas` viewport through the
-`effectiveArtboards` helper. This bounded metadata foundation keeps named
-viewport identity and ordering safe for a later isolated artboard renderer.
+removes their entire rectangle. The active named artboard can now be selected
+in the export dialog, rendered into a fresh pixel-aligned viewport and exported
+as PNG, JPEG or WebP without mutating the source frame; transparent pixels use
+the artboard's optional solid background swatch. Legacy frames without this
+metadata expose a virtual locked `Canvas` viewport through the
+`effectiveArtboards` helper and continue to export at their original
+dimensions. This bounded viewport export composites the document once and
+crops the selected rectangle; it does not claim independent multi-canvas
+compositing, per-artboard layer visibility, or full document tiled rendering.
 
 Available in this milestone: raster/image/paint layers; editable text with four system typefaces, multiline alignment, editable box width, line-height and letter spacing; editable rectangular, elliptical, line and regular polygon shapes; rectangular, elliptical, single-row and single-column one-pixel marquee selections plus freehand and click-to-place polygonal lasso selections with invert, nondestructive raster masks, affine Transform Selection, **Edit → Free Transform for unlocked active layers**, Select > Reselect snapshots, Quick Mask and named saved selections; layer selection, naming, visibility, locking, ordering, duplication, deletion, position, opacity and seven blend modes; nondestructive per-layer brightness, contrast, saturation, hue rotation (-180°..180°), blur, preset filters, **Box Blur and Gaussian Blur with editable alpha-aware `filterEffects` metadata**, input-levels (black point, white point and gamma) and RGB/per-channel Curves adjustments; undo/redo; image resize, crop, rotate and flip preserving layers; rasterization explicitly requested by the user. Move drags the selected layer. Free Transform applies a validated affine delta around the layer's local painted centre, preserving the immutable source asset and canvas-space mask; its numeric dialog accepts locale decimal commas, bounded scale/rotation/skew and horizontal/vertical flips. Painting on text or a shape requires a paint layer or explicit rasterization. Crop changes the canvas bounds, retaining pixels outside them in the project. Polygon sides, line endpoints, fill/stroke settings, layer transform bounds/matrices, selection matrices, Reselect snapshots, text metrics, hue bounds, levels ranges, curve control points and blur effect bounds are validated and survive undo, reload and project round trips. Hue rotation, Levels, Curves and Blur remap rendered raster pixels only; the immutable source asset remains unchanged.
 
