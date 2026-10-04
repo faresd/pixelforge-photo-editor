@@ -80,7 +80,11 @@ test('Content-Aware Fill uses a local selection mask, preserves source, and surv
   expect(undone.history[undone.index].layers.at(-1)!.contentAwareFills).toBeUndefined();
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Redo/ }).click();
-  await expect(page.getByText(/Content-Aware Fill applied locally/, { exact: false })).toBeVisible();
+  // History navigation reports its own deterministic status; the persisted
+  // operation is asserted from the project after the redo and again after
+  // reload below.
+  await expect(page.locator('footer')).toContainText('Redone');
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   const reloaded = await project(page);
@@ -97,4 +101,3 @@ test('Content-Aware Fill is disabled without a selection and on locked layers', 
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await expect(page.getByRole('menuitem', { name: 'Content-Aware Fill…', exact: true })).toBeDisabled();
 });
-
