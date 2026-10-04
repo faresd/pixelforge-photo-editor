@@ -302,6 +302,7 @@ test('8. Levels, Curves and photo color controls stay nondestructive and persist
     'Saved on this device',
   );
   await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   expect(await page.getByLabel('Levels black point', { exact: true }).inputValue()).toBe('128');
   expect(await page.getByLabel('Brightness', { exact: true }).inputValue()).toBe('120');
   expect(await page.getByLabel('Saturation', { exact: true }).inputValue()).toBe('70');
