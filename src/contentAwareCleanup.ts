@@ -71,7 +71,13 @@ function contextSample(
   radius: number,
 ): [number, number, number, number] | null {
   const sampleCount = 16;
-  for (let distance = 1; distance <= radius; distance += 1) {
+  // A bounded four-ring search keeps a large selection responsive. The outer
+  // ring supplies background context first; smaller fallbacks handle tiny
+  // marks without turning radius into a quadratic per-pixel scan.
+  const distances = Array.from(
+    new Set([radius, Math.round(radius * 0.75), Math.round(radius * 0.5), 1]),
+  );
+  for (const distance of distances) {
     const samples: Array<[number, number, number, number]> = [];
     for (let angle = 0; angle < sampleCount; angle += 1) {
       const theta = (angle * Math.PI * 2) / sampleCount;
