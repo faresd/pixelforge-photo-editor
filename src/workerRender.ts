@@ -1,8 +1,16 @@
-import { referencedAssets, renderFrame, validateFrame, type Assets, type Frame } from './document.ts';
+import {
+  referencedAssets,
+  renderFrame,
+  validateFrame,
+  type Assets,
+  type Frame,
+} from './document.ts';
 
 export type WorkerRenderOptions = {
   signal?: AbortSignal;
   isCancelled?: () => boolean;
+  /** Report completed layer passes for visible large-render progress. */
+  onProgress?: (completed: number, total: number) => void;
   /** Test/diagnostic override; normal editing selects workers for larger frames. */
   forceWorker?: boolean;
 };
@@ -32,7 +40,8 @@ export function canRenderInWorker(): boolean {
     const probe = new OffscreenCanvas(1, 1);
     return (
       Boolean(probe.getContext('2d')) &&
-      (typeof probe.transferToImageBitmap === 'function' || typeof probe.convertToBlob === 'function')
+      (typeof probe.transferToImageBitmap === 'function' ||
+        typeof probe.convertToBlob === 'function')
     );
   } catch {
     return false;
@@ -60,22 +69,42 @@ export async function renderFrameWithWorker(
   if (overrides || !useWorker || !canRenderInWorker())
     return renderFrame(frame, assets, overrides, {
       isCancelled: options.isCancelled,
+      onProgress: options.onProgress,
+      // Yield on the fallback path too so cancellation and progress can reach
+      // the UI when OffscreenCanvas is unavailable.
+      yieldEveryLayers: 1,
     });
   validateFrame(frame, assets);
   if (options.signal?.aborted) throw abortError();
 
   let worker: Worker;
   try {
-    worker = new Worker(new URL('./document-render.worker.ts', import.meta.url), { type: 'module' });
+    worker = new Worker(
+      new URL('./document-render.worker.ts', import.meta.url),
+      { type: 'module' },
+    );
   } catch {
     return renderFrame(frame, assets, undefined, {
       isCancelled: options.isCancelled,
+      onProgress: options.onProgress,
+      yieldEveryLayers: 1,
     });
   }
   const id = ++requestId;
   return new Promise<CanvasImageSource>((resolve, reject) => {
     let settled = false;
-    const timeout = setTimeout(() => finish(() => reject(new Error('Worker rendering timed out. Try a smaller image or fewer layers.'))), RENDER_TIMEOUT_MS);
+    let lastCompleted = 0;
+    const timeout = setTimeout(
+      () =>
+        finish(() =>
+          reject(
+            new Error(
+              'Worker rendering timed out. Try a smaller image or fewer layers.',
+            ),
+          ),
+        ),
+      RENDER_TIMEOUT_MS,
+    );
     const finish = (callback: () => void) => {
       if (settled) return;
       settled = true;
@@ -84,21 +113,56 @@ export async function renderFrameWithWorker(
       worker.onmessage = null;
       worker.onerror = null;
       worker.onmessageerror = null;
-      try { worker.terminate(); } catch { /* Already unavailable. */ }
+      try {
+        worker.terminate();
+      } catch {
+        /* Already unavailable. */
+      }
       callback();
     };
     const cancel = () => {
-      try { worker.postMessage({ kind: 'cancel', id }); } catch { /* Worker already stopped. */ }
+      try {
+        worker.postMessage({ kind: 'cancel', id });
+      } catch {
+        /* Worker already stopped. */
+      }
       finish(() => reject(abortError()));
     };
     worker.onmessage = (event: MessageEvent<unknown>) => {
       const message = event.data;
-      if (!message || typeof message !== 'object' || (message as { id?: unknown }).id !== id) return;
+      if (
+        !message ||
+        typeof message !== 'object' ||
+        (message as { id?: unknown }).id !== id
+      )
+        return;
       const value = message as Record<string, unknown>;
       if (value.kind === 'error' && typeof value.message === 'string') {
         const error = new Error(value.message);
         error.name = typeof value.name === 'string' ? value.name : 'Error';
         finish(() => reject(error));
+      } else if (value.kind === 'progress') {
+        const completed = Number(value.completed);
+        const total = Number(value.total);
+        if (
+          !Number.isSafeInteger(completed) ||
+          !Number.isSafeInteger(total) ||
+          total !== frame.layers.length ||
+          completed < 1 ||
+          completed > total ||
+          completed < lastCompleted
+        ) {
+          finish(() =>
+            reject(new Error('Worker returned invalid render progress.')),
+          );
+          return;
+        }
+        lastCompleted = completed;
+        try {
+          options.onProgress?.(completed, total);
+        } catch (error) {
+          finish(() => reject(error));
+        }
       } else if (
         value.kind === 'result' &&
         value.width === frame.w &&
@@ -115,27 +179,43 @@ export async function renderFrameWithWorker(
         value.bytes.byteLength > 0 &&
         value.bytes.byteLength <= 64 * 1024 * 1024
       ) {
-        void createImageBitmap(new Blob([value.bytes], { type: 'image/png' })).then(
+        void createImageBitmap(
+          new Blob([value.bytes], { type: 'image/png' }),
+        ).then(
           (image) => finish(() => resolve(image)),
           (error) => finish(() => reject(error)),
         );
       } else if (value.kind === 'result' || value.kind === 'result-bytes') {
-        const dimensionsMatch = value.width === frame.w && value.height === frame.h;
-        finish(() => reject(new Error(
-          dimensionsMatch
-            ? 'Worker returned an invalid render result.'
-            : 'Worker returned an invalid render size.',
-        )));
+        const dimensionsMatch =
+          value.width === frame.w && value.height === frame.h;
+        finish(() =>
+          reject(
+            new Error(
+              dimensionsMatch
+                ? 'Worker returned an invalid render result.'
+                : 'Worker returned an invalid render size.',
+            ),
+          ),
+        );
       }
     };
-    worker.onerror = () => finish(() => reject(new Error('Worker document rendering failed')));
-    worker.onmessageerror = () => finish(() => reject(new Error('Worker document render response could not be read')));
+    worker.onerror = () =>
+      finish(() => reject(new Error('Worker document rendering failed')));
+    worker.onmessageerror = () =>
+      finish(() =>
+        reject(new Error('Worker document render response could not be read')),
+      );
     options.signal?.addEventListener('abort', cancel, { once: true });
     if (options.signal?.aborted) return cancel();
     try {
       // Do not clone every asset retained by undo history. A render only needs
       // the current frame's raster and mask references.
-      worker.postMessage({ kind: 'render', id, frame, assets: referencedAssets([frame], assets) });
+      worker.postMessage({
+        kind: 'render',
+        id,
+        frame,
+        assets: referencedAssets([frame], assets),
+      });
     } catch (error) {
       finish(() => reject(error));
     }

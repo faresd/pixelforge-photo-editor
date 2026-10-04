@@ -44,8 +44,15 @@ import {
 } from './imageSize.ts';
 import { validatePath, type PathModel } from './paths.ts';
 import { applyLayerMaskPixels, effectiveLayerMask } from './masks.ts';
-import { shapePoints, validateShapeVariant, type ParametricShapeVariant } from './vectorShapes.ts';
-import { validMeasurements, type MeasurementAnnotation } from './measurements.ts';
+import {
+  shapePoints,
+  validateShapeVariant,
+  type ParametricShapeVariant,
+} from './vectorShapes.ts';
+import {
+  validMeasurements,
+  type MeasurementAnnotation,
+} from './measurements.ts';
 import {
   applyFilterEffects,
   effectiveFilterEffects,
@@ -1129,7 +1136,8 @@ export function surface(w: number, h: number) {
       : typeof OffscreenCanvas === 'function'
         ? new OffscreenCanvas(w, h)
         : undefined;
-  if (!canvas) throw new Error('Canvas rendering is unavailable in this browser.');
+  if (!canvas)
+    throw new Error('Canvas rendering is unavailable in this browser.');
   canvas.width = w;
   canvas.height = h;
   return canvas as unknown as HTMLCanvasElement;
@@ -1306,6 +1314,8 @@ export type RenderOptions = {
   isCancelled?: () => boolean;
   /** Yield to the worker event loop every N layers so cancellation is observable. */
   yieldEveryLayers?: number;
+  /** Report completed top-level layer passes. Progress is monotonic and bounded. */
+  onProgress?: (completed: number, total: number) => void;
 };
 
 export async function renderFrame(
@@ -1317,8 +1327,11 @@ export async function renderFrame(
   const out = surface(frame.w, frame.h),
     context = out.getContext('2d')!,
     groups = new Map((frame.groups || []).map((group) => [group.id, group]));
+  const reportProgress = (layerIndex: number) =>
+    options?.onProgress?.(layerIndex + 1, frame.layers.length);
   for (const [layerIndex, layer] of frame.layers.entries()) {
-    if (options?.isCancelled?.()) throw new DOMException('Document rendering cancelled', 'AbortError');
+    if (options?.isCancelled?.())
+      throw new DOMException('Document rendering cancelled', 'AbortError');
     if (
       options?.yieldEveryLayers &&
       layerIndex > 0 &&
@@ -1326,7 +1339,10 @@ export async function renderFrame(
     )
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
     const group = layer.groupId ? groups.get(layer.groupId) : undefined;
-    if (!layer.visible || (group && !group.visible)) continue;
+    if (!layer.visible || (group && !group.visible)) {
+      reportProgress(layerIndex);
+      continue;
+    }
     const groupOpacity = group?.opacity ?? 1;
     const override = overrides?.[layer.id];
     const image =
@@ -1338,12 +1354,21 @@ export async function renderFrame(
     // immutable source asset; resetting the transform here would bake a
     // translated/scaled layer into the wrong frame coordinates.
     let rasterSource: CanvasImageSource | undefined = override || image;
-    const filterEffect = effectiveFilterEffects(layer.adjustments.filterEffects);
-    if (layer.kind === 'raster' && rasterSource && !isNeutralFilterEffects(filterEffect)) {
+    const filterEffect = effectiveFilterEffects(
+      layer.adjustments.filterEffects,
+    );
+    if (
+      layer.kind === 'raster' &&
+      rasterSource &&
+      !isNeutralFilterEffects(filterEffect)
+    ) {
       // Filter geometry is layer-local, so moving/resizing a layer never bakes
       // the effect into frame coordinates. Masks are still applied afterward.
       const asset = assets[layer.asset],
-        filtered = surface(override?.width ?? asset.w, override?.height ?? asset.h);
+        filtered = surface(
+          override?.width ?? asset.w,
+          override?.height ?? asset.h,
+        );
       filtered.getContext('2d')!.drawImage(rasterSource, 0, 0);
       applyFilterEffects(filtered, filterEffect);
       rasterSource = filtered;
@@ -1359,7 +1384,9 @@ export async function renderFrame(
         ) ||
         !isNeutralCurves(effectiveAdjustments(layer.adjustments).curves) ||
         !isNeutralAuto(effectiveAdjustments(layer.adjustments).auto) ||
-        !isNeutralFilterEffects(effectiveAdjustments(layer.adjustments).filterEffects))
+        !isNeutralFilterEffects(
+          effectiveAdjustments(layer.adjustments).filterEffects,
+        ))
     ) {
       // Keep text and shape layers editable: render their existing transform
       // and CSS corrections into an isolated surface, then rotate HSL colour.
@@ -1384,7 +1411,10 @@ export async function renderFrame(
         },
         assets,
         overrides,
-        options,
+        // A decorated text/vector layer uses a nested one-layer render. Keep
+        // progress scoped to the outer frame so worker clients receive a
+        // monotonic bounded sequence rather than duplicate totals.
+        options?.onProgress ? { ...options, onProgress: undefined } : options,
       );
       applyHue(coloured, layer.adjustments);
       applyColorBalance(coloured, layer.adjustments);
@@ -1397,6 +1427,7 @@ export async function renderFrame(
       context.globalCompositeOperation = layer.blend;
       context.drawImage(coloured, 0, 0);
       context.restore();
+      reportProgress(layerIndex);
       continue;
     }
     const maskSettings =
@@ -1462,6 +1493,7 @@ export async function renderFrame(
       context.globalCompositeOperation = layer.blend;
       context.drawImage(masked, 0, 0);
       context.restore();
+      reportProgress(layerIndex);
       continue;
     }
     // Canvas 2D has no levels filter. Render raster layers into a frame-space
@@ -1503,6 +1535,7 @@ export async function renderFrame(
       context.globalCompositeOperation = layer.blend;
       context.drawImage(leveled, 0, 0);
       context.restore();
+      reportProgress(layerIndex);
       continue;
     }
     context.save();
@@ -1513,9 +1546,11 @@ export async function renderFrame(
     if (override) {
       context.drawImage(rasterSource!, 0, 0);
       context.restore();
+      reportProgress(layerIndex);
       continue;
     }
-    if (layer.kind === 'raster' && rasterSource) context.drawImage(rasterSource, 0, 0);
+    if (layer.kind === 'raster' && rasterSource)
+      context.drawImage(rasterSource, 0, 0);
     if (layer.kind === 'text') {
       context.fillStyle = layer.color;
       context.font = `${layer.bold ? '700' : '400'} ${layer.fontSize}px "${layer.fontFamily}"`;
@@ -1598,6 +1633,7 @@ export async function renderFrame(
       }
     }
     context.restore();
+    reportProgress(layerIndex);
   }
   return out;
 }

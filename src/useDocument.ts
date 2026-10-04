@@ -10,6 +10,11 @@ import { renderFrameWithWorker } from './workerRender';
 import type { Draft } from './drafts';
 import { beginPerformanceSpan } from './performanceMarks';
 
+export type RenderProgress = {
+  completed: number;
+  total: number;
+};
+
 export function useDocument(onError: (message: string) => void) {
   const canvas = useRef<HTMLCanvasElement>(null),
     assets = useRef<Assets>({}),
@@ -17,7 +22,10 @@ export function useDocument(onError: (message: string) => void) {
     index = useRef(-1);
   const [frame, setFrame] = useState<Frame | null>(null),
     [revision, setRevision] = useState(0),
-    [rendering, setRendering] = useState(false);
+    [rendering, setRendering] = useState(false),
+    // Keep the latest bounded sample after completion for diagnostics and
+    // assistive technology. A new render resets it to zero.
+    [renderProgress, setRenderProgress] = useState<RenderProgress | null>(null);
   const renderSequence = useRef(0),
     renderAbort = useRef<AbortController | null>(null);
   const closeImageSource = (image: CanvasImageSource) => {
@@ -32,11 +40,24 @@ export function useDocument(onError: (message: string) => void) {
       renderAbort.current = controller;
       const renderSpan = beginPerformanceSpan('render');
       setRendering(true);
+      setRenderProgress({
+        completed: 0,
+        total: Math.max(1, value.layers.length),
+      });
       try {
-        const image = await renderFrameWithWorker(value, assets.current, overrides, {
-          signal: controller.signal,
-          isCancelled: () => sequence !== renderSequence.current,
-        });
+        const image = await renderFrameWithWorker(
+          value,
+          assets.current,
+          overrides,
+          {
+            signal: controller.signal,
+            isCancelled: () => sequence !== renderSequence.current,
+            onProgress: (completed, total) => {
+              if (sequence === renderSequence.current)
+                setRenderProgress({ completed, total });
+            },
+          },
+        );
         try {
           if (sequence !== renderSequence.current) return;
           const target = canvas.current;
@@ -117,14 +138,29 @@ export function useDocument(onError: (message: string) => void) {
     renderAbort.current?.abort();
     const installController = new AbortController();
     renderAbort.current = installController;
-    ++renderSequence.current;
+    const installSequence = ++renderSequence.current;
+    setRendering(true);
+    setRenderProgress({
+      completed: 0,
+      total: Math.max(1, draft.history[draft.index].layers.length),
+    });
     try {
       // Validate every history asset before switching, so undo never discovers a corrupt import.
       for (const asset of Object.values(draft.assets)) await decodeAsset(asset);
       // Decode and render before switching documents, preserving the current work on import failure.
-      const image = await renderFrameWithWorker(draft.history[draft.index], draft.assets, undefined, {
-        signal: installController.signal,
-      });
+      const image = await renderFrameWithWorker(
+        draft.history[draft.index],
+        draft.assets,
+        undefined,
+        {
+          signal: installController.signal,
+          isCancelled: () => installSequence !== renderSequence.current,
+          onProgress: (completed, total) => {
+            if (installSequence === renderSequence.current)
+              setRenderProgress({ completed, total });
+          },
+        },
+      );
       try {
         if (history.current[index.current] !== expected)
           throw new Error('Document changed during import. Please try again.');
@@ -139,14 +175,14 @@ export function useDocument(onError: (message: string) => void) {
         closeImageSource(image);
       }
     } catch (error) {
-      setRendering(false);
+      if (installSequence === renderSequence.current) setRendering(false);
       throw error;
     } finally {
       if (renderAbort.current === installController) renderAbort.current = null;
     }
     setFrame(draft.history[draft.index]);
     setRevision((v) => v + 1);
-    setRendering(false);
+    if (installSequence === renderSequence.current) setRendering(false);
   }, []);
   const select = useCallback(
     (id: string) => {
@@ -175,6 +211,7 @@ export function useDocument(onError: (message: string) => void) {
     frame,
     revision,
     rendering,
+    renderProgress,
     paint,
     commit,
     install,

@@ -94,11 +94,13 @@ support guarantees until physical device samples and memory traces exist.
 The worker path is an isolation and responsiveness improvement for committed
 frames, not a larger-document guarantee. It sends only the current frame's
 referenced raster and mask assets, checks cancellation between layer passes,
-transfers an `ImageBitmap` (or a bounded PNG buffer), and terminates the worker
-after each request. The browser suite covers capability detection, cancellation,
-malformed or forged responses, exact output dimensions, pixel round trips and
-Canvas2D fallback. A browser that lacks a usable worker/OffscreenCanvas pair
-continues to use the main-thread renderer.
+reports monotonic completed-layer progress, transfers an `ImageBitmap` (or a
+bounded PNG buffer), and terminates the worker after each request. The browser
+suite covers capability detection, cancellation, progress validation, malformed
+or forged responses, exact output dimensions, pixel round trips and Canvas2D
+fallback. A browser that lacks a usable worker/OffscreenCanvas pair continues to
+use the main-thread renderer with the same bounded progress and cancellation
+state.
 
 The path remains provisional until repeated physical-device measurements show
 that worker scheduling improves responsiveness without unacceptable memory
@@ -115,9 +117,10 @@ industrial-scale, the implementation needs:
 
 1. Harden the worker/`OffscreenCanvas` render path for document frames and
    adjustments. The first full-frame worker slice is now present with
-   cancellation and a safe fallback; the remaining gate is a visible progress
-   state, worker-aware interactive adjustments and measured responsiveness on
-   representative physical desktop and mobile devices. The main thread must
+   cancellation, bounded layer progress and a safe fallback; remaining gates
+   include worker-aware interactive adjustments and measured responsiveness on
+   representative physical desktop and mobile devices. Progress is a layer
+   pass indicator, not a streaming or tiled-render claim. The main thread must
    stay responsive while a large frame or adjustment renders.
 2. Extend the bounded tile plan (with explicit edge overlap for blur, healing
    and other neighborhood operations) from batch encoding into document

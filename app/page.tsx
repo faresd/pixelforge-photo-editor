@@ -16,6 +16,7 @@ import {
   Hand,
   Hash,
   Hexagon,
+  Grid3x3,
   Minus,
   Pipette,
   PaintBucket,
@@ -26,6 +27,7 @@ import {
   RotateCcw,
   RotateCw,
   Ruler,
+  Eye,
   Save,
   Shapes,
   Sparkles,
@@ -91,7 +93,10 @@ import {
   type Assets,
 } from '../src/document';
 import { useDocument } from '../src/useDocument';
-import { beginPerformanceSpan, type PerformanceSpan } from '../src/performanceMarks';
+import {
+  beginPerformanceSpan,
+  type PerformanceSpan,
+} from '../src/performanceMarks';
 import LayersPanel from '../src/LayersPanel';
 import ResizeDialog from '../src/ResizeDialog';
 import ExportDialog from '../src/ExportDialog';
@@ -168,6 +173,12 @@ import {
   type BrushColor,
   type BrushMode,
 } from '../src/brush';
+import {
+  PATTERN_IDS,
+  applyPatternStamp,
+  type PatternId,
+} from '../src/patternStamp';
+import { removeRedEye } from '../src/redEye';
 import { eraseBackgroundStroke, eraseMagicRegion } from '../src/erasers';
 import {
   applyDodgeBurnStroke,
@@ -336,6 +347,8 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'gradient', label: 'Gradient', icon: Palette, key: 'G' },
   { id: 'clone', label: 'Clone', icon: Copy, key: 'S' },
   { id: 'heal', label: 'Healing', icon: WandSparkles, key: 'J' },
+  { id: 'red-eye', label: 'Red Eye', icon: Eye, key: 'J' },
+  { id: 'pattern-stamp', label: 'Pattern Stamp', icon: Grid3x3, key: 'S' },
   { id: 'crop', label: 'Crop', icon: Crop, key: 'C' },
   { id: 'perspective-crop', label: 'Perspective Crop', icon: Crop, key: 'C' },
   { id: 'slice', label: 'Slice', icon: Crop, key: 'C' },
@@ -402,6 +415,8 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   e: ['eraser', 'background-eraser', 'magic-eraser'],
   o: ['dodge', 'burn', 'sponge'],
   r: ['smudge'],
+  s: ['clone', 'pattern-stamp'],
+  j: ['heal', 'red-eye'],
 };
 /** Existing PixelForge aliases retained while the primary keys follow Photoshop. */
 const TOOL_ALIASES: Record<string, Tool> = {
@@ -566,7 +581,10 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Align Top', command: 'align-top' },
     { label: 'Align Vertical Centers', command: 'align-center-vertical' },
     { label: 'Align Bottom', command: 'align-bottom' },
-    { label: 'Distribute Horizontal Centers', command: 'distribute-horizontal' },
+    {
+      label: 'Distribute Horizontal Centers',
+      command: 'distribute-horizontal',
+    },
     { label: 'Distribute Vertical Centers', command: 'distribute-vertical' },
     { label: 'Lock Layers…', command: 'noop', disabled: true },
   ],
@@ -698,6 +716,10 @@ type Gesture = {
   layer?: Layer;
   buffer?: HTMLCanvasElement;
   source?: HTMLCanvasElement;
+  patternId?: PatternId;
+  patternTileSize?: number;
+  redEyeThreshold?: number;
+  redEyeAmount?: number;
   /** Selection alpha sampled once in the edited layer's local pixel space. */
   selectionMask?: Uint8ClampedArray;
   changed?: boolean;
@@ -856,6 +878,136 @@ const stampCanvasSegment = (
         sourceX,
         sourceY,
       }) || changed;
+  }
+  return changed;
+};
+
+/** Apply a deterministic locally-generated tile through radial coverage. */
+const patternCanvas = (
+  target: HTMLCanvasElement,
+  options: {
+    x: number;
+    y: number;
+    size: number;
+    hardness: number;
+    opacity: number;
+    pointerType?: string;
+    pressure?: number;
+    pressureSize?: boolean;
+    pressureOpacity?: boolean;
+    pattern: PatternId;
+    tileSize: number;
+    foreground: BrushColor;
+    background: BrushColor;
+  },
+) => {
+  const radius = resolveBrushStamp(options).radius,
+    left = Math.max(0, Math.floor(options.x - radius)),
+    top = Math.max(0, Math.floor(options.y - radius)),
+    right = Math.min(target.width, Math.floor(options.x + radius) + 1),
+    bottom = Math.min(target.height, Math.floor(options.y + radius) + 1),
+    width = Math.max(0, right - left),
+    height = Math.max(0, bottom - top);
+  if (!width || !height) return false;
+  const context = target.getContext('2d')!,
+    image = context.getImageData(left, top, width, height),
+    result = applyPatternStamp(image.data, {
+      width,
+      height,
+      x: options.x - left,
+      y: options.y - top,
+      size: options.size,
+      hardness: options.hardness,
+      opacity: options.opacity,
+      pointerType: options.pointerType,
+      pressure: options.pressure,
+      pressureSize: options.pressureSize,
+      pressureOpacity: options.pressureOpacity,
+      pattern: options.pattern,
+      tileSize: options.tileSize,
+      foreground: options.foreground,
+      background: options.background,
+      originX: left,
+      originY: top,
+    });
+  if (result.changed) context.putImageData(image, left, top);
+  return result.changed;
+};
+
+const patternCanvasSegment = (
+  target: HTMLCanvasElement,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  options: Omit<Parameters<typeof patternCanvas>[1], 'x' | 'y'>,
+) => {
+  const resolved = resolveBrushStamp(options),
+    distance = Math.hypot(to.x - from.x, to.y - from.y),
+    steps = Math.max(
+      1,
+      Math.ceil(distance / Math.max(1, resolved.radius * 0.5)),
+    );
+  let changed = false;
+  for (let step = 0; step <= steps; step += 1) {
+    const t = step / steps;
+    changed =
+      patternCanvas(target, {
+        ...options,
+        x: from.x + (to.x - from.x) * t,
+        y: from.y + (to.y - from.y) * t,
+      }) || changed;
+  }
+  return changed;
+};
+
+/** Apply one bounded, local Red Eye correction without uploading pixels. */
+const redEyeCanvasSegment = (
+  target: HTMLCanvasElement,
+  point: { x: number; y: number },
+  options: { radius: number; threshold: number; amount: number },
+) => {
+  const radius = Math.max(1, options.radius),
+    left = Math.max(0, Math.floor(point.x - radius)),
+    top = Math.max(0, Math.floor(point.y - radius)),
+    right = Math.min(target.width, Math.floor(point.x + radius) + 1),
+    bottom = Math.min(target.height, Math.floor(point.y + radius) + 1),
+    width = Math.max(0, right - left),
+    height = Math.max(0, bottom - top);
+  if (!width || !height) return false;
+  const context = target.getContext('2d')!,
+    image = context.getImageData(left, top, width, height),
+    result = removeRedEye(image.data, {
+      width,
+      height,
+      x: point.x - left,
+      y: point.y - top,
+      radius,
+      threshold: options.threshold,
+      amount: options.amount,
+    });
+  if (result.changed) context.putImageData(image, left, top);
+  return result.changed;
+};
+
+const redEyeCanvasStroke = (
+  target: HTMLCanvasElement,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  options: { radius: number; threshold: number; amount: number },
+) => {
+  const distance = Math.hypot(to.x - from.x, to.y - from.y),
+    steps = Math.max(
+      1,
+      Math.ceil(distance / Math.max(1, options.radius * 0.5)),
+    );
+  let changed = false;
+  for (let step = 0; step <= steps; step += 1) {
+    const t = step / steps;
+    changed =
+      redEyeCanvasSegment(
+        target,
+        { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t },
+        options,
+      ) || changed;
   }
   return changed;
 };
@@ -1038,6 +1190,7 @@ export default function Home() {
       index,
       frame,
       revision,
+      renderProgress,
       commit,
       install,
       select,
@@ -1055,6 +1208,10 @@ export default function Home() {
     [hardness, setHardness] = useState(100),
     [pressureSize, setPressureSize] = useState(false),
     [pressureOpacity, setPressureOpacity] = useState(false),
+    [patternId, setPatternId] = useState<PatternId>('checker'),
+    [patternTileSize, setPatternTileSize] = useState(32),
+    [redEyeThreshold, setRedEyeThreshold] = useState(36),
+    [redEyeAmount, setRedEyeAmount] = useState(100),
     [colorTolerance, setColorTolerance] = useState(24),
     [tonalExposure, setTonalExposure] = useState(50),
     [tonalRange, setTonalRange] = useState<TonalRange>('midtones'),
@@ -1102,7 +1259,9 @@ export default function Home() {
    * the bounds, and gives keyboard/touch users an explicit Apply/Cancel
    * affordance.
    */
-  const [cropPreview, setCropPreview] = useState<(RectangularCropPlan & { frame: Frame }) | null>(null);
+  const [cropPreview, setCropPreview] = useState<
+    (RectangularCropPlan & { frame: Frame }) | null
+  >(null);
   const cropPreviewId = useRef(0);
   const [cropApplying, setCropApplying] = useState(false);
   /** Perspective crop is staged and applied as a reversible composite raster. */
@@ -1117,7 +1276,8 @@ export default function Home() {
   const [sliceExporting, setSliceExporting] = useState(false);
   const [selectionTransforming, setSelectionTransforming] = useState(false);
   const [layerTransforming, setLayerTransforming] = useState(false);
-  const [selectionRefining, setSelectionRefining] = useState<SelectionRefineMode | null>(null);
+  const [selectionRefining, setSelectionRefining] =
+    useState<SelectionRefineMode | null>(null);
   const [colorRanging, setColorRanging] = useState(false);
   const [quickMasking, setQuickMasking] = useState(false),
     [quickMask, setQuickMask] = useState<QuickMask | null>(null),
@@ -1227,6 +1387,8 @@ export default function Home() {
     hardness,
     pressureSize,
     pressureOpacity,
+    patternId,
+    patternTileSize,
     colorTolerance,
     tonalExposure,
     tonalRange,
@@ -1257,6 +1419,10 @@ export default function Home() {
     setHardness(s.hardness ?? 100);
     setPressureSize(s.pressureSize ?? false);
     setPressureOpacity(s.pressureOpacity ?? false);
+    setPatternId(s.patternId ?? 'checker');
+    setPatternTileSize(s.patternTileSize ?? 32);
+    setRedEyeThreshold(s.redEyeThreshold ?? 36);
+    setRedEyeAmount(s.redEyeAmount ?? 100);
     setColorTolerance(s.colorTolerance ?? 24);
     setTonalExposure(s.tonalExposure ?? 50);
     setTonalRange(s.tonalRange ?? 'midtones');
@@ -1316,7 +1482,10 @@ export default function Home() {
         setNotice('Crop cancelled because the preview or document changed');
         return;
       }
-      const changed = commit({ ...next, measurements: cropMeasurements(f.measurements, preview) });
+      const changed = commit({
+        ...next,
+        measurements: cropMeasurements(f.measurements, preview),
+      });
       if (changed) {
         setCropPreview(null);
         setNotice(`Crop applied: ${preview.width} × ${preview.height} px`);
@@ -1341,7 +1510,9 @@ export default function Home() {
     if (source !== preview.frame) {
       setPerspectiveCropPreview(null);
       void paint(source);
-      setNotice('Perspective crop preview expired because the document changed');
+      setNotice(
+        'Perspective crop preview expired because the document changed',
+      );
       return;
     }
     if (!preview.changed) {
@@ -1368,7 +1539,9 @@ export default function Home() {
         perspectiveCropPreviewId.current !== expectedPreviewId
       ) {
         void paint(current());
-        setNotice('Perspective crop cancelled because the preview or document changed');
+        setNotice(
+          'Perspective crop cancelled because the preview or document changed',
+        );
         return;
       }
       const next = rasterFrame(output, assets.current, 'Perspective Crop');
@@ -1426,37 +1599,50 @@ export default function Home() {
     const expectedPreviewId = slicePreviewId.current;
     setSliceExporting(true);
     try {
-      const plan = planSlices(f.w, f.h, [{
+      const plan = planSlices(f.w, f.h, [
+        {
         id: preview.id,
         name: rawName,
         x: preview.x,
         y: preview.y,
         width: preview.width,
         height: preview.height,
-      }]);
+        },
+      ]);
       const rendered = await renderFrame(f, assets.current);
       if (current() !== f || slicePreviewId.current !== expectedPreviewId) {
         void paint(current());
         setNotice('Slice cancelled because the preview or document changed');
         return;
       }
-      const source = rendered.getContext('2d')!.getImageData(0, 0, f.w, f.h).data;
+      const source = rendered
+        .getContext('2d')!
+        .getImageData(0, 0, f.w, f.h).data;
       const [slice] = extractSlices(source, f.w, f.h, plan);
       const output = surface(slice.width, slice.height),
-        image = output.getContext('2d')!.createImageData(slice.width, slice.height);
+        image = output
+          .getContext('2d')!
+          .createImageData(slice.width, slice.height);
       image.data.set(slice.pixels);
       output.getContext('2d')!.putImageData(image, 0, 0);
-      const blob = await new Promise<Blob | null>((resolve) => output.toBlob(resolve, 'image/png'));
+      const blob = await new Promise<Blob | null>((resolve) =>
+        output.toBlob(resolve, 'image/png'),
+      );
       if (!blob) throw new Error('Could not encode the slice');
-      const url = URL.createObjectURL(blob), link = document.createElement('a');
+      const url = URL.createObjectURL(blob),
+        link = document.createElement('a');
       link.href = url;
       link.download = `${plan.slices[0].name}.png`;
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
       setSliceName(plan.slices[0].name);
-      setNotice(`Slice downloaded: ${plan.slices[0].name}.png · ${slice.width} × ${slice.height} px`);
+      setNotice(
+        `Slice downloaded: ${plan.slices[0].name}.png · ${slice.width} × ${slice.height} px`,
+      );
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Could not download the slice');
+      setNotice(
+        error instanceof Error ? error.message : 'Could not download the slice',
+      );
     } finally {
       setSliceExporting(false);
     }
@@ -1475,15 +1661,17 @@ export default function Home() {
     try {
       return {
         layer: active,
-        bounds: layerLocalBounds(active, assets.current) as LayerTransformBounds,
+        bounds: layerLocalBounds(
+          active,
+          assets.current,
+        ) as LayerTransformBounds,
       };
     } catch {
       return undefined;
     }
   })();
-  const selectionRefineValue = selectionRefining && current().selection
-    ? selectionRefining
-    : null;
+  const selectionRefineValue =
+    selectionRefining && current().selection ? selectionRefining : null;
   const currentSavedSelections = (): SavedSelectionBook =>
     current().savedSelections || emptySavedSelectionBook();
   const imageToQuickMask = (image: CanvasImageSource): QuickMask => {
@@ -1830,7 +2018,8 @@ export default function Home() {
     const group = groupForLayer(f, layer);
     if (
       group?.locked ||
-      (patch.groupId !== undefined && f.groups?.some((item) => item.id === patch.groupId && item.locked)) ||
+      (patch.groupId !== undefined &&
+        f.groups?.some((item) => item.id === patch.groupId && item.locked)) ||
       (layer.locked && !('locked' in patch) && !('visible' in patch))
     ) {
       setNotice('Unlock this layer before editing');
@@ -1845,7 +2034,8 @@ export default function Home() {
       commit({
         ...f,
         layers: f.layers.map((l) => (l.id === layer.id ? next : l)),
-      })) {
+      })
+    ) {
       setNotice('Layer updated');
       return true;
     }
@@ -1955,7 +2145,8 @@ export default function Home() {
       }
       mask.getContext('2d')!.putImageData(image, 0, 0);
       const maskId = addAsset(assets.current, mask);
-      if (commit({
+      if (
+        commit({
         ...f,
         selection: {
           shape: 'rectangle',
@@ -1967,7 +2158,8 @@ export default function Home() {
           inverted: false,
           mask: maskId,
         },
-      })) {
+        })
+      ) {
         setNotice(`Color Range selection created (fuzziness ${fuzziness})`);
       }
     } catch {
@@ -2074,7 +2266,12 @@ export default function Home() {
       return;
     }
     try {
-      const rendered = await renderSelection(f.selection, f.w, f.h, assets.current);
+      const rendered = await renderSelection(
+        f.selection,
+        f.w,
+        f.h,
+        assets.current,
+      );
       const context = rendered.getContext('2d');
       if (!context) throw new Error('Selection mask renderer is unavailable');
       const pixels = context.getImageData(0, 0, f.w, f.h).data;
@@ -2087,7 +2284,8 @@ export default function Home() {
       // asset remains inspectable without changing alpha compositing semantics.
       const mask = surface(f.w, f.h);
       const maskContext = mask.getContext('2d');
-      if (!maskContext) throw new Error('Selection mask surface is unavailable');
+      if (!maskContext)
+        throw new Error('Selection mask surface is unavailable');
       const output = maskContext.createImageData(f.w, f.h);
       for (let source = 0; source < refined.length; source += 1) {
         const target = source * 4;
@@ -2110,9 +2308,13 @@ export default function Home() {
         mask: maskId,
       };
       if (commit({ ...f, selection }))
-        setNotice(`Selection ${mode === 'grow' ? 'grown' : 'contracted'} by ${radius} px`);
+        setNotice(
+          `Selection ${mode === 'grow' ? 'grown' : 'contracted'} by ${radius} px`,
+        );
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Selection refinement failed');
+      setNotice(
+        error instanceof Error ? error.message : 'Selection refinement failed',
+      );
     } finally {
       setSelectionRefining(null);
     }
@@ -2312,7 +2514,8 @@ export default function Home() {
       }
       const maskCanvas = surface(f.w, f.h);
       const maskContext = maskCanvas.getContext('2d');
-      if (!maskContext) throw new Error('Background removal mask is unavailable');
+      if (!maskContext)
+        throw new Error('Background removal mask is unavailable');
       maskContext.imageSmoothingEnabled = false;
       maskContext.save();
       maskContext.setTransform(...layer.matrix);
@@ -2323,7 +2526,9 @@ export default function Home() {
         const removed = Math.round(
           (result.removedPixels / Math.max(1, result.eligiblePixels)) * 100,
         );
-        setNotice(`Background removed nondestructively (${removed}% edge pixels)`);
+        setNotice(
+          `Background removed nondestructively (${removed}% edge pixels)`,
+        );
       }
     } catch (error) {
       setNotice(
@@ -2426,8 +2631,7 @@ export default function Home() {
                     : type === 'box-blur' || type === 'gaussian-blur'
                       ? 85
                       : 70,
-                radius:
-                  type === 'mosaic' || type === 'color-halftone' ? 10 : 6,
+                radius: type === 'mosaic' || type === 'color-halftone' ? 10 : 6,
                 angle: type === 'twirl' ? 75 : 0,
               },
       })
@@ -2581,6 +2785,10 @@ export default function Home() {
         hardness,
         pressureSize,
         pressureOpacity,
+        patternId,
+        patternTileSize,
+        redEyeThreshold,
+        redEyeAmount,
         colorTolerance,
         tonalExposure,
         tonalRange,
@@ -2641,6 +2849,10 @@ export default function Home() {
     hardness,
     pressureSize,
     pressureOpacity,
+    patternId,
+    patternTileSize,
+    redEyeThreshold,
+    redEyeAmount,
     colorTolerance,
     tonalExposure,
     tonalRange,
@@ -3100,14 +3312,18 @@ export default function Home() {
       )
         setNotice('Layer aligned to canvas');
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Could not align layer');
+      setNotice(
+        error instanceof Error ? error.message : 'Could not align layer',
+      );
     }
   };
   const distributeGroupLayers = (axis: DistributionAxis) => {
     const f = current(),
       activeLayer = f.layers.find((item) => item.id === f.active),
       groupId = activeLayer?.groupId,
-      group = groupId ? f.groups?.find((item) => item.id === groupId) : undefined;
+      group = groupId
+        ? f.groups?.find((item) => item.id === groupId)
+        : undefined;
     if (!activeLayer || !group) {
       setNotice('Select a grouped layer before distributing');
       return;
@@ -3121,15 +3337,17 @@ export default function Home() {
       return;
     }
     const eligible = f.layers.filter(
-      (item) =>
-        item.groupId === group.id && item.visible && !item.locked,
+      (item) => item.groupId === group.id && item.visible && !item.locked,
     );
     if (eligible.length < 3) {
       setNotice('A group needs three visible unlocked layers to distribute');
       return;
     }
     try {
-      const bounds = eligible.map((item) => ({ id: item.id, ...layerBounds(item, assets.current) })),
+      const bounds = eligible.map((item) => ({
+          id: item.id,
+          ...layerBounds(item, assets.current),
+        })),
         deltas = distributionDeltas(bounds, axis),
         changed = eligible.some((item) => {
           const delta = deltas[item.id];
@@ -3152,7 +3370,9 @@ export default function Home() {
         );
     } catch (error) {
       setNotice(
-        error instanceof Error ? error.message : 'Could not distribute group layers',
+        error instanceof Error
+          ? error.message
+          : 'Could not distribute group layers',
       );
     }
   };
@@ -3477,7 +3697,9 @@ export default function Home() {
       ? describeImportFormat(selected.name, selected.type)
       : null;
     if (!selected || !importInfo?.tryDecode) {
-      setNotice(importInfo?.disclosure || 'Choose a browser-readable image file');
+      setNotice(
+        importInfo?.disclosure || 'Choose a browser-readable image file',
+      );
       if (file.current) file.current.value = '';
       if (layerFile.current) layerFile.current.value = '';
       return;
@@ -3748,6 +3970,8 @@ export default function Home() {
         'magic-eraser',
         'clone',
         'heal',
+        'red-eye',
+        'pattern-stamp',
         'smudge',
         'dodge',
         'burn',
@@ -4222,6 +4446,128 @@ export default function Home() {
       await g.pending;
       return;
     }
+    if (tool === 'pattern-stamp') {
+      if (
+        layerIsLocked(f, layer) ||
+        !layer.visible ||
+        layer.kind !== 'raster'
+      ) {
+        setNotice(
+          'Select a visible, unlocked raster layer before pattern stamping',
+        );
+        return;
+      }
+      const g = {
+        tool,
+        start: local,
+        last: local,
+        frame: f,
+        layer,
+        lastPressure: pressure(e),
+        pointerType: e.pointerType,
+        patternId,
+        patternTileSize,
+        moved: false,
+        queued: [
+          { ...local, pressure: pressure(e), pointerType: e.pointerType },
+        ],
+      } as Gesture;
+      gesture.current = g;
+      g.pending = (async () => {
+        try {
+          const sourceImage = await decodeAsset(assets.current[layer.asset]),
+            buffer = surface(
+              sourceImage.naturalWidth,
+              sourceImage.naturalHeight,
+            );
+          buffer.getContext('2d')!.drawImage(sourceImage, 0, 0);
+          if (gesture.current !== g) return;
+          g.buffer = buffer;
+          let from = g.start;
+          for (const point of g.queued || [
+            {
+              ...g.start,
+              pressure: g.lastPressure,
+              pointerType: g.pointerType,
+            },
+          ]) {
+            g.changed =
+              patternCanvasSegment(g.buffer, from, point, {
+                size: localSize(layer.matrix, size),
+                hardness,
+                opacity: brushOpacity / 100,
+                pointerType: point.pointerType,
+                pressure: point.pressure,
+                pressureSize,
+                pressureOpacity,
+                pattern: g.patternId!,
+                tileSize: g.patternTileSize!,
+                foreground: brushColor(color),
+                background: brushColor(backgroundColor),
+              }) || Boolean(g.changed);
+            from = point;
+          }
+          g.queued = undefined;
+          void paint(f, { [layer.id]: g.buffer });
+        } catch {
+          gesture.current = null;
+          setNotice('Could not prepare Pattern Stamp');
+        }
+      })();
+      await g.pending;
+      return;
+    }
+    if (tool === 'red-eye') {
+      if (
+        layerIsLocked(f, layer) ||
+        !layer.visible ||
+        layer.kind !== 'raster'
+      ) {
+        setNotice(
+          'Select a visible, unlocked raster layer before Red Eye correction',
+        );
+        return;
+      }
+      const g = {
+        tool,
+        start: local,
+        last: local,
+        frame: f,
+        layer,
+        redEyeThreshold,
+        redEyeAmount,
+        moved: false,
+        queued: [
+          { ...local, pressure: pressure(e), pointerType: e.pointerType },
+        ],
+      } as Gesture;
+      gesture.current = g;
+      g.pending = (async () => {
+        try {
+          const image = await decodeAsset(assets.current[layer.asset]),
+            buffer = surface(image.naturalWidth, image.naturalHeight);
+          buffer.getContext('2d')!.drawImage(image, 0, 0);
+          if (gesture.current !== g) return;
+          g.buffer = buffer;
+          let from = g.start;
+          for (const point of g.queued || [g.start]) {
+            redEyeCanvasStroke(buffer, from, point, {
+              radius: localSize(layer.matrix, size) / 2,
+              threshold: g.redEyeThreshold ?? 36,
+              amount: (g.redEyeAmount ?? 100) / 100,
+            });
+            from = point;
+          }
+          g.queued = undefined;
+          void paint(f, { [layer.id]: buffer });
+        } catch {
+          gesture.current = null;
+          setNotice('Could not prepare Red Eye correction');
+        }
+      })();
+      await g.pending;
+      return;
+    }
     if (tool === 'color-replace') {
       if (
         layerIsLocked(f, layer) ||
@@ -4566,6 +4912,35 @@ export default function Home() {
       g.last = local;
       return;
     }
+    if (g.tool === 'pattern-stamp' && g.buffer) {
+      g.changed =
+        patternCanvasSegment(g.buffer, g.last, local, {
+          size: localSize(g.layer!.matrix, size),
+          hardness,
+          opacity: brushOpacity / 100,
+          pointerType: g.pointerType,
+          pressure: g.lastPressure,
+          pressureSize,
+          pressureOpacity,
+          pattern: g.patternId!,
+          tileSize: g.patternTileSize!,
+          foreground: brushColor(color),
+          background: brushColor(backgroundColor),
+        }) || Boolean(g.changed);
+      void paint(g.frame, { [g.layer!.id]: g.buffer });
+      g.last = local;
+      return;
+    }
+    if (g.tool === 'red-eye' && g.buffer) {
+      redEyeCanvasStroke(g.buffer, g.last, local, {
+        radius: localSize(g.layer!.matrix, size) / 2,
+        threshold: g.redEyeThreshold ?? 36,
+        amount: (g.redEyeAmount ?? 100) / 100,
+      });
+      void paint(g.frame, { [g.layer!.id]: g.buffer });
+      g.last = local;
+      return;
+    }
     if (
       g.tool === 'background-eraser' &&
       g.buffer &&
@@ -4646,6 +5021,20 @@ export default function Home() {
       return;
     }
     if ((g.tool === 'clone' || g.tool === 'heal') && !g.buffer) {
+      (g.queued || (g.queued = [])).push({
+        ...local,
+        pressure: g.lastPressure,
+        pointerType: g.pointerType,
+      });
+    }
+    if (g.tool === 'pattern-stamp' && !g.buffer) {
+      (g.queued || (g.queued = [])).push({
+        ...local,
+        pressure: g.lastPressure,
+        pointerType: g.pointerType,
+      });
+    }
+    if (g.tool === 'red-eye' && !g.buffer) {
       (g.queued || (g.queued = [])).push({
         ...local,
         pressure: g.lastPressure,
@@ -5000,7 +5389,9 @@ export default function Home() {
           angle: measurementAngle(g.start, p),
         })
       )
-        setNotice(`Ruler: ${formatMeasurement(pixels, measurementAngle(g.start, p))}`);
+        setNotice(
+          `Ruler: ${formatMeasurement(pixels, measurementAngle(g.start, p))}`,
+        );
       return;
     }
     if (
@@ -5155,7 +5546,9 @@ export default function Home() {
         cropPreviewId.current += 1;
         setCropPreview({ frame: f, ...plan });
         void paint(f);
-        setNotice(`Crop preview: ${plan.width} × ${plan.height} px · press Enter to apply`);
+        setNotice(
+          `Crop preview: ${plan.width} × ${plan.height} px · press Enter to apply`,
+        );
       } catch {
         void paint(f);
         setNotice('Crop needs at least one pixel inside the image');
@@ -5188,19 +5581,23 @@ export default function Home() {
     } else if (g.tool === 'slice' && g.moved) {
       try {
         const crop = planRectangularCrop(f.w, f.h, g.start, p),
-          [slice] = planSlices(f.w, f.h, [{
+          [slice] = planSlices(f.w, f.h, [
+            {
             id: `slice-${slicePreviewId.current + 1}`,
             name: sliceName,
             x: crop.left,
             y: crop.top,
             width: crop.width,
             height: crop.height,
-          }]).slices;
+            },
+          ]).slices;
         slicePreviewId.current += 1;
         setSlicePreview({ frame: f, ...slice });
         setSliceName(slice.name);
         void paint(f);
-        setNotice(`Slice preview: ${slice.width} × ${slice.height} px · name it and download`);
+        setNotice(
+          `Slice preview: ${slice.width} × ${slice.height} px · name it and download`,
+        );
       } catch {
         void paint(f);
         setNotice('Slice needs at least one pixel inside the image');
@@ -5252,6 +5649,54 @@ export default function Home() {
         setNotice(
           g.tool === 'heal' ? 'Healing stroke applied' : 'Clone stroke applied',
         );
+    } else if (g.tool === 'pattern-stamp' && g.buffer && g.layer) {
+      if (g.moved && (g.last.x !== local.x || g.last.y !== local.y))
+        g.changed =
+          patternCanvasSegment(g.buffer, g.last, local, {
+            size: localSize(g.layer.matrix, size),
+            hardness,
+            opacity: brushOpacity / 100,
+            pointerType: g.pointerType || e.pointerType,
+            pressure: g.lastPressure ?? pressure(e),
+            pressureSize,
+            pressureOpacity,
+            pattern: g.patternId!,
+            tileSize: g.patternTileSize!,
+            foreground: brushColor(color),
+            background: brushColor(backgroundColor),
+          }) || Boolean(g.changed);
+      if (!g.changed) {
+        void paint(f);
+        setNotice('No Pattern Stamp change applied');
+        return;
+      }
+      const asset = addAsset(assets.current, g.buffer);
+      if (
+        commit({
+          ...f,
+          layers: f.layers.map((item) =>
+            item.id === g.layer!.id ? { ...item, asset } : item,
+          ),
+        })
+      )
+        setNotice('Pattern Stamp stroke applied');
+    } else if (g.tool === 'red-eye' && g.buffer && g.layer) {
+      if (g.moved && (g.last.x !== local.x || g.last.y !== local.y))
+        redEyeCanvasStroke(g.buffer, g.last, local, {
+          radius: localSize(g.layer.matrix, size) / 2,
+          threshold: g.redEyeThreshold ?? 36,
+          amount: (g.redEyeAmount ?? 100) / 100,
+        });
+      const asset = addAsset(assets.current, g.buffer);
+      if (
+        commit({
+          ...f,
+          layers: f.layers.map((item) =>
+            item.id === g.layer!.id ? { ...item, asset } : item,
+          ),
+        })
+      )
+        setNotice('Red Eye correction applied');
     } else if (g.tool === 'background-eraser' && g.buffer && g.layer) {
       if (
         g.moved &&
@@ -5750,13 +6195,17 @@ export default function Home() {
     else if (command === 'group-layer') groupActiveLayer();
     else if (command === 'ungroup-layer') ungroupActiveLayer();
     else if (command === 'align-left') alignActiveLayer('left');
-    else if (command === 'align-center-horizontal') alignActiveLayer('center-horizontal');
+    else if (command === 'align-center-horizontal')
+      alignActiveLayer('center-horizontal');
     else if (command === 'align-right') alignActiveLayer('right');
     else if (command === 'align-top') alignActiveLayer('top');
-    else if (command === 'align-center-vertical') alignActiveLayer('center-vertical');
+    else if (command === 'align-center-vertical')
+      alignActiveLayer('center-vertical');
     else if (command === 'align-bottom') alignActiveLayer('bottom');
-    else if (command === 'distribute-horizontal') distributeGroupLayers('horizontal');
-    else if (command === 'distribute-vertical') distributeGroupLayers('vertical');
+    else if (command === 'distribute-horizontal')
+      distributeGroupLayers('horizontal');
+    else if (command === 'distribute-vertical')
+      distributeGroupLayers('vertical');
     else if (command === 'hide-layer') hideActiveLayer();
     else if (command === 'merge-visible') void mergeVisible();
     else if (command === 'flatten') void flattenImage();
@@ -5766,8 +6215,10 @@ export default function Home() {
     } else if (command === 'text-align-left') alignText('left');
     else if (command === 'text-align-center') alignText('center');
     else if (command === 'text-align-right') alignText('right');
-    else if (command === 'text-orientation-horizontal') setTextOrientation('horizontal');
-    else if (command === 'text-orientation-vertical') setTextOrientation('vertical');
+    else if (command === 'text-orientation-horizontal')
+      setTextOrientation('horizontal');
+    else if (command === 'text-orientation-vertical')
+      setTextOrientation('vertical');
     else if (command === 'select-all') selectAll();
     else if (command === 'deselect') setSelection(undefined);
     else if (command === 'reselect') reselect();
@@ -5780,8 +6231,14 @@ export default function Home() {
     else if (command === 'transform-selection') {
       if (current().selection) setSelectionTransforming(true);
       else setNotice('Create a selection before transforming it');
-    } else if (command === 'grow-selection' || command === 'contract-selection') {
-      if (current().selection) setSelectionRefining(command === 'grow-selection' ? 'grow' : 'contract');
+    } else if (
+      command === 'grow-selection' ||
+      command === 'contract-selection'
+    ) {
+      if (current().selection)
+        setSelectionRefining(
+          command === 'grow-selection' ? 'grow' : 'contract',
+        );
       else setNotice('Create a selection before refining it');
     } else if (command === 'color-range') setColorRanging(true);
     else if (command === 'mask-selection') void createMaskFromSelection();
@@ -5820,10 +6277,12 @@ export default function Home() {
       chooseFilterEffect('field-blur', 'Field Blur');
     else if (command === 'filter-tilt-shift')
       chooseFilterEffect('tilt-shift', 'Tilt-Shift');
-    else if (command === 'filter-mosaic') chooseFilterEffect('mosaic', 'Mosaic');
+    else if (command === 'filter-mosaic')
+      chooseFilterEffect('mosaic', 'Mosaic');
     else if (command === 'filter-color-halftone')
       chooseFilterEffect('color-halftone', 'Color Halftone');
-    else if (command === 'filter-ripple') chooseFilterEffect('ripple', 'Ripple');
+    else if (command === 'filter-ripple')
+      chooseFilterEffect('ripple', 'Ripple');
     else if (command === 'filter-twirl') chooseFilterEffect('twirl', 'Twirl');
     else if (command === 'crop') {
       if (slicePreview) cancelSlicePreview();
@@ -5949,7 +6408,14 @@ export default function Home() {
       case 'distribute-horizontal':
       case 'distribute-vertical': {
         const group = layer ? groupForLayer(frame, layer) : undefined;
-        return !group || group.locked || !group.visible || frame.layers.filter((item) => item.groupId === group.id && item.visible && !item.locked).length < 3;
+        return (
+          !group ||
+          group.locked ||
+          !group.visible ||
+          frame.layers.filter(
+            (item) => item.groupId === group.id && item.visible && !item.locked,
+          ).length < 3
+        );
       }
       case 'grow-selection':
       case 'contract-selection':
@@ -6027,7 +6493,8 @@ export default function Home() {
         multiple
         onChange={(event) => {
           const files = Array.from(event.target.files || []);
-          if (files.length) setBatchImages(files.map((file) => ({ name: file.name, file })));
+          if (files.length)
+            setBatchImages(files.map((file) => ({ name: file.name, file })));
           event.currentTarget.value = '';
         }}
       />
@@ -6247,7 +6714,11 @@ export default function Home() {
         </div>
       </section>
       <div className="workspace">
-        <aside className="toolbar" aria-label="Tools" data-testid="tool-palette">
+        <aside
+          className="toolbar"
+          aria-label="Tools"
+          data-testid="tool-palette"
+        >
           {TOOLS.map(({ id, label, icon: Icon, key }) => (
             <button
               key={id}
@@ -6350,11 +6821,18 @@ export default function Home() {
               data-testid="perspective-crop-controls"
             >
               <span>
-                Perspective crop · {perspectiveCropPreview.width} × {perspectiveCropPreview.height} px
+                Perspective crop · {perspectiveCropPreview.width} ×{' '}
+                {perspectiveCropPreview.height} px
               </span>
               <div className="perspective-crop-fields">
-                {(['Top left', 'Top right', 'Bottom right', 'Bottom left'] as const).map(
-                  (label, index) => (
+                {(
+                  [
+                    'Top left',
+                    'Top right',
+                    'Bottom right',
+                    'Bottom left',
+                  ] as const
+                ).map((label, index) => (
                     <span key={label}>
                       <label>
                         {label} X
@@ -6367,7 +6845,9 @@ export default function Home() {
                           onChange={(event) => {
                             const value = Number(event.target.value);
                             if (!Number.isFinite(value)) return;
-                            const quad = perspectiveCropPreview.quad.map((point) => ({ ...point })) as CropQuad;
+                          const quad = perspectiveCropPreview.quad.map(
+                            (point) => ({ ...point }),
+                          ) as CropQuad;
                             quad[index] = { ...quad[index], x: value };
                             updatePerspectiveCropPreview({ quad });
                           }}
@@ -6384,15 +6864,16 @@ export default function Home() {
                           onChange={(event) => {
                             const value = Number(event.target.value);
                             if (!Number.isFinite(value)) return;
-                            const quad = perspectiveCropPreview.quad.map((point) => ({ ...point })) as CropQuad;
+                          const quad = perspectiveCropPreview.quad.map(
+                            (point) => ({ ...point }),
+                          ) as CropQuad;
                             quad[index] = { ...quad[index], y: value };
                             updatePerspectiveCropPreview({ quad });
                           }}
                         />
                       </label>
                     </span>
-                  ),
-                )}
+                ))}
                 <label>
                   Output width
                   <input
@@ -6403,7 +6884,8 @@ export default function Home() {
                     value={perspectiveCropPreview.width}
                     onChange={(event) => {
                       const value = Number(event.target.value);
-                      if (Number.isFinite(value)) updatePerspectiveCropPreview({ width: value });
+                      if (Number.isFinite(value))
+                        updatePerspectiveCropPreview({ width: value });
                     }}
                   />
                 </label>
@@ -6417,7 +6899,8 @@ export default function Home() {
                     value={perspectiveCropPreview.height}
                     onChange={(event) => {
                       const value = Number(event.target.value);
-                      if (Number.isFinite(value)) updatePerspectiveCropPreview({ height: value });
+                      if (Number.isFinite(value))
+                        updatePerspectiveCropPreview({ height: value });
                     }}
                   />
                 </label>
@@ -6428,7 +6911,9 @@ export default function Home() {
                 disabled={perspectiveCropApplying}
                 onClick={() => void applyPerspectiveCropPreview()}
               >
-                {perspectiveCropApplying ? 'Applying…' : 'Apply perspective crop'}
+                {perspectiveCropApplying
+                  ? 'Applying…'
+                  : 'Apply perspective crop'}
               </button>
               <button
                 type="button"
@@ -6455,7 +6940,9 @@ export default function Home() {
                   onChange={(event) => setSliceName(event.target.value)}
                 />
               </label>
-              <span>{slicePreview.width} × {slicePreview.height} px</span>
+              <span>
+                {slicePreview.width} × {slicePreview.height} px
+              </span>
               <button
                 type="button"
                 data-testid="slice-download"
@@ -6506,7 +6993,12 @@ export default function Home() {
                     return (
                       <g key={item.id} className="measurement-sample">
                         <circle cx={item.x} cy={item.y} r="8" />
-                        <circle cx={item.x} cy={item.y} r="5" fill={item.color} />
+                        <circle
+                          cx={item.x}
+                          cy={item.y}
+                          r="5"
+                          fill={item.color}
+                        />
                         <title>{`${item.color.toUpperCase()} · alpha ${item.alpha}`}</title>
                       </g>
                     );
@@ -6515,8 +7007,15 @@ export default function Home() {
                     const labelY = (item.start.y + item.end.y) / 2 - 8;
                     return (
                       <g key={item.id} className="measurement-ruler">
-                        <line x1={item.start.x} y1={item.start.y} x2={item.end.x} y2={item.end.y} />
-                        <text x={labelX} y={labelY}>{formatMeasurement(item.pixels, item.angle)}</text>
+                        <line
+                          x1={item.start.x}
+                          y1={item.start.y}
+                          x2={item.end.x}
+                          y2={item.end.y}
+                        />
+                        <text x={labelX} y={labelY}>
+                          {formatMeasurement(item.pixels, item.angle)}
+                        </text>
                       </g>
                     );
                   }
@@ -6524,21 +7023,51 @@ export default function Home() {
                     return (
                       <g key={item.id} className="measurement-note">
                         <circle cx={item.x} cy={item.y} r="7" />
-                        <text x={item.x + 11} y={item.y + 4}>{item.text}</text>
+                        <text x={item.x + 11} y={item.y + 4}>
+                          {item.text}
+                        </text>
                       </g>
                     );
                   return (
                     <g key={item.id} className="measurement-count">
                       <circle cx={item.x} cy={item.y} r="11" />
-                      <text x={item.x} y={item.y + 4}>{item.index}</text>
+                      <text x={item.x} y={item.y + 4}>
+                        {item.index}
+                      </text>
                     </g>
                   );
                 })}
                 {measurementPreview && (
                   <g className="measurement-ruler measurement-preview">
-                    <line x1={measurementPreview.start.x} y1={measurementPreview.start.y} x2={measurementPreview.end.x} y2={measurementPreview.end.y} />
-                    <text x={(measurementPreview.start.x + measurementPreview.end.x) / 2} y={(measurementPreview.start.y + measurementPreview.end.y) / 2 - 8}>
-                      {formatMeasurement(measurementDistance(measurementPreview.start, measurementPreview.end), measurementAngle(measurementPreview.start, measurementPreview.end))}
+                    <line
+                      x1={measurementPreview.start.x}
+                      y1={measurementPreview.start.y}
+                      x2={measurementPreview.end.x}
+                      y2={measurementPreview.end.y}
+                    />
+                    <text
+                      x={
+                        (measurementPreview.start.x +
+                          measurementPreview.end.x) /
+                        2
+                      }
+                      y={
+                        (measurementPreview.start.y +
+                          measurementPreview.end.y) /
+                          2 -
+                        8
+                      }
+                    >
+                      {formatMeasurement(
+                        measurementDistance(
+                          measurementPreview.start,
+                          measurementPreview.end,
+                        ),
+                        measurementAngle(
+                          measurementPreview.start,
+                          measurementPreview.end,
+                        ),
+                      )}
                     </text>
                   </g>
                 )}
@@ -6552,19 +7081,35 @@ export default function Home() {
                 preserveAspectRatio="none"
                 aria-label={`Crop preview ${cropPreview.width} by ${cropPreview.height} pixels`}
               >
-                <rect x="0" y="0" width={cropPreview.frame.w} height={cropPreview.top} />
-                <rect x="0" y={cropPreview.top} width={cropPreview.left} height={cropPreview.height} />
+                <rect
+                  x="0"
+                  y="0"
+                  width={cropPreview.frame.w}
+                  height={cropPreview.top}
+                />
+                <rect
+                  x="0"
+                  y={cropPreview.top}
+                  width={cropPreview.left}
+                  height={cropPreview.height}
+                />
                 <rect
                   x={cropPreview.left + cropPreview.width}
                   y={cropPreview.top}
-                  width={Math.max(0, cropPreview.frame.w - cropPreview.left - cropPreview.width)}
+                  width={Math.max(
+                    0,
+                    cropPreview.frame.w - cropPreview.left - cropPreview.width,
+                  )}
                   height={cropPreview.height}
                 />
                 <rect
                   x="0"
                   y={cropPreview.top + cropPreview.height}
                   width={cropPreview.frame.w}
-                  height={Math.max(0, cropPreview.frame.h - cropPreview.top - cropPreview.height)}
+                  height={Math.max(
+                    0,
+                    cropPreview.frame.h - cropPreview.top - cropPreview.height,
+                  )}
                 />
                 <rect
                   className="crop-preview-border"
@@ -6573,10 +7118,34 @@ export default function Home() {
                   width={cropPreview.width}
                   height={cropPreview.height}
                 />
-                <line className="crop-preview-guide" x1={cropPreview.left + cropPreview.width / 3} y1={cropPreview.top} x2={cropPreview.left + cropPreview.width / 3} y2={cropPreview.top + cropPreview.height} />
-                <line className="crop-preview-guide" x1={cropPreview.left + cropPreview.width * 2 / 3} y1={cropPreview.top} x2={cropPreview.left + cropPreview.width * 2 / 3} y2={cropPreview.top + cropPreview.height} />
-                <line className="crop-preview-guide" x1={cropPreview.left} y1={cropPreview.top + cropPreview.height / 3} x2={cropPreview.left + cropPreview.width} y2={cropPreview.top + cropPreview.height / 3} />
-                <line className="crop-preview-guide" x1={cropPreview.left} y1={cropPreview.top + cropPreview.height * 2 / 3} x2={cropPreview.left + cropPreview.width} y2={cropPreview.top + cropPreview.height * 2 / 3} />
+                <line
+                  className="crop-preview-guide"
+                  x1={cropPreview.left + cropPreview.width / 3}
+                  y1={cropPreview.top}
+                  x2={cropPreview.left + cropPreview.width / 3}
+                  y2={cropPreview.top + cropPreview.height}
+                />
+                <line
+                  className="crop-preview-guide"
+                  x1={cropPreview.left + (cropPreview.width * 2) / 3}
+                  y1={cropPreview.top}
+                  x2={cropPreview.left + (cropPreview.width * 2) / 3}
+                  y2={cropPreview.top + cropPreview.height}
+                />
+                <line
+                  className="crop-preview-guide"
+                  x1={cropPreview.left}
+                  y1={cropPreview.top + cropPreview.height / 3}
+                  x2={cropPreview.left + cropPreview.width}
+                  y2={cropPreview.top + cropPreview.height / 3}
+                />
+                <line
+                  className="crop-preview-guide"
+                  x1={cropPreview.left}
+                  y1={cropPreview.top + (cropPreview.height * 2) / 3}
+                  x2={cropPreview.left + cropPreview.width}
+                  y2={cropPreview.top + (cropPreview.height * 2) / 3}
+                />
               </svg>
             )}
             {perspectiveCropPreview && (
@@ -6593,7 +7162,9 @@ export default function Home() {
                 />
                 <polygon
                   className="perspective-crop-border"
-                  points={perspectiveCropPreview.quad.map((point) => `${point.x},${point.y}`).join(' ')}
+                  points={perspectiveCropPreview.quad
+                    .map((point) => `${point.x},${point.y}`)
+                    .join(' ')}
                 />
                 {perspectiveCropPreview.quad.map((point, index) => (
                   <circle
@@ -6615,12 +7186,46 @@ export default function Home() {
                 preserveAspectRatio="none"
                 aria-label={`Slice preview ${slicePreview.width} by ${slicePreview.height} pixels`}
               >
-                <rect x="0" y="0" width={slicePreview.frame.w} height={slicePreview.y} />
-                <rect x="0" y={slicePreview.y} width={slicePreview.x} height={slicePreview.height} />
-                <rect x={slicePreview.x + slicePreview.width} y={slicePreview.y} width={Math.max(0, slicePreview.frame.w - slicePreview.x - slicePreview.width)} height={slicePreview.height} />
-                <rect x="0" y={slicePreview.y + slicePreview.height} width={slicePreview.frame.w} height={Math.max(0, slicePreview.frame.h - slicePreview.y - slicePreview.height)} />
-                <rect className="slice-preview-border" x={slicePreview.x} y={slicePreview.y} width={slicePreview.width} height={slicePreview.height} />
-                <text x={slicePreview.x + 8} y={slicePreview.y + 18}>{sliceName || 'Unnamed slice'}</text>
+                <rect
+                  x="0"
+                  y="0"
+                  width={slicePreview.frame.w}
+                  height={slicePreview.y}
+                />
+                <rect
+                  x="0"
+                  y={slicePreview.y}
+                  width={slicePreview.x}
+                  height={slicePreview.height}
+                />
+                <rect
+                  x={slicePreview.x + slicePreview.width}
+                  y={slicePreview.y}
+                  width={Math.max(
+                    0,
+                    slicePreview.frame.w - slicePreview.x - slicePreview.width,
+                  )}
+                  height={slicePreview.height}
+                />
+                <rect
+                  x="0"
+                  y={slicePreview.y + slicePreview.height}
+                  width={slicePreview.frame.w}
+                  height={Math.max(
+                    0,
+                    slicePreview.frame.h - slicePreview.y - slicePreview.height,
+                  )}
+                />
+                <rect
+                  className="slice-preview-border"
+                  x={slicePreview.x}
+                  y={slicePreview.y}
+                  width={slicePreview.width}
+                  height={slicePreview.height}
+                />
+                <text x={slicePreview.x + 8} y={slicePreview.y + 18}>
+                  {sliceName || 'Unnamed slice'}
+                </text>
               </svg>
             )}
           </div>
@@ -7028,6 +7633,8 @@ export default function Home() {
             tool === 'smudge' ||
             tool === 'clone' ||
             tool === 'heal' ||
+            tool === 'red-eye' ||
+            tool === 'pattern-stamp' ||
             tool === 'rectangle' ||
             tool === 'ellipse' ||
             tool === 'line' ||
@@ -7055,11 +7662,14 @@ export default function Home() {
                 tool === 'sponge' ||
                 tool === 'smudge' ||
                 tool === 'clone' ||
-                tool === 'heal') && (
+                tool === 'heal' ||
+                tool === 'red-eye' ||
+                tool === 'pattern-stamp') && (
                 <>
                   {tool !== 'pencil' &&
                     tool !== 'color-replace' &&
-                    tool !== 'magic-eraser' && (
+                    tool !== 'magic-eraser' &&
+                    tool !== 'red-eye' && (
                       <Slider
                         label="Hardness"
                         value={hardness}
@@ -7069,7 +7679,7 @@ export default function Home() {
                         suffix="%"
                       />
                     )}
-                  {tool !== 'magic-eraser' && (
+                  {tool !== 'magic-eraser' && tool !== 'red-eye' && (
                     <Slider
                       label={
                         tool === 'dodge' ||
@@ -7092,7 +7702,8 @@ export default function Home() {
                     tool !== 'dodge' &&
                     tool !== 'burn' &&
                     tool !== 'sponge' &&
-                    tool !== 'smudge' && (
+                    tool !== 'smudge' &&
+                    tool !== 'red-eye' && (
                       <>
                         <label className="check-row">
                           <input
@@ -7184,6 +7795,63 @@ export default function Home() {
                           <option value="desaturate">Desaturate</option>
                         </select>
                       </label>
+                    </>
+                  )}
+                  {tool === 'pattern-stamp' && (
+                    <>
+                      <label className="select-row">
+                        <span>Pattern</span>
+                        <select
+                          aria-label="Pattern source"
+                          value={patternId}
+                          onChange={(event) =>
+                            setPatternId(event.target.value as PatternId)
+                          }
+                        >
+                          {PATTERN_IDS.map((id) => (
+                            <option key={id} value={id}>
+                              {id[0].toUpperCase() + id.slice(1)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <Slider
+                        label="Tile size"
+                        value={patternTileSize}
+                        min={4}
+                        max={128}
+                        set={setPatternTileSize}
+                        suffix="px"
+                      />
+                      <p className="adjust-note">
+                        Pattern Stamp generates a bounded local tile from the
+                        foreground/background wells. No source image leaves this
+                        device.
+                      </p>
+                    </>
+                  )}
+                  {tool === 'red-eye' && (
+                    <>
+                      <Slider
+                        label="Red threshold"
+                        value={redEyeThreshold}
+                        min={0}
+                        max={255}
+                        set={setRedEyeThreshold}
+                        suffix=""
+                      />
+                      <Slider
+                        label="Correction amount"
+                        value={redEyeAmount}
+                        min={0}
+                        max={100}
+                        set={setRedEyeAmount}
+                        suffix="%"
+                      />
+                      <p className="adjust-note">
+                        Corrects conservative red-dominant pixels locally. It
+                        preserves transparency and stays on this device.
+                      </p>
                     </>
                   )}
                 </>
@@ -7359,8 +8027,16 @@ export default function Home() {
           {notice}
         </span>
         <span>{tool[0].toUpperCase() + tool.slice(1)} tool</span>
-        <output aria-label="Render status" data-testid="render-status" aria-live="polite">
-          {doc.rendering ? 'Rendering…' : 'Render ready'}
+        <output
+          aria-label="Render status"
+          data-testid="render-status"
+          data-render-completed={renderProgress?.completed ?? 0}
+          data-render-total={renderProgress?.total ?? 0}
+          aria-live="polite"
+        >
+          {doc.rendering
+            ? `Rendering… ${renderProgress?.completed ?? 0}/${renderProgress?.total ?? 0} layers`
+            : 'Render ready'}
         </output>
         <output
           aria-label="Draft save status"

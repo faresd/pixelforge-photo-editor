@@ -25,6 +25,11 @@ import {
   validBrushPressureSettings,
   type BrushPressureSettings,
 } from './brush.ts';
+import {
+  PATTERN_IDS,
+  normalizePatternTileSize,
+  type PatternId,
+} from './patternStamp.ts';
 import { beginPerformanceSpan } from './performanceMarks.ts';
 export type Tool =
   | 'move'
@@ -39,6 +44,8 @@ export type Tool =
   | 'gradient'
   | 'clone'
   | 'heal'
+  | 'red-eye'
+  | 'pattern-stamp'
   | 'crop'
   | 'perspective-crop'
   | 'slice'
@@ -80,6 +87,13 @@ export type Settings = {
   pressureSize?: boolean;
   /** Opt-in pen/touch pressure mapping for brush alpha. */
   pressureOpacity?: boolean;
+  /** Deterministic local source selected by Pattern Stamp. */
+  patternId?: PatternId;
+  /** Bounded tile edge in canvas pixels for Pattern Stamp. */
+  patternTileSize?: number;
+  /** Conservative local Red Eye correction threshold and strength. */
+  redEyeThreshold?: number;
+  redEyeAmount?: number;
   colorTolerance?: number;
   /** Tonal retouch settings persisted with the active tool. */
   tonalExposure?: number;
@@ -176,6 +190,8 @@ function validSettings(settings: unknown): settings is Settings {
       'gradient',
       'clone',
       'heal',
+      'red-eye',
+      'pattern-stamp',
       'crop',
       'perspective-crop',
       'slice',
@@ -217,7 +233,19 @@ function validSettings(settings: unknown): settings is Settings {
     (candidate.backgroundColor !== undefined &&
       (typeof candidate.backgroundColor !== 'string' ||
         !/^#[a-f\d]{6}$/i.test(candidate.backgroundColor))) ||
-    !validBrushPressureSettings(candidate)
+    !validBrushPressureSettings(candidate) ||
+    (candidate.patternId !== undefined &&
+      !PATTERN_IDS.includes(candidate.patternId as PatternId)) ||
+    (candidate.redEyeThreshold !== undefined &&
+      (typeof candidate.redEyeThreshold !== 'number' ||
+        !Number.isFinite(candidate.redEyeThreshold) ||
+        candidate.redEyeThreshold < 0 ||
+        candidate.redEyeThreshold > 255)) ||
+    (candidate.redEyeAmount !== undefined &&
+      (typeof candidate.redEyeAmount !== 'number' ||
+        !Number.isFinite(candidate.redEyeAmount) ||
+        candidate.redEyeAmount < 0 ||
+        candidate.redEyeAmount > 100))
   )
     return false;
   const ranges: [number, number, number][] = [
@@ -232,6 +260,13 @@ function validSettings(settings: unknown): settings is Settings {
     [candidate.tonalExposure ?? 50, 1, 100] as [number, number, number],
     [candidate.spongeVibrance ?? 50, 1, 100] as [number, number, number],
   ];
+  if (candidate.patternTileSize !== undefined) {
+    try {
+      normalizePatternTileSize(candidate.patternTileSize);
+    } catch {
+      return false;
+    }
+  }
   return (
     ranges.every(
       ([value, min, max]) =>
@@ -446,7 +481,9 @@ function newPendingToken(): string {
     typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()
       : undefined;
-  return uuid || `${Date.now().toString(36)}-${(++pendingTokenCounter).toString(36)}`;
+  return (
+    uuid || `${Date.now().toString(36)}-${(++pendingTokenCounter).toString(36)}`
+  );
 }
 
 /**
@@ -488,7 +525,11 @@ export function nextPendingDraftRevision(
  * closes the small reload window without sharing an in-flight draft between
  * tabs; oversized projects simply rely on IndexedDB as before.
  */
-export function stagePendingDraft(id: string, value: Draft, revision: number): string | undefined {
+export function stagePendingDraft(
+  id: string,
+  value: Draft,
+  revision: number,
+): string | undefined {
   if (!validId(id) || !validRevision(revision)) return undefined;
   try {
     const previous = readPendingDraft(id);
@@ -497,7 +538,10 @@ export function stagePendingDraft(id: string, value: Draft, revision: number): s
       previous?.draft.localRevision,
     );
     if (stagedRevision === undefined) return undefined;
-    const safe = prepareDraftForStorage({ ...value, localRevision: stagedRevision });
+    const safe = prepareDraftForStorage({
+      ...value,
+      localRevision: stagedRevision,
+    });
     const token = newPendingToken();
     const encoded = JSON.stringify({ token, draft: safe });
     if (encoded.length > MAX_PENDING_DRAFT_BYTES) return undefined;
@@ -521,7 +565,11 @@ function readPendingDraft(id: string): PendingDraftRecord | undefined {
     // Read snapshots written by the pre-token implementation.
     return { draft: validateDraft(parsed) };
   } catch {
-    try { sessionStorage.removeItem(PENDING_DRAFT_PREFIX + id); } catch { /* Ignore blocked storage. */ }
+    try {
+      sessionStorage.removeItem(PENDING_DRAFT_PREFIX + id);
+    } catch {
+      /* Ignore blocked storage. */
+    }
     return undefined;
   }
 }
@@ -591,7 +639,10 @@ export async function readDraft(id: string): Promise<Draft | undefined> {
       }
       try {
         const saved = validateDraft(value);
-        if (!pending || (pending.draft.localRevision || 0) < (saved.localRevision || 0)) {
+        if (
+          !pending ||
+          (pending.draft.localRevision || 0) < (saved.localRevision || 0)
+        ) {
           resolve(saved);
           return;
         }
