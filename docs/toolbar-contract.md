@@ -3,24 +3,34 @@
 The left palette keeps every implemented tool reachable in a compact two-column
 layout, expanding to three columns on wide editor viewports. Tools are grouped
 under Navigate, Measure, Marquee, Lasso, Selection, Crop & Slice, Retouch,
-Paint & Fill, and Draw & Type headings. The grouping is presentation metadata;
-it does not hide a tool or change its persisted `Tool` identifier.
+Paint & Fill, and Draw & Type headings. Category grids use the same two/three
+column geometry as the palette, so each category stays aligned at desktop and
+wide desktop breakpoints. The grouping is presentation metadata; it does not
+hide a tool or change its persisted `Tool` identifier.
 
-Tool buttons with Photoshop-style subtools expose `aria-haspopup="menu"`. A
-pointer or touch press held for 420 ms opens a flyout without selecting the
-parent tool. Releasing a short press selects the button normally. Flyout items
-are ordinary menu buttons, retain the existing tool IDs and shortcuts, and can
-be activated by touch, mouse or keyboard. Escape closes an open flyout.
+Tool buttons with Photoshop-style subtools expose `aria-haspopup="menu"` and a
+stable `id`. There is one flyout at a time, rendered against the viewport so
+the palette's scrolling/overflow cannot clip it. Its `aria-labelledby` points
+to the trigger id and its menu items expose explicit accessible names.
+
+A pointer or touch press held for 420 ms opens a flyout without selecting the
+parent tool. Releasing a short click, or pressing Enter/Space on a trigger,
+selects the trigger. Arrow Up/Down and the context menu open the flyout. A
+flyout owns focus on open: Home/End move to the first/last item, Up/Down rove
+between items, and Escape or an outside pointer dismisses it and returns focus
+to its trigger. Flyout items are ordinary menu buttons, retain the existing
+tool IDs and shortcuts, and can be activated by touch, mouse or keyboard.
 
 Repeated Photoshop keys continue to cycle the existing keyboard families:
 `M` marquee, `L` lasso, `W` selection, `C` crop, `G` fill, `B` paint, `U`
 shapes, `I` measurement, `E` eraser, `O` tonal, `S` stamp, and `J` healing.
-The Selection flyout presents the current Selection Brush implementation as
-the Quick Selection equivalent beside Magic Wand, while the main toolbar keeps
-the precise Selection Brush label and its legacy `L` keyboard behavior.
+The Selection flyout presents the implemented `Selection Brush` and `Magic
+Wand` names. It does not relabel Selection Brush as Quick Selection. `W`
+cycles the two selection tools, while `L` retains the legacy lasso family.
 
 Coverage lives in `src/toolPalette.ts`, `tests/tool-palette.test.mjs`, and the
 desktop/mobile `tests/browser/toolbar-layout.spec.ts` acceptance tests. The
-tests assert category completeness, family cycling, flyout keyboard aliases,
-hold-to-open behavior, Escape dismissal and preservation of two/three-column
-touch targets.
+tests assert category completeness, family cycling, explicit menu names,
+single-popup anchoring, viewport bounds, short activation, press-and-hold and
+touch selection, roving menu focus, Escape/outside dismissal, and preservation
+of two/three-column touch targets.
