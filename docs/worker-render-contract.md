@@ -1,0 +1,101 @@
+# Worker document-render contract
+
+PixelForge can render an immutable document frame in a dedicated module worker
+when the browser exposes `Worker`, `OffscreenCanvas`, `createImageBitmap` and a
+usable 2D context. This is a bounded full-frame isolation slice. It keeps the
+main thread available while a committed frame is painted, but it is not a
+tiled renderer and it does not make the current 16 MP safety limit larger.
+
+## Request protocol
+
+The main thread creates a fresh module worker for a render and sends one
+structured-clone request:
+
+```ts
+{
+  kind: 'render',
+  id: number,
+  frame: Frame,
+  assets: Assets,
+}
+```
+
+`assets` is reduced to the raster and mask assets referenced by the requested
+frame. Undo history and unrelated project assets are not cloned. The worker
+rejects malformed frames through the same `validateFrame` contract used by the
+main-thread renderer and processes one request at a time.
+
+The main thread may send `{ kind: 'cancel', id }` for the active request. The
+worker checks cancellation between layer passes and before publishing output.
+An invalid request or a worker-side exception produces a bounded error object:
+
+```ts
+{ kind: 'error', id, name: string, message: string }
+```
+
+Error names and messages are truncated before crossing the worker boundary so
+an exception cannot become an unbounded response.
+
+## Result protocol and validation
+
+The preferred response transfers an `ImageBitmap`:
+
+```ts
+{ kind: 'result', id, image: ImageBitmap, width: number, height: number }
+```
+
+If `transferToImageBitmap()` is unavailable, the worker encodes a PNG and
+transfers its `ArrayBuffer` instead:
+
+```ts
+{ kind: 'result-bytes', id, bytes: ArrayBuffer, width: number, height: number }
+```
+
+The client accepts only a response with the matching request id, exact frame
+width and height, and either a closable image or a non-empty PNG buffer no
+larger than 64 MiB. A byte response is decoded with `createImageBitmap`; a
+decode failure rejects the render. Unknown messages, stale ids, malformed
+responses and wrong dimensions are ignored or rejected without replacing the
+last published canvas.
+
+Each request has a 30-second watchdog. A timeout, worker error, message error,
+abort signal or invalid response terminates that worker and rejects the
+request. A newer render invalidates an older render in `useDocument`; only the
+newest completed result can be published. Published image sources are closed
+after they are drawn or discarded.
+
+## Fallback and interactive edits
+
+The renderer uses the existing main-thread `renderFrame` path when worker
+capability probing fails, worker construction fails, an abort is already
+requested, or a caller supplies a live per-layer canvas override (for example,
+an in-progress brush gesture). The fallback keeps local editing functional on
+browsers without OffscreenCanvas and preserves the previous canvas on a failed
+or cancelled render. Main-thread rendering yields between layers and observes
+the same cancellation predicate, so fallback work is bounded even though it is
+not isolated from input handling.
+
+## Current limitations
+
+This contract deliberately does not claim Photoshop-class or industrial-scale
+rendering:
+
+* The worker allocates a full output surface and may allocate additional
+  full-frame surfaces for masks, levels, curves and other effects. Peak memory
+  therefore remains bounded by the existing document limits, not by tiles.
+* The worker is created per render. A persistent worker pool, prioritisation,
+  tile cache, overlap scheduling and memory-pressure eviction are future work.
+* Interactive override canvases stay on the main-thread fallback. A full
+  worker-aware brush/adjustment command model is still planned.
+* Canvas font availability, CSS filter implementations and browser colour
+  management can differ between the worker and the visible document canvas.
+  PixelForge must keep representative pixel/alpha fixtures and disclose any
+  browser-specific variance before widening the worker path.
+* Physical desktop/mobile p50/p95 measurements, 16 MP memory traces and
+  low-memory recovery are release gates still pending. Current CI timings are
+  diagnostic and do not define a supported device profile.
+
+The tiled render cache and neighborhood-effect overlap rules remain a separate
+Phase 6 scale milestone. Until those gates pass, large-image work remains
+opt-in and the 16 MP, 16,000-pixel-edge and layer/history limits stay in force.
+

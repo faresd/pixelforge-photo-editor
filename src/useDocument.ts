@@ -1,12 +1,12 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   decodeAsset,
   referencedAssets,
-  renderFrame,
   validateFrame,
   type Assets,
   type Frame,
 } from './document';
+import { renderFrameWithWorker } from './workerRender';
 import type { Draft } from './drafts';
 import { beginPerformanceSpan } from './performanceMarks';
 
@@ -18,20 +18,35 @@ export function useDocument(onError: (message: string) => void) {
   const [frame, setFrame] = useState<Frame | null>(null),
     [revision, setRevision] = useState(0),
     [rendering, setRendering] = useState(false);
-  const renderSequence = useRef(0);
+  const renderSequence = useRef(0),
+    renderAbort = useRef<AbortController | null>(null);
+  const closeImageSource = (image: CanvasImageSource) => {
+    if ('close' in image && typeof image.close === 'function') image.close();
+  };
+  useEffect(() => () => renderAbort.current?.abort(), []);
   const paint = useCallback(
     async (value: Frame, overrides?: Record<string, HTMLCanvasElement>) => {
       const sequence = ++renderSequence.current;
+      renderAbort.current?.abort();
+      const controller = new AbortController();
+      renderAbort.current = controller;
       const renderSpan = beginPerformanceSpan('render');
       setRendering(true);
       try {
-        const image = await renderFrame(value, assets.current, overrides);
-        if (sequence !== renderSequence.current) return;
-        const target = canvas.current;
-        if (target) {
-          target.width = value.w;
-          target.height = value.h;
-          target.getContext('2d')!.drawImage(image, 0, 0);
+        const image = await renderFrameWithWorker(value, assets.current, overrides, {
+          signal: controller.signal,
+          isCancelled: () => sequence !== renderSequence.current,
+        });
+        try {
+          if (sequence !== renderSequence.current) return;
+          const target = canvas.current;
+          if (target) {
+            target.width = value.w;
+            target.height = value.h;
+            target.getContext('2d')!.drawImage(image, 0, 0);
+          }
+        } finally {
+          closeImageSource(image);
         }
       } catch (error) {
         if (sequence === renderSequence.current)
@@ -43,6 +58,7 @@ export function useDocument(onError: (message: string) => void) {
       } finally {
         renderSpan.finish();
         if (sequence === renderSequence.current) setRendering(false);
+        if (renderAbort.current === controller) renderAbort.current = null;
       }
     },
     [onError],
@@ -98,20 +114,36 @@ export function useDocument(onError: (message: string) => void) {
   );
   const install = useCallback(async (draft: Draft) => {
     const expected = history.current[index.current];
-    // Validate every history asset before switching, so undo never discovers a corrupt import.
-    for (const asset of Object.values(draft.assets)) await decodeAsset(asset);
-    // Decode and render before switching documents, preserving the current work on import failure.
-    const image = await renderFrame(draft.history[draft.index], draft.assets);
-    if (history.current[index.current] !== expected)
-      throw new Error('Document changed during import. Please try again.');
+    renderAbort.current?.abort();
+    const installController = new AbortController();
+    renderAbort.current = installController;
     ++renderSequence.current;
-    assets.current = draft.assets;
-    history.current = draft.history;
-    index.current = draft.index;
-    const target = canvas.current!;
-    target.width = image.width;
-    target.height = image.height;
-    target.getContext('2d')!.drawImage(image, 0, 0);
+    try {
+      // Validate every history asset before switching, so undo never discovers a corrupt import.
+      for (const asset of Object.values(draft.assets)) await decodeAsset(asset);
+      // Decode and render before switching documents, preserving the current work on import failure.
+      const image = await renderFrameWithWorker(draft.history[draft.index], draft.assets, undefined, {
+        signal: installController.signal,
+      });
+      try {
+        if (history.current[index.current] !== expected)
+          throw new Error('Document changed during import. Please try again.');
+        assets.current = draft.assets;
+        history.current = draft.history;
+        index.current = draft.index;
+        const target = canvas.current!;
+        target.width = draft.history[draft.index].w;
+        target.height = draft.history[draft.index].h;
+        target.getContext('2d')!.drawImage(image, 0, 0);
+      } finally {
+        closeImageSource(image);
+      }
+    } catch (error) {
+      setRendering(false);
+      throw error;
+    } finally {
+      if (renderAbort.current === installController) renderAbort.current = null;
+    }
     setFrame(draft.history[draft.index]);
     setRevision((v) => v + 1);
     setRendering(false);
