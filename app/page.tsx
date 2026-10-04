@@ -202,6 +202,11 @@ import {
   applyPatternStamp,
   type PatternId,
 } from '../src/patternStamp';
+import {
+  TOOL_CATEGORIES,
+  flyoutForTool,
+  flyoutTools,
+} from '../src/toolPalette';
 import { removeRedEye } from '../src/redEye';
 import { eraseBackgroundStroke, eraseMagicRegion } from '../src/erasers';
 import {
@@ -459,6 +464,16 @@ const toolSelectionNotice = (tool: Tool, label: string) =>
   tool === 'magnetic-lasso'
     ? 'Magnetic Lasso: drag along an edge, release to close'
     : `${label} tool selected`;
+const flyoutToolLabel = (tool: Tool, label: string) =>
+  tool === 'select'
+    ? 'Rectangular Marquee'
+    : tool === 'lasso'
+      ? 'Freeform Lasso'
+      : tool === 'selection-brush'
+        ? 'Quick Selection'
+        : label;
+const flyoutToolKey = (tool: Tool, key: string) =>
+  tool === 'selection-brush' ? 'W' : key;
 const MARQUEE_TOOLS: Tool[] = [
   'select',
   'ellipse-select',
@@ -1308,6 +1323,7 @@ export default function Home() {
       paint,
     } = doc;
   const [tool, setTool] = useState<Tool>('move'),
+    [toolFlyout, setToolFlyout] = useState<string | null>(null),
     [selectionOperation, setSelectionOperation] =
       useState<SelectionOperation>('replace'),
     [zoom, setZoom] = useState(72),
@@ -1340,6 +1356,8 @@ export default function Home() {
     ),
     [text, setText] = useState('Your text'),
     [fontSize, setFontSize] = useState(56);
+  const toolHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toolHoldOpened = useRef(false);
   const [cloneSource, setCloneSource] = useState<{
     x: number;
     y: number;
@@ -6693,9 +6711,14 @@ export default function Home() {
   useEffect(() => {
     const close = (e: PointerEvent) => {
       if (!menuArea.current?.contains(e.target as Node)) setActiveMenu(null);
+      if (!(e.target as Element)?.closest?.('.tool-button-wrap'))
+        setToolFlyout(null);
     };
     window.addEventListener('pointerdown', close);
     return () => window.removeEventListener('pointerdown', close);
+  }, []);
+  useEffect(() => () => {
+    if (toolHoldTimer.current !== null) clearTimeout(toolHoldTimer.current);
   }, []);
   useEffect(() => {
     if (!activeMenu) return;
@@ -6827,6 +6850,7 @@ export default function Home() {
       }
       if (gesture.current) return;
       if (e.key === 'Escape') {
+        setToolFlyout(null);
         closeMenu(true);
         return;
       }
@@ -7348,6 +7372,49 @@ export default function Home() {
         return false;
     }
   };
+  const stopToolHold = () => {
+    if (toolHoldTimer.current !== null) {
+      clearTimeout(toolHoldTimer.current);
+      toolHoldTimer.current = null;
+    }
+  };
+  const selectToolbarTool = (id: Tool, label: string) => {
+    if (cropPreview) cancelCropPreview();
+    if (perspectiveCropPreview) cancelPerspectiveCropPreview();
+    if (slicePreview) cancelSlicePreview();
+    if (gesture.current && gesture.current.tool !== id) {
+      // Switching tools abandons any staged pointer gesture. This is
+      // especially important for click-to-place tools on touch devices.
+      gesture.current = null;
+      void paint(current());
+    }
+    setTool(id);
+    setCloneSource(null);
+    setToolFlyout(null);
+    setNotice(toolSelectionNotice(id, label));
+  };
+  const beginToolHold = (id: Tool) => {
+    stopToolHold();
+    toolHoldOpened.current = false;
+    const flyout = flyoutForTool(id);
+    if (!flyout) return;
+    toolHoldTimer.current = setTimeout(() => {
+      toolHoldTimer.current = null;
+      toolHoldOpened.current = true;
+      setToolFlyout(flyout);
+    }, 420);
+  };
+  const openToolFlyoutFromKeyboard = (
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    id: Tool,
+  ) => {
+    if (!['Enter', ' ', 'ArrowDown', 'ArrowUp'].includes(event.key)) return;
+    const flyout = flyoutForTool(id);
+    if (!flyout) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setToolFlyout(flyout);
+  };
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <main
@@ -7655,33 +7722,85 @@ export default function Home() {
           aria-label="Tools"
           data-testid="tool-palette"
         >
-          {TOOLS.map(({ id, label, icon: Icon, key }) => (
-            <button
-              key={id}
-              className={tool === id ? 'active' : ''}
-              onClick={() => {
-                if (cropPreview) cancelCropPreview();
-                if (perspectiveCropPreview) cancelPerspectiveCropPreview();
-                if (slicePreview) cancelSlicePreview();
-                if (gesture.current && gesture.current.tool !== id) {
-                  // Switching tools abandons any staged pointer gesture. This
-                  // is especially important for Magnetic Lasso, which keeps
-                  // a tap armed so Escape can cancel it on touch devices.
-                  gesture.current = null;
-                  void paint(current());
-                }
-                setTool(id);
-                setCloneSource(null);
-                setNotice(toolSelectionNotice(id, label));
-              }}
-              aria-label={`${label} tool`}
-              aria-pressed={tool === id}
-              title={`${label} (${key})`}
+          {TOOL_CATEGORIES.map((category) => (
+            <section
+              className="tool-category"
+              aria-label={`${category.label} tools`}
+              key={category.id}
             >
-              <Icon />
-              <span>{label}</span>
-              <kbd>{key}</kbd>
-            </button>
+              <h3>{category.label}</h3>
+              <div className="tool-category-grid">
+                {category.tools.map((toolId) => {
+                  const item = TOOLS.find((candidate) => candidate.id === toolId);
+                  if (!item) return null;
+                  const { id, label, icon: Icon, key } = item,
+                    flyout = flyoutForTool(id),
+                    subtools = flyout ? flyoutTools(flyout) : [];
+                  return (
+                    <div className="tool-button-wrap" key={id}>
+                      <button
+                        className={tool === id ? 'active' : ''}
+                        onPointerDown={() => beginToolHold(id)}
+                        onPointerUp={stopToolHold}
+                        onPointerCancel={stopToolHold}
+                        onKeyDown={(event) =>
+                          openToolFlyoutFromKeyboard(event, id)
+                        }
+                        onClick={() => {
+                          if (toolHoldOpened.current) {
+                            // Releasing a long press opens the flyout without
+                            // immediately selecting the parent tool.
+                            toolHoldOpened.current = false;
+                            return;
+                          }
+                          selectToolbarTool(id, label);
+                        }}
+                        aria-label={`${label} tool`}
+                        aria-pressed={tool === id}
+                        aria-haspopup={flyout ? 'menu' : undefined}
+                        aria-expanded={flyout ? toolFlyout === flyout : undefined}
+                        title={`${label} (${key}) · press and hold for subtools`}
+                      >
+                        <Icon />
+                        <span>{label}</span>
+                        <kbd>{key}</kbd>
+                      </button>
+                      {flyout && toolFlyout === flyout && (
+                        <div
+                          className="tool-flyout"
+                          role="menu"
+                          aria-label={`${label} subtools`}
+                          onPointerDown={(event) => event.stopPropagation()}
+                        >
+                          {subtools.map((subtoolId) => {
+                            const subtool = TOOLS.find(
+                              (candidate) => candidate.id === subtoolId,
+                            );
+                            if (!subtool) return null;
+                            return (
+                              <button
+                                key={subtool.id}
+                                role="menuitem"
+                                className={tool === subtool.id ? 'active' : ''}
+                                onClick={() =>
+                                  selectToolbarTool(
+                                    subtool.id,
+                                    subtool.label,
+                                  )
+                                }
+                              >
+                                <span>{flyoutToolLabel(subtool.id, subtool.label)}</span>
+                                <kbd>{flyoutToolKey(subtool.id, subtool.key)}</kbd>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
           ))}
           <button
             className={

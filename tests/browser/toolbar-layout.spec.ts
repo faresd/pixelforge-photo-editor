@@ -65,3 +65,46 @@ test('wide editor palette expands to three columns without losing keyboard targe
   await expect(pen).toBeFocused();
   await expect(pen).toHaveAttribute('title', 'Pen (P)');
 });
+
+test('press-and-hold opens a Photoshop-style subtool flyout and touch can switch tools', async ({
+  page,
+}) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute(
+    'aria-busy',
+    'false',
+  );
+  const crop = page.getByRole('button', { name: 'Crop tool', exact: true });
+  await crop.hover();
+  await page.mouse.down();
+  await page.waitForTimeout(500);
+  await page.mouse.up();
+  const flyout = page.getByRole('menu', { name: 'Crop subtools', exact: true });
+  await expect(flyout).toBeVisible();
+  await expect(flyout.getByRole('menuitem', { name: 'Perspective Crop', exact: true })).toBeVisible();
+  await flyout.getByRole('menuitem', { name: 'Perspective Crop', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Perspective Crop tool', exact: true })).toHaveAttribute('aria-pressed', 'true');
+
+  // Keyboard opening has the same accessible menu contract and exposes the
+  // Photoshop M/L/W selection groups with friendly aliases.
+  const marquee = page.getByRole('button', { name: 'Select tool', exact: true });
+  await marquee.focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('menu', { name: 'Select subtools', exact: true })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Rectangular Marquee', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu', { name: 'Select subtools', exact: true })).toHaveCount(0);
+
+  const lasso = page.getByRole('button', { name: 'Lasso tool', exact: true });
+  await lasso.focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('menuitem', { name: 'Freeform Lasso', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+
+  const selectionBrush = page.getByRole('button', { name: 'Selection Brush tool', exact: true });
+  await selectionBrush.focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('menu', { name: 'Selection Brush subtools', exact: true })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Quick Selection', exact: true })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Magic Wand', exact: true })).toBeVisible();
+});
