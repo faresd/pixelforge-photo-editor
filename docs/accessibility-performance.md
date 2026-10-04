@@ -31,12 +31,15 @@ PNG-export measurement for both desktop and mobile Playwright projects. The
 measurements have generous 30-second watchdogs because CI hardware varies;
 they are evidence for regressions, not a universal device guarantee.
 
-Rendering currently uses a main-thread Canvas2D surface and last-render-wins
-sequencing. The documented 16 megapixel canvas, 64 megapixel raster-frame,
-64 MiB portable project, and 64 megapixel decoded-cache limits are safety
-budgets. Worker/OffscreenCanvas rendering, tile scheduling, cancellation, and
-device-specific telemetry remain planned follow-up work and are not implied by
-this contract.
+Rendering uses a Canvas2D surface and last-render-wins sequencing. Committed
+frames may now use bounded Worker/OffscreenCanvas rendering through a full-frame
+path with
+cooperative cancellation and a monotonic completed-layer status; the same
+status and cancellation guard the Canvas2D fallback. The documented 16
+megapixel canvas, 64 megapixel raster-frame, 64 MiB portable project, and 64
+megapixel decoded-cache limits are safety budgets. Tile scheduling, tile
+eviction, partial-pixel streaming and device-specific telemetry remain planned
+follow-up work and are not implied by this contract.
 
 ## Verification
 
@@ -45,4 +48,3 @@ contract retain the focus and reduced-motion rules. The browser acceptance
 spec `tests/browser/accessibility.spec.ts` runs in the configured desktop and
 mobile projects and verifies a visible keyboard focus ring, reduced-motion
 computed styles, and continued menu/editor usability.
-

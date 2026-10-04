@@ -1,4 +1,9 @@
-import { renderFrame, validateFrame, type Assets, type Frame } from './document.ts';
+import {
+  renderFrame,
+  validateFrame,
+  type Assets,
+  type Frame,
+} from './document.ts';
 
 type RenderRequest = {
   kind: 'render';
@@ -9,8 +14,21 @@ type RenderRequest = {
 type CancelRequest = { kind: 'cancel'; id: number };
 type Request = RenderRequest | CancelRequest;
 type Response =
-  | { kind: 'result'; id: number; image: ImageBitmap; width: number; height: number }
-  | { kind: 'result-bytes'; id: number; bytes: ArrayBuffer; width: number; height: number }
+  | { kind: 'progress'; id: number; completed: number; total: number }
+  | {
+      kind: 'result';
+      id: number;
+      image: ImageBitmap;
+      width: number;
+      height: number;
+    }
+  | {
+      kind: 'result-bytes';
+      id: number;
+      bytes: ArrayBuffer;
+      width: number;
+      height: number;
+    }
   | { kind: 'error'; id: number; name: string; message: string };
 
 const scope = globalThis as typeof globalThis & {
@@ -28,7 +46,8 @@ function cancellationError(): Error {
 }
 
 function postError(id: number, error: unknown): void {
-  const value = error instanceof Error ? error : new Error('Document rendering failed');
+  const value =
+    error instanceof Error ? error : new Error('Document rendering failed');
   scope.postMessage({
     kind: 'error',
     id,
@@ -37,7 +56,12 @@ function postError(id: number, error: unknown): void {
   });
 }
 
-async function encodeResult(id: number, canvas: OffscreenCanvas, width: number, height: number): Promise<void> {
+async function encodeResult(
+  id: number,
+  canvas: OffscreenCanvas,
+  width: number,
+  height: number,
+): Promise<void> {
   if (typeof canvas.transferToImageBitmap === 'function') {
     const image = canvas.transferToImageBitmap();
     scope.postMessage({ kind: 'result', id, image, width, height }, [image]);
@@ -45,7 +69,9 @@ async function encodeResult(id: number, canvas: OffscreenCanvas, width: number, 
   }
   const blob = await canvas.convertToBlob({ type: 'image/png' });
   const bytes = await blob.arrayBuffer();
-  scope.postMessage({ kind: 'result-bytes', id, bytes, width, height }, [bytes]);
+  scope.postMessage({ kind: 'result-bytes', id, bytes, width, height }, [
+    bytes,
+  ]);
 }
 
 scope.onmessage = (event: MessageEvent<Request>) => {
@@ -54,20 +80,47 @@ scope.onmessage = (event: MessageEvent<Request>) => {
     cancelled.add(request.id);
     return;
   }
-  if (!request || request.kind !== 'render' || !Number.isSafeInteger(request.id) || activeId !== undefined) {
-    if (request && 'id' in request && Number.isSafeInteger(request.id)) postError(request.id, new Error('Worker is busy or the render request is invalid'));
+  if (
+    !request ||
+    request.kind !== 'render' ||
+    !Number.isSafeInteger(request.id) ||
+    activeId !== undefined
+  ) {
+    if (request && 'id' in request && Number.isSafeInteger(request.id))
+      postError(
+        request.id,
+        new Error('Worker is busy or the render request is invalid'),
+      );
     return;
   }
   activeId = request.id;
   void (async () => {
     try {
       validateFrame(request.frame, request.assets);
-      const output = await renderFrame(request.frame, request.assets, undefined, {
-        isCancelled: () => cancelled.has(request.id),
-        yieldEveryLayers: 1,
-      });
+      const output = await renderFrame(
+        request.frame,
+        request.assets,
+        undefined,
+        {
+          isCancelled: () => cancelled.has(request.id),
+          yieldEveryLayers: 1,
+          onProgress: (completed, total) => {
+            scope.postMessage({
+              kind: 'progress',
+              id: request.id,
+              completed,
+              total,
+            });
+          },
+        },
+      );
       if (cancelled.has(request.id)) throw cancellationError();
-      await encodeResult(request.id, output as unknown as OffscreenCanvas, request.frame.w, request.frame.h);
+      await encodeResult(
+        request.id,
+        output as unknown as OffscreenCanvas,
+        request.frame.w,
+        request.frame.h,
+      );
     } catch (error) {
       if (!cancelled.has(request.id)) postError(request.id, error);
     } finally {

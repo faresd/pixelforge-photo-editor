@@ -12,7 +12,9 @@ upload anonymous work in the background.
 
 Progressive large-image rendering is a separate performance milestone. It
 should use a worker, OffscreenCanvas and bounded tiles before introducing any
-network transport. If realtime collaboration becomes a product requirement,
+network transport. The current worker slice reports completed layer passes and
+cancellation state only; it does not stream partial pixels or remove the
+full-frame allocation. If realtime collaboration becomes a product requirement,
 it must be an explicit opt-in for authenticated projects, send version or
 validated operation deltas through a durable session service, queue offline
 operations in IndexedDB, and preserve conflict recovery. Anonymous editing

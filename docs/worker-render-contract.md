@@ -27,6 +27,20 @@ main-thread renderer and processes one request at a time.
 
 The main thread may send `{ kind: 'cancel', id }` for the active request. The
 worker checks cancellation between layer passes and before publishing output.
+After each top-level layer pass, the worker may report bounded progress:
+
+```ts
+{ kind: 'progress', id, completed: number, total: number }
+```
+
+`total` is the number of layers in the requested frame. `completed` is a
+monotonic one-based count; hidden layers still count as completed passes. Nested
+renders used for decorated text and vector layers are intentionally excluded so
+the client never receives duplicate or regressing totals. The editor exposes
+the latest `completed/total` sample in its render-status output while keeping
+the last sample available after completion for diagnostics and assistive
+technology. Progress is advisory: cancellation, timeout and error paths remain
+the authoritative result.
 An invalid request or a worker-side exception produces a bounded error object:
 
 ```ts
@@ -85,6 +99,8 @@ rendering:
   therefore remains bounded by the existing document limits, not by tiles.
 * The worker is created per render. A persistent worker pool, prioritisation,
   tile cache, overlap scheduling and memory-pressure eviction are future work.
+* Progress currently counts full-frame layer passes. It is not a pixel or tile
+  percentage and does not imply that the worker is streaming a partial canvas.
 * Interactive override canvases stay on the main-thread fallback. A full
   worker-aware brush/adjustment command model is still planned.
 * Canvas font availability, CSS filter implementations and browser colour
@@ -98,4 +114,3 @@ rendering:
 The tiled render cache and neighborhood-effect overlap rules remain a separate
 Phase 6 scale milestone. Until those gates pass, large-image work remains
 opt-in and the 16 MP, 16,000-pixel-edge and layer/history limits stay in force.
-
