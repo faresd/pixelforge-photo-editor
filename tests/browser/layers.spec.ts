@@ -207,7 +207,7 @@ test('legacy projects migrate with history and the original bookmark is preserve
   await page.evaluate(
     async ({ oldId, png, defaults }) => {
       await new Promise<void>((resolve, reject) => {
-        const open = indexedDB.open('pixelforge-documents', 1);
+        const open = indexedDB.open('pixelforge-documents', 2);
         open.onsuccess = () => {
           const db = open.result,
             tx = db.transaction('drafts', 'readwrite');
@@ -235,22 +235,23 @@ test('legacy projects migrate with history and the original bookmark is preserve
   await expect(page.getByLabel('Document name')).toHaveValue('Legacy safe');
   await saved(page);
   expect(page.url()).not.toContain(oldId);
-  const legacyVersion = await page.evaluate(
+  const migratedPointer = await page.evaluate(
     async (oldId) =>
-      await new Promise<number>((resolve) => {
-        const request = indexedDB.open('pixelforge-documents', 1);
+      await new Promise<{ kind?: string; version?: number } | undefined>((resolve) => {
+        const request = indexedDB.open('pixelforge-documents', 2);
         request.onsuccess = () => {
           const db = request.result,
             read = db.transaction('drafts').objectStore('drafts').get(oldId);
           read.onsuccess = () => {
-            resolve(read.result.version);
+            resolve(read.result);
             db.close();
           };
         };
       }),
     oldId,
   );
-  expect(legacyVersion).toBe(1);
+  expect(migratedPointer?.kind).toBe('pixelforge-draft-bundle');
+  expect(migratedPointer?.version).toBe(1);
   const out = await project(page);
   expect(out.value.version).toBe(2);
   expect(out.value.history[0].layers[0].kind).toBe('raster');

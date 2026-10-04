@@ -42,15 +42,44 @@ const savedDraftDimensions = (page: Page) =>
       new Promise<{ width: number; height: number } | null>((resolve, reject) => {
         const id = new URL(location.href).hash.match(/^#draft=([a-f0-9-]{36})$/)?.[1];
         if (!id) return resolve(null);
-        const opened = indexedDB.open('pixelforge-documents', 1);
+        const opened = indexedDB.open('pixelforge-documents', 2);
         opened.onerror = () => reject(opened.error);
         opened.onsuccess = () => {
-          const request = opened.result.transaction('drafts').objectStore('drafts').get(id);
+          const database = opened.result;
+          const tx = database.transaction(['drafts', 'draftBlobs']);
+          const request = tx.objectStore('drafts').get(id);
           request.onerror = () => reject(request.error);
           request.onsuccess = () => {
-            const draft = request.result as { history?: Array<{ w: number; h: number }>; index?: number } | undefined;
-            const frame = draft?.history?.[draft.index ?? -1];
-            resolve(frame ? { width: frame.w, height: frame.h } : null);
+            const pointer = request.result as {
+              history?: Array<{ w: number; h: number }>;
+              index?: number;
+              kind?: string;
+              chunks?: string[];
+            } | undefined;
+            if (!pointer?.kind || !Array.isArray(pointer.chunks)) {
+              const frame = pointer?.history?.[pointer.index ?? -1];
+              resolve(frame ? { width: frame.w, height: frame.h } : null);
+              database.close();
+              return;
+            }
+            const chunks = pointer.chunks.map((key) =>
+              tx.objectStore('draftBlobs').get(key),
+            );
+            const values: ArrayBuffer[] = [];
+            chunks.forEach((chunk, index) => {
+              chunk.onsuccess = () => {
+                values[index] = (chunk.result as { bytes: ArrayBuffer }).bytes;
+              };
+            });
+            tx.oncomplete = () => {
+              const payload = new Uint8Array(values.reduce((total, value) => total + value.byteLength, 0));
+              let offset = 0;
+              values.forEach((value) => { payload.set(new Uint8Array(value), offset); offset += value.byteLength; });
+              const draft = JSON.parse(new TextDecoder().decode(payload)) as { history?: Array<{ w: number; h: number }>; index?: number };
+              const frame = draft.history?.[draft.index ?? -1];
+              resolve(frame ? { width: frame.w, height: frame.h } : null);
+              database.close();
+            };
           };
         };
       }),

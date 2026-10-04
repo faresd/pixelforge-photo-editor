@@ -32,6 +32,14 @@ import {
   type PatternId,
 } from './patternStamp.ts';
 import { beginPerformanceSpan } from './performanceMarks.ts';
+import {
+  createDraftBundle,
+  decodeDraftBundle,
+  isDraftBundleManifest,
+  isDraftBundleChunk,
+  type DraftBundleManifest,
+  type DraftBundleChunk,
+} from './draftBundle.ts';
 export type Tool =
   | 'move'
   | 'hand'
@@ -448,8 +456,16 @@ export function prepareDraftForStorage(value: unknown): Draft {
 }
 function openDatabase() {
   database ??= new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open('pixelforge-documents', 1);
-    request.onupgradeneeded = () => request.result.createObjectStore('drafts');
+    const request = indexedDB.open('pixelforge-documents', 2);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains('drafts')) db.createObjectStore('drafts');
+      // v1 kept the complete Draft in `drafts`. v2 adds immutable payload
+      // chunks; old records remain readable and are migrated on their next
+      // successful save, preserving bookmarks across the schema upgrade.
+      if (!db.objectStoreNames.contains('draftBlobs'))
+        db.createObjectStore('draftBlobs');
+    };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
     request.onblocked = () => reject(new Error('Local storage is blocked'));
@@ -613,22 +629,91 @@ function clearPendingDraft(id: string, revision: number, token?: string): void {
   }
 }
 
+type StoredDraftPointer = Draft | DraftBundleManifest;
+
+function storedRevision(value: unknown): number {
+  if (isDraftBundleManifest(value)) return value.localRevision;
+  return record(value) && validRevision(value.localRevision)
+    ? value.localRevision
+    : 0;
+}
+
+/**
+ * Read a v2 manifest and its chunks in one readonly transaction. Legacy v1
+ * records are complete Draft objects and are validated directly; the next
+ * successful save upgrades them to a manifest/blob bundle.
+ */
+async function readStoredDraft(
+  db: IDBDatabase,
+  id: string,
+): Promise<Draft | undefined> {
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(['drafts', 'draftBlobs'], 'readonly');
+    const pointers = transaction.objectStore('drafts');
+    const blobs = transaction.objectStore('draftBlobs');
+    const pointerRequest = pointers.get(id);
+    let pointer: StoredDraftPointer | undefined;
+    let chunkValues: unknown[] = [];
+    let decodePending = false;
+    pointerRequest.onsuccess = () => {
+      pointer = pointerRequest.result as StoredDraftPointer | undefined;
+      if (pointer === undefined || !isDraftBundleManifest(pointer)) return;
+      decodePending = true;
+      chunkValues = new Array(pointer.chunks.length);
+      pointer.chunks.forEach((key, index) => {
+        const chunkRequest = blobs.get(key);
+        chunkRequest.onsuccess = () => {
+          chunkValues[index] = chunkRequest.result;
+        };
+      });
+    };
+    pointerRequest.onerror = () => reject(pointerRequest.error);
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error || new Error('Draft read aborted'));
+    transaction.oncomplete = () => {
+      void (async () => {
+        try {
+          if (pointer === undefined) {
+            resolve(undefined);
+            return;
+          }
+          if (!decodePending) {
+            resolve(validateDraft(pointer));
+            return;
+          }
+          const decoded = await decodeDraftBundle(pointer, chunkValues);
+          const draft = validateDraft(decoded);
+          if ((draft.localRevision || 0) !== pointer.localRevision)
+            throw new Error('Draft bundle revision mismatch');
+          resolve(draft);
+        } catch (error) {
+          reject(error);
+        }
+      })();
+    };
+  });
+}
+
 export async function discardDraft(id: string, expectedRevision: number) {
   if (!validId(id)) throw new Error('Invalid draft ID');
   if (!validRevision(expectedRevision))
     throw new Error('Invalid draft revision');
   const db = await openDatabase();
   await new Promise<void>((resolve, reject) => {
-    const transaction = db.transaction('drafts', 'readwrite');
+    const transaction = db.transaction(['drafts', 'draftBlobs'], 'readwrite');
     const store = transaction.objectStore('drafts');
+    const blobs = transaction.objectStore('draftBlobs');
     let conflict = false;
     const read = store.get(id);
     read.onsuccess = () => {
-      if ((read.result?.localRevision || 0) !== expectedRevision) {
+      const pointer = read.result as StoredDraftPointer | undefined;
+      if (storedRevision(pointer) !== expectedRevision) {
         conflict = true;
         transaction.abort();
         return;
       }
+      if (isDraftBundleManifest(pointer))
+        pointer.chunks.forEach((key) => blobs.delete(key));
       store.delete(id);
     };
     transaction.oncomplete = () => resolve();
@@ -649,38 +734,20 @@ export async function readDraft(id: string): Promise<Draft | undefined> {
   if (!validId(id)) throw new Error('Invalid draft ID');
   const pending = readPendingDraft(id);
   const db = await openDatabase();
-  return new Promise((resolve, reject) => {
-    const request = db.transaction('drafts').objectStore('drafts').get(id);
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => {
-      const value = request.result as Draft | undefined;
-      if (value === undefined) {
-        resolve(pending?.draft);
-        return;
-      }
-      try {
-        const saved = validateDraft(value);
-        if (
-          !pending ||
-          (pending.draft.localRevision || 0) < (saved.localRevision || 0)
-        ) {
-          resolve(saved);
-          return;
-        }
-        // The session snapshot may have been staged just before a reload while
-        // its IndexedDB transaction was still in flight. Rebase the pending
-        // value onto the revision that actually exists so the first save after
-        // recovery can commit it instead of reporting a false conflict.
-        if ((pending.draft.localRevision || 0) === (saved.localRevision || 0)) {
-          resolve(saved);
-          return;
-        }
-        resolve({ ...pending.draft, localRevision: saved.localRevision || 0 });
-      } catch (error) {
-        reject(error);
-      }
-    };
-  });
+  const saved = await readStoredDraft(db, id);
+  if (saved === undefined) return pending?.draft;
+  if (
+    !pending ||
+    (pending.draft.localRevision || 0) < (saved.localRevision || 0)
+  )
+    return saved;
+  // The session snapshot may have been staged just before a reload while its
+  // IndexedDB transaction was still in flight. Rebase the pending value onto
+  // the revision that actually exists so the first save after recovery can
+  // commit it instead of reporting a false conflict.
+  if ((pending.draft.localRevision || 0) === (saved.localRevision || 0))
+    return saved;
+  return { ...pending.draft, localRevision: saved.localRevision || 0 };
 }
 
 export async function saveDraft(
@@ -701,20 +768,40 @@ export async function saveDraft(
     saveSpan.finish();
     throw error;
   }
+  const revision = expectedRevision + 1;
+  if (!validRevision(revision)) {
+    saveSpan.finish();
+    throw new Error('Invalid draft revision');
+  }
+  const persisted = { ...safeValue, localRevision: revision };
+  let bundle: Awaited<ReturnType<typeof createDraftBundle>>;
+  try {
+    bundle = await createDraftBundle(id, revision, persisted);
+  } catch (error) {
+    saveSpan.finish();
+    throw error;
+  }
   return new Promise((resolve, reject) => {
     try {
-      const transaction = db.transaction('drafts', 'readwrite');
+      const transaction = db.transaction(['drafts', 'draftBlobs'], 'readwrite');
       const store = transaction.objectStore('drafts');
+      const blobs = transaction.objectStore('draftBlobs');
       let conflict = false;
-      const revision = expectedRevision + 1;
       const read = store.get(id);
       read.onsuccess = () => {
-        if ((read.result?.localRevision || 0) !== expectedRevision) {
+        const previous = read.result as StoredDraftPointer | undefined;
+        if (storedRevision(previous) !== expectedRevision) {
           conflict = true;
           transaction.abort();
           return;
         }
-        store.put({ ...safeValue, localRevision: revision }, id);
+        if (isDraftBundleManifest(previous))
+          previous.chunks.forEach((key) => blobs.delete(key));
+        bundle.chunks.forEach((chunk: DraftBundleChunk) => blobs.put(chunk, chunk.id));
+        // The manifest is the atomic pointer. It is written only in the same
+        // transaction as every chunk, so an interrupted save leaves the prior
+        // complete bundle addressable.
+        store.put(bundle.manifest, id);
       };
       transaction.oncomplete = () => {
         clearPendingDraft(id, revision, pendingToken);

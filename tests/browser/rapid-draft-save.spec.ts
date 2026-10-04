@@ -23,7 +23,7 @@ async function indexedDbDraft(page: Page): Promise<DraftProbe | undefined> {
     )?.[1];
     if (!id) return undefined;
     return new Promise<DraftProbe | undefined>((resolve) => {
-      const opened = indexedDB.open('pixelforge-documents', 1);
+      const opened = indexedDB.open('pixelforge-documents', 2);
       opened.onerror = () => resolve(undefined);
       opened.onsuccess = () => {
         const database = opened.result;
