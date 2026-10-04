@@ -12,6 +12,7 @@ export const FILTER_EFFECT_TYPES = [
   'box-blur',
   'gaussian-blur',
   'motion-blur',
+  'radial-blur',
   'field-blur',
   'tilt-shift',
   'mosaic',
@@ -379,6 +380,72 @@ function applyMotionBlur(
   }
 }
 
+/**
+ * Apply a bounded spin-style radial blur around an editable centre point.
+ *
+ * The radius is an angular sweep in degrees (1..64) rather than a source
+ * pixel radius. Samples stay on the same polar ring, which gives the effect
+ * the familiar Photoshop Radial Blur / Spin behaviour without allocating a
+ * second image or reading any pixels written during this pass.
+ */
+function applyRadialBlur(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  centerX: number,
+  centerY: number,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const bounded = Math.max(1, Math.min(64, Math.round(radius)));
+  const centerPixelX = clamp(centerX, 0, 1) * (width - 1);
+  const centerPixelY = clamp(centerY, 0, 1) * (height - 1);
+  const sampleCount = 8;
+  const sweep = (bounded * Math.PI) / 180;
+  const mix = clamp(strength, 0, 1);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      if (source[destination + 3] === 0) continue;
+      const dx = x - centerPixelX;
+      const dy = y - centerPixelY;
+      const distance = Math.hypot(dx, dy);
+      if (distance < 0.5) continue;
+      const baseAngle = Math.atan2(dy, dx);
+      const sums = [0, 0, 0];
+      let weight = 0;
+      for (let sampleIndex = -sampleCount; sampleIndex <= sampleCount; sampleIndex += 1) {
+        const angle = baseAngle + (sweep * sampleIndex) / sampleCount;
+        const sample = sourcePixel(
+          source,
+          width,
+          height,
+          centerPixelX + Math.cos(angle) * distance,
+          centerPixelY + Math.sin(angle) * distance,
+        );
+        const alpha = sample[3] / 255;
+        if (!alpha) continue;
+        sums[0] += sample[0] * alpha;
+        sums[1] += sample[1] * alpha;
+        sums[2] += sample[2] * alpha;
+        weight += alpha;
+      }
+      if (!weight) continue;
+      output[destination] = clampByte(
+        source[destination] * (1 - mix) + (sums[0] / weight) * mix,
+      );
+      output[destination + 1] = clampByte(
+        source[destination + 1] * (1 - mix) + (sums[1] / weight) * mix,
+      );
+      output[destination + 2] = clampByte(
+        source[destination + 2] * (1 - mix) + (sums[2] / weight) * mix,
+      );
+      output[destination + 3] = source[destination + 3];
+    }
+  }
+}
+
 function applyMosaic(
   source: Uint8ClampedArray,
   width: number,
@@ -507,6 +574,17 @@ export function applyFilterEffectsPixels(
     applyGaussianBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'motion-blur') {
     applyMotionBlur(data, width, height, effect.radius, effect.angle, output, strength);
+  } else if (effect.type === 'radial-blur') {
+    applyRadialBlur(
+      data,
+      width,
+      height,
+      effect.radius,
+      effect.centerX,
+      effect.centerY,
+      output,
+      strength,
+    );
   } else if (effect.type === 'mosaic') {
     applyMosaic(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'color-halftone') {
