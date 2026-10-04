@@ -295,6 +295,12 @@ test('8. Levels, Curves and photo color controls stay nondestructive and persist
   expect(layer.adjustments).toMatchObject({ levelsBlack: 128, brightness: 120, saturation: 70 });
   const curves = layer.adjustments?.curves as { rgb: Array<[number, number]> } | undefined;
   expect(curves?.rgb ?? []).toContainEqual([128, 210]);
+  // Wait for the final IndexedDB write before forcing a navigation. The editor
+  // stages a write-ahead snapshot, but this assertion verifies the same
+  // user-visible save contract that a reload relies on.
+  await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText(
+    'Saved on this device',
+  );
   await page.reload();
   expect(await page.getByLabel('Levels black point', { exact: true }).inputValue()).toBe('128');
   expect(await page.getByLabel('Brightness', { exact: true }).inputValue()).toBe('120');
