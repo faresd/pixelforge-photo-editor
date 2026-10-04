@@ -187,7 +187,15 @@ import {
   neutralFilterEffects,
   type FilterEffectType,
 } from '../src/filterEffects';
-import { cropMeasurements, planRectangularCrop, type RectangularCropPlan } from '../src/cropTools';
+import {
+  cropMeasurements,
+  planPerspectiveCrop,
+  planRectangularCrop,
+  warpPerspectiveRgba,
+  type CropQuad,
+  type PerspectiveCropPlan,
+  type RectangularCropPlan,
+} from '../src/cropTools';
 import {
   formatMeasurement,
   measurementAngle,
@@ -279,6 +287,7 @@ type Command =
   | 'auto-contrast'
   | 'auto-color'
   | 'crop'
+  | 'perspective-crop'
   | 'rotate-left'
   | 'rotate-right'
   | 'flip-h'
@@ -321,6 +330,7 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'clone', label: 'Clone', icon: Copy, key: 'S' },
   { id: 'heal', label: 'Healing', icon: WandSparkles, key: 'J' },
   { id: 'crop', label: 'Crop', icon: Crop, key: 'C' },
+  { id: 'perspective-crop', label: 'Perspective Crop', icon: Crop, key: 'C' },
   { id: 'brush', label: 'Brush', icon: Brush, key: 'B' },
   { id: 'pencil', label: 'Pencil', icon: Pencil, key: 'B' },
   { id: 'color-replace', label: 'Color Replace', icon: Palette, key: 'B' },
@@ -374,7 +384,7 @@ const MARQUEE_TOOLS: Tool[] = [
 ];
 /** Photoshop's repeated-key tool groups, limited to tools PixelForge actually implements. */
 const TOOL_GROUPS: Record<string, Tool[]> = {
-  c: ['crop'],
+  c: ['crop', 'perspective-crop'],
   g: ['gradient', 'fill'],
   b: ['brush', 'pencil', 'color-replace'],
   u: ['rectangle', 'ellipse', 'line', 'polygon'],
@@ -492,6 +502,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Image Rotation', command: 'noop', disabled: true },
     { label: 'Resize image…', command: 'resize' },
     { label: 'Crop', shortcut: 'C', command: 'crop' },
+    { label: 'Perspective Crop…', command: 'perspective-crop' },
     { label: 'Rotate left', command: 'rotate-left' },
     { label: 'Rotate right', command: 'rotate-right' },
     { label: 'Flip horizontal', command: 'flip-h' },
@@ -1078,11 +1089,17 @@ export default function Home() {
    * A crop drag is deliberately staged before it changes the document.  The
    * preview keeps the current history frame immutable while the user checks
    * the bounds, and gives keyboard/touch users an explicit Apply/Cancel
-   * affordance.  Perspective crop remains a separate, future workflow.
+   * affordance.
    */
   const [cropPreview, setCropPreview] = useState<(RectangularCropPlan & { frame: Frame }) | null>(null);
   const cropPreviewId = useRef(0);
   const [cropApplying, setCropApplying] = useState(false);
+  /** Perspective crop is staged and applied as a reversible composite raster. */
+  const [perspectiveCropPreview, setPerspectiveCropPreview] = useState<
+    (PerspectiveCropPlan & { frame: Frame }) | null
+  >(null);
+  const perspectiveCropPreviewId = useRef(0);
+  const [perspectiveCropApplying, setPerspectiveCropApplying] = useState(false);
   const [selectionTransforming, setSelectionTransforming] = useState(false);
   const [layerTransforming, setLayerTransforming] = useState(false);
   const [selectionRefining, setSelectionRefining] = useState<SelectionRefineMode | null>(null);
@@ -1293,6 +1310,81 @@ export default function Home() {
       setNotice('Could not apply crop preview');
     } finally {
       setCropApplying(false);
+    }
+  };
+  const cancelPerspectiveCropPreview = () => {
+    if (!perspectiveCropPreview) return;
+    perspectiveCropPreviewId.current += 1;
+    setPerspectiveCropPreview(null);
+    void paint(current());
+    setNotice('Perspective crop preview cancelled; document unchanged');
+  };
+  const applyPerspectiveCropPreview = async () => {
+    const preview = perspectiveCropPreview;
+    if (!preview || perspectiveCropApplying) return;
+    const source = current();
+    if (source !== preview.frame) {
+      setPerspectiveCropPreview(null);
+      void paint(source);
+      setNotice('Perspective crop preview expired because the document changed');
+      return;
+    }
+    if (!preview.changed) {
+      setPerspectiveCropPreview(null);
+      setNotice('Perspective crop matches the canvas; document unchanged');
+      return;
+    }
+    const expectedPreviewId = perspectiveCropPreviewId.current;
+    setPerspectiveCropApplying(true);
+    try {
+      const composite = await renderFrame(source, assets.current),
+        pixels = composite
+          .getContext('2d')!
+          .getImageData(0, 0, source.w, source.h).data,
+        warped = warpPerspectiveRgba(pixels, source.w, source.h, preview),
+        output = surface(preview.width, preview.height),
+        outputImage = output
+          .getContext('2d')!
+          .createImageData(preview.width, preview.height);
+      outputImage.data.set(warped);
+      output.getContext('2d')!.putImageData(outputImage, 0, 0);
+      if (
+        current() !== source ||
+        perspectiveCropPreviewId.current !== expectedPreviewId
+      ) {
+        void paint(current());
+        setNotice('Perspective crop cancelled because the preview or document changed');
+        return;
+      }
+      const next = rasterFrame(output, assets.current, 'Perspective Crop');
+      if (commit(next)) {
+        setPerspectiveCropPreview(null);
+        setNotice(
+          `Perspective crop applied: ${preview.width} × ${preview.height} px · source layers are restorable with Undo`,
+        );
+      }
+    } catch {
+      setNotice('Could not apply perspective crop preview');
+    } finally {
+      setPerspectiveCropApplying(false);
+    }
+  };
+  const updatePerspectiveCropPreview = (
+    patch: Partial<{ quad: CropQuad; width: number; height: number }>,
+  ) => {
+    const preview = perspectiveCropPreview;
+    if (!preview) return;
+    try {
+      const next = planPerspectiveCrop(preview.frame.w, preview.frame.h, {
+        quad: patch.quad || preview.quad,
+        width: patch.width ?? preview.width,
+        height: patch.height ?? preview.height,
+      });
+      perspectiveCropPreviewId.current += 1;
+      setPerspectiveCropPreview({ frame: preview.frame, ...next });
+      void paint(preview.frame);
+    } catch {
+      setNotice('Perspective crop needs four convex points inside the image');
     }
   };
   const appendMeasurement = (annotation: MeasurementAnnotation) => {
@@ -4240,7 +4332,8 @@ export default function Home() {
       tool === 'ellipse' ||
       tool === 'line' ||
       tool === 'polygon' ||
-      tool === 'crop'
+      tool === 'crop' ||
+      tool === 'perspective-crop'
     ) {
       gesture.current = { tool, start: p, last: p, frame: f, moved: false };
       return;
@@ -4689,6 +4782,30 @@ export default function Home() {
         x.strokeRect(g.start.x, g.start.y, p.x - g.start.x, p.y - g.start.y);
         x.restore();
       });
+    } else if (g.tool === 'perspective-crop') {
+      const c = canvas.current!,
+        x = c.getContext('2d')!;
+      void paint(g.frame).then(() => {
+        if (gesture.current !== g) return;
+        const left = Math.min(g.start.x, p.x),
+          top = Math.min(g.start.y, p.y),
+          right = Math.max(g.start.x, p.x),
+          bottom = Math.max(g.start.y, p.y),
+          insetX = Math.max(0, (right - left) * 0.08),
+          insetY = Math.max(0, (bottom - top) * 0.08);
+        x.save();
+        x.strokeStyle = '#ffb099';
+        x.lineWidth = 2;
+        x.setLineDash([10, 6]);
+        x.beginPath();
+        x.moveTo(left + insetX, top);
+        x.lineTo(right - insetX, top + insetY);
+        x.lineTo(right, bottom - insetY);
+        x.lineTo(left, bottom);
+        x.closePath();
+        x.stroke();
+        x.restore();
+      });
     }
     g.last = g.layer?.kind === 'raster' || g.layer?.kind === 'path' ? local : p;
   };
@@ -4945,6 +5062,31 @@ export default function Home() {
       } catch {
         void paint(f);
         setNotice('Crop needs at least one pixel inside the image');
+      }
+    } else if (g.tool === 'perspective-crop' && g.moved) {
+      try {
+        const left = Math.max(0, Math.min(g.start.x, p.x)),
+          top = Math.max(0, Math.min(g.start.y, p.y)),
+          right = Math.min(f.w, Math.max(g.start.x, p.x)),
+          bottom = Math.min(f.h, Math.max(g.start.y, p.y)),
+          insetX = Math.max(1, (right - left) * 0.08),
+          insetY = Math.max(1, (bottom - top) * 0.08),
+          quad: CropQuad = [
+            { x: left + insetX, y: top },
+            { x: right - insetX, y: top + insetY },
+            { x: right, y: bottom - insetY },
+            { x: left, y: bottom },
+          ],
+          plan = planPerspectiveCrop(f.w, f.h, { quad });
+        perspectiveCropPreviewId.current += 1;
+        setPerspectiveCropPreview({ frame: f, ...plan });
+        void paint(f);
+        setNotice(
+          `Perspective crop preview: ${plan.width} × ${plan.height} px · edit corners or press Enter to apply`,
+        );
+      } catch {
+        void paint(f);
+        setNotice('Perspective crop needs a convex selection inside the image');
       }
     } else if (g.tool === 'gradient' && g.moved && g.layer) {
       try {
@@ -5244,11 +5386,30 @@ export default function Home() {
         cancelCropPreview();
         return;
       }
-      if (e.key === 'Escape' && gesture.current?.tool === 'crop') {
+      if (e.key === 'Escape' && perspectiveCropPreview) {
         e.preventDefault();
+        cancelPerspectiveCropPreview();
+        return;
+      }
+      if (
+        e.key === 'Escape' &&
+        (gesture.current?.tool === 'crop' ||
+          gesture.current?.tool === 'perspective-crop')
+      ) {
+        e.preventDefault();
+        const canceledPerspective = gesture.current.tool === 'perspective-crop';
         gesture.current = null;
         void paint(current());
-        setNotice('Crop drag cancelled; document unchanged');
+        setNotice(
+          canceledPerspective
+            ? 'Perspective crop drag cancelled; document unchanged'
+            : 'Crop drag cancelled; document unchanged',
+        );
+        return;
+      }
+      if (e.key === 'Enter' && perspectiveCropPreview && !typing) {
+        e.preventDefault();
+        void applyPerspectiveCropPreview();
         return;
       }
       if (e.key === 'Enter' && cropPreview && !typing) {
@@ -5528,6 +5689,9 @@ export default function Home() {
     else if (command === 'crop') {
       setTool('crop');
       setNotice('Drag on the image to crop');
+    } else if (command === 'perspective-crop') {
+      setTool('perspective-crop');
+      setNotice('Drag on the image to define a perspective crop');
     } else if (command === 'rotate-left') void transform('left');
     else if (command === 'rotate-right') void transform('right');
     else if (command === 'flip-h') void transform('h');
@@ -5942,6 +6106,7 @@ export default function Home() {
               className={tool === id ? 'active' : ''}
               onClick={() => {
                 if (cropPreview) cancelCropPreview();
+                if (perspectiveCropPreview) cancelPerspectiveCropPreview();
                 setTool(id);
                 setCloneSource(null);
                 setNotice(`${label} tool selected`);
@@ -6024,6 +6189,102 @@ export default function Home() {
                 type="button"
                 data-testid="crop-cancel"
                 onClick={cancelCropPreview}
+              >
+                Cancel
+              </button>
+            </fieldset>
+          )}
+          {perspectiveCropPreview && (
+            <fieldset
+              className="crop-preview-controls perspective-crop-controls"
+              aria-label="Perspective crop controls"
+              data-testid="perspective-crop-controls"
+            >
+              <span>
+                Perspective crop · {perspectiveCropPreview.width} × {perspectiveCropPreview.height} px
+              </span>
+              <div className="perspective-crop-fields">
+                {(['Top left', 'Top right', 'Bottom right', 'Bottom left'] as const).map(
+                  (label, index) => (
+                    <span key={label}>
+                      <label>
+                        {label} X
+                        <input
+                          aria-label={`${label} X`}
+                          type="number"
+                          min="0"
+                          max={perspectiveCropPreview.frame.w}
+                          value={Math.round(perspectiveCropPreview.quad[index].x)}
+                          onChange={(event) => {
+                            const value = Number(event.target.value);
+                            if (!Number.isFinite(value)) return;
+                            const quad = perspectiveCropPreview.quad.map((point) => ({ ...point })) as CropQuad;
+                            quad[index] = { ...quad[index], x: value };
+                            updatePerspectiveCropPreview({ quad });
+                          }}
+                        />
+                      </label>
+                      <label>
+                        {label} Y
+                        <input
+                          aria-label={`${label} Y`}
+                          type="number"
+                          min="0"
+                          max={perspectiveCropPreview.frame.h}
+                          value={Math.round(perspectiveCropPreview.quad[index].y)}
+                          onChange={(event) => {
+                            const value = Number(event.target.value);
+                            if (!Number.isFinite(value)) return;
+                            const quad = perspectiveCropPreview.quad.map((point) => ({ ...point })) as CropQuad;
+                            quad[index] = { ...quad[index], y: value };
+                            updatePerspectiveCropPreview({ quad });
+                          }}
+                        />
+                      </label>
+                    </span>
+                  ),
+                )}
+                <label>
+                  Output width
+                  <input
+                    aria-label="Perspective output width"
+                    type="number"
+                    min="1"
+                    max="16000"
+                    value={perspectiveCropPreview.width}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      if (Number.isFinite(value)) updatePerspectiveCropPreview({ width: value });
+                    }}
+                  />
+                </label>
+                <label>
+                  Output height
+                  <input
+                    aria-label="Perspective output height"
+                    type="number"
+                    min="1"
+                    max="16000"
+                    value={perspectiveCropPreview.height}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      if (Number.isFinite(value)) updatePerspectiveCropPreview({ height: value });
+                    }}
+                  />
+                </label>
+              </div>
+              <button
+                type="button"
+                data-testid="perspective-crop-apply"
+                disabled={perspectiveCropApplying}
+                onClick={() => void applyPerspectiveCropPreview()}
+              >
+                {perspectiveCropApplying ? 'Applying…' : 'Apply perspective crop'}
+              </button>
+              <button
+                type="button"
+                data-testid="perspective-crop-cancel"
+                onClick={cancelPerspectiveCropPreview}
               >
                 Cancel
               </button>
@@ -6133,6 +6394,34 @@ export default function Home() {
                 <line className="crop-preview-guide" x1={cropPreview.left + cropPreview.width * 2 / 3} y1={cropPreview.top} x2={cropPreview.left + cropPreview.width * 2 / 3} y2={cropPreview.top + cropPreview.height} />
                 <line className="crop-preview-guide" x1={cropPreview.left} y1={cropPreview.top + cropPreview.height / 3} x2={cropPreview.left + cropPreview.width} y2={cropPreview.top + cropPreview.height / 3} />
                 <line className="crop-preview-guide" x1={cropPreview.left} y1={cropPreview.top + cropPreview.height * 2 / 3} x2={cropPreview.left + cropPreview.width} y2={cropPreview.top + cropPreview.height * 2 / 3} />
+              </svg>
+            )}
+            {perspectiveCropPreview && (
+              <svg
+                className="crop-preview-overlay perspective-crop-overlay"
+                data-testid="perspective-crop-overlay"
+                viewBox={`0 0 ${perspectiveCropPreview.frame.w} ${perspectiveCropPreview.frame.h}`}
+                preserveAspectRatio="none"
+                aria-label={`Perspective crop preview ${perspectiveCropPreview.width} by ${perspectiveCropPreview.height} pixels`}
+              >
+                <polygon
+                  className="perspective-crop-dim"
+                  points={`0,0 ${perspectiveCropPreview.frame.w},0 ${perspectiveCropPreview.frame.w},${perspectiveCropPreview.frame.h} 0,${perspectiveCropPreview.frame.h}`}
+                />
+                <polygon
+                  className="perspective-crop-border"
+                  points={perspectiveCropPreview.quad.map((point) => `${point.x},${point.y}`).join(' ')}
+                />
+                {perspectiveCropPreview.quad.map((point, index) => (
+                  <circle
+                    key={index}
+                    className="perspective-crop-handle"
+                    cx={point.x}
+                    cy={point.y}
+                    r="9"
+                    aria-hidden="true"
+                  />
+                ))}
               </svg>
             )}
           </div>

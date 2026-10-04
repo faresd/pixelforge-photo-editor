@@ -100,3 +100,43 @@ test('confirmed crop persists through project export/reload and remains undoable
   await page.getByRole('menuitem', { name: /^Undo/ }).click();
   await expect.poll(() => dimensions(page)).toEqual(before);
 });
+
+test('perspective crop stages editable convex corners, applies once, and undo restores the source stack', async ({ page }) => {
+  const canvas = page.getByTestId('editor-canvas');
+  const before = await dimensions(page);
+  const box = (await canvas.boundingBox())!;
+  await page.getByRole('button', { name: 'Perspective Crop tool', exact: true }).click();
+  await page.mouse.move(box.x + box.width * 0.12, box.y + box.height * 0.14);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.84, box.y + box.height * 0.78, { steps: 3 });
+  await page.mouse.up();
+  await expect(page.getByTestId('perspective-crop-controls')).toBeVisible();
+  await expect(page.getByTestId('perspective-crop-overlay')).toBeVisible();
+  const topLeft = page.getByRole('spinbutton', { name: 'Top left X' });
+  await topLeft.fill('80');
+  await expect(topLeft).toHaveValue('80');
+  await page.getByTestId('perspective-crop-apply').click();
+  await expect(page.getByTestId('perspective-crop-controls')).toBeHidden();
+  const after = await dimensions(page);
+  expect(after.width).toBeLessThan(before.width);
+  expect(after.height).toBeLessThan(before.height);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  await expect.poll(() => dimensions(page)).toEqual(before);
+});
+
+test('perspective crop cancel and Escape keep pixels unchanged on a mobile viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const canvas = page.getByTestId('editor-canvas');
+  const before = await dimensions(page);
+  const box = (await canvas.boundingBox())!;
+  await page.getByRole('button', { name: 'Perspective Crop tool', exact: true }).click();
+  await page.mouse.move(box.x + box.width * 0.18, box.y + box.height * 0.2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.72, box.y + box.height * 0.7, { steps: 2 });
+  await page.mouse.up();
+  await expect(page.getByTestId('perspective-crop-controls')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('perspective-crop-controls')).toBeHidden();
+  await expect.poll(() => dimensions(page)).toEqual(before);
+});
