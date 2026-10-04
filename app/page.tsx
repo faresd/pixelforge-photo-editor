@@ -7424,6 +7424,13 @@ export default function Home() {
                 if (cropPreview) cancelCropPreview();
                 if (perspectiveCropPreview) cancelPerspectiveCropPreview();
                 if (slicePreview) cancelSlicePreview();
+                if (gesture.current && gesture.current.tool !== id) {
+                  // Switching tools abandons any staged pointer gesture. This
+                  // is especially important for Magnetic Lasso, which keeps
+                  // a tap armed so Escape can cancel it on touch devices.
+                  gesture.current = null;
+                  void paint(current());
+                }
                 setTool(id);
                 setCloneSource(null);
                 setNotice(toolSelectionNotice(id, label));
