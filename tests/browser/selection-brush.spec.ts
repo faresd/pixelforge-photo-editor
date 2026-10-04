@@ -62,6 +62,7 @@ const stroke = async (
   start: [number, number],
   end: [number, number],
   pointerType: 'mouse' | 'touch',
+  waitForPreparation = true,
 ) => {
   const canvas = page.getByTestId('editor-canvas');
   const box = (await canvas.boundingBox())!;
@@ -80,7 +81,7 @@ const stroke = async (
     buttons: 1,
     isPrimary: true,
   });
-  await page.waitForTimeout(80);
+  if (waitForPreparation) await page.waitForTimeout(80);
   await canvas.dispatchEvent('pointermove', {
     pointerId: pointerType === 'touch' ? 83 : 82,
     pointerType,
@@ -118,7 +119,9 @@ test('Selection Brush creates a local alpha mask, composes Add and survives relo
   expect(firstStats.covered).toBeGreaterThan(0);
 
   await page.getByLabel('Selection mode', { exact: true }).selectOption('add');
-  await stroke(page, [0.7, 0.65], [0.84, 0.65], 'mouse');
+  // Do not wait after pointerdown: this exercises the asynchronous selection
+  // decode queue and verifies that early pointer moves are retained.
+  await stroke(page, [0.7, 0.65], [0.84, 0.65], 'mouse', false);
   saved = await project(page);
   const added = saved.history[saved.index].selection?.mask;
   expect(added).toBeTruthy();

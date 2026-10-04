@@ -734,8 +734,16 @@ type Gesture = {
   selectionMask?: Uint8ClampedArray;
   /** Existing selection alpha retained while a Selection Brush stroke is built. */
   selectionBase?: Uint8ClampedArray;
+  /** Existing resolved alpha is retained for replace no-op detection. */
+  selectionExisting?: Uint8ClampedArray;
   /** Detached alpha painted by the in-progress Selection Brush gesture. */
   selectionBrushMask?: Uint8ClampedArray;
+  selectionBrushOperation?: SelectionOperation;
+  selectionBrushSize?: number;
+  selectionBrushHardness?: number;
+  selectionBrushOpacity?: number;
+  selectionBrushPressureSize?: boolean;
+  selectionBrushPressureOpacity?: boolean;
   changed?: boolean;
   replaceTarget?: [number, number, number, number];
   /** Local node index for an in-progress Direct Selection drag. */
@@ -4003,13 +4011,21 @@ export default function Home() {
           frame: f,
           moved: false,
           points: [p],
-          selectionBrushMask: new Uint8ClampedArray(f.w * f.h),
+          queued: [
+            { x: p.x, y: p.y, pressure: pressure(e), pointerType: e.pointerType },
+          ],
+          selectionBrushOperation: selectionOperation,
+          selectionBrushSize: size,
+          selectionBrushHardness: hardness,
+          selectionBrushOpacity: brushOpacity / 100,
+          selectionBrushPressureSize: pressureSize,
+          selectionBrushPressureOpacity: pressureOpacity,
         };
       gesture.current = g;
       canvas.current?.setPointerCapture(e.pointerId);
       g.pending = (async () => {
         try {
-          if (selectionOperation !== 'replace' && f.selection) {
+          if (f.selection) {
             const rendered = await renderSelection(
               f.selection,
               f.w,
@@ -4019,26 +4035,14 @@ export default function Home() {
             const alpha = rendered
               .getContext('2d')!
               .getImageData(0, 0, f.w, f.h).data;
-            g.selectionBase = new Uint8ClampedArray(f.w * f.h);
-            for (let index = 0; index < g.selectionBase.length; index += 1)
-              g.selectionBase[index] = alpha[index * 4 + 3];
+            g.selectionExisting = new Uint8ClampedArray(f.w * f.h);
+            for (let index = 0; index < g.selectionExisting.length; index += 1)
+              g.selectionExisting[index] = alpha[index * 4 + 3];
+            if (g.selectionBrushOperation !== 'replace')
+              g.selectionBase = g.selectionExisting.slice();
           }
-          const painted = paintSelectionBrushSegment(g.selectionBrushMask!, {
-            width: f.w,
-            height: f.h,
-            x1: p.x,
-            y1: p.y,
-            x2: p.x,
-            y2: p.y,
-            size,
-            hardness,
-            opacity: brushOpacity / 100,
-            pressure: pressure(e),
-            pressureSize,
-            pressureOpacity,
-          });
-          g.selectionBrushMask = painted.mask;
-          g.changed = painted.changed;
+          if (gesture.current !== g) return;
+          g.selectionBrushMask = new Uint8ClampedArray(f.w * f.h);
           let from = p;
           for (const queued of g.queued || []) {
             const next = paintSelectionBrushSegment(g.selectionBrushMask, {
@@ -4048,12 +4052,12 @@ export default function Home() {
               y1: from.y,
               x2: queued.x,
               y2: queued.y,
-              size,
-              hardness,
-              opacity: brushOpacity / 100,
+              size: g.selectionBrushSize!,
+              hardness: g.selectionBrushHardness!,
+              opacity: g.selectionBrushOpacity!,
               pressure: queued.pressure,
-              pressureSize,
-              pressureOpacity,
+              pressureSize: g.selectionBrushPressureSize,
+              pressureOpacity: g.selectionBrushPressureOpacity,
             });
             g.selectionBrushMask = next.mask;
             g.changed = Boolean(g.changed || next.changed);
@@ -4061,10 +4065,13 @@ export default function Home() {
           }
           g.queued = undefined;
           g.last = from;
+          if (gesture.current !== g) return;
           selectionBrushPreview(g);
         } catch {
-          gesture.current = null;
-          setNotice('Could not prepare Selection Brush');
+          if (gesture.current === g) {
+            gesture.current = null;
+            setNotice('Could not prepare Selection Brush');
+          }
         }
       })();
       await g.pending;
@@ -5073,12 +5080,12 @@ export default function Home() {
         y1: g.last.y,
         x2: p.x,
         y2: p.y,
-        size,
-        hardness,
-        opacity: brushOpacity / 100,
+        size: g.selectionBrushSize ?? size,
+        hardness: g.selectionBrushHardness ?? hardness,
+        opacity: g.selectionBrushOpacity ?? brushOpacity / 100,
         pressure: g.lastPressure,
-        pressureSize,
-        pressureOpacity,
+        pressureSize: g.selectionBrushPressureSize ?? pressureSize,
+        pressureOpacity: g.selectionBrushPressureOpacity ?? pressureOpacity,
       });
       g.selectionBrushMask = result.mask;
       g.changed = Boolean(g.changed || result.changed);
@@ -5834,12 +5841,12 @@ export default function Home() {
           y1: g.last.y,
           x2: p.x,
           y2: p.y,
-          size,
-          hardness,
-          opacity: brushOpacity / 100,
+          size: g.selectionBrushSize ?? size,
+          hardness: g.selectionBrushHardness ?? hardness,
+          opacity: g.selectionBrushOpacity ?? brushOpacity / 100,
           pressure: g.lastPressure ?? pressure(e),
-          pressureSize,
-          pressureOpacity,
+          pressureSize: g.selectionBrushPressureSize ?? pressureSize,
+          pressureOpacity: g.selectionBrushPressureOpacity ?? pressureOpacity,
         });
         g.selectionBrushMask = finalSegment.mask;
         g.changed = Boolean(g.changed || finalSegment.changed);
@@ -5852,9 +5859,13 @@ export default function Home() {
       const composed = combineSelectionBrushMasks(
         g.selectionBase,
         g.selectionBrushMask,
-        selectionOperation,
+        g.selectionBrushOperation ?? selectionOperation,
       );
-      if (!composed.changed) {
+      const sameAsExisting =
+        g.selectionExisting &&
+        g.selectionExisting.length === composed.mask.length &&
+        g.selectionExisting.every((value, index) => value === composed.mask[index]);
+      if (!composed.changed || sameAsExisting) {
         void paint(f);
         setNotice('No Selection Brush change applied');
         return;
