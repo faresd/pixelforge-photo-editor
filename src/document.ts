@@ -44,6 +44,8 @@ import {
 } from './imageSize.ts';
 import { validatePath, type PathModel } from './paths.ts';
 import { applyLayerMaskPixels, effectiveLayerMask } from './masks.ts';
+import { shapePoints, validateShapeVariant, type ParametricShapeVariant } from './vectorShapes.ts';
+import { validMeasurements, type MeasurementAnnotation } from './measurements.ts';
 
 /** Version 2 stores immutable raster assets once; history contains editable layer metadata. */
 export const BLENDS = [
@@ -174,7 +176,7 @@ export type Layer = Common &
         stroke: number;
       }
     | {
-        /** A regular polygon inscribed in the layer's width/height box. */
+        /** A parametric polygon, triangle or star inscribed in the layer box. */
         kind: 'polygon';
         width: number;
         height: number;
@@ -182,6 +184,8 @@ export type Layer = Common &
         stroke: number;
         fill: boolean;
         sides: number;
+        /** Legacy drafts omit this and render as a regular polygon. */
+        variant?: ParametricShapeVariant;
       }
     | {
         /** A local-coordinate, straight-segment Pen path. */
@@ -241,6 +245,8 @@ export type Frame = {
   savedSelections?: SavedSelectionBook;
   /** Persisted Quick Mask alpha asset while the mode is active. */
   quickMask?: { asset: string; active: boolean };
+  /** Workspace-only sampling, ruler, note and count overlays. */
+  measurements?: MeasurementAnnotation[];
 };
 export type Asset = { url: string; w: number; h: number };
 export type Assets = Record<string, Asset>;
@@ -910,7 +916,16 @@ export function validateFrame(
         !number(layer.stroke, 1, 100) ||
         !/^#[a-f\d]{6}$/i.test(String(layer.color)) ||
         (layer.kind !== 'line' && typeof layer.fill !== 'boolean') ||
-        (layer.kind === 'polygon' && !integer(layer.sides, 3, 32))
+        (layer.kind === 'polygon' &&
+          (!integer(layer.sides, 3, 32) ||
+            (() => {
+              try {
+                validateShapeVariant(layer.variant);
+                return false;
+              } catch {
+                return true;
+              }
+            })()))
       )
         return fail();
     } else if (layer.kind === 'path') {
@@ -999,7 +1014,8 @@ export function validateFrame(
         typeof value.quickMask.active !== 'boolean' ||
         !Object.hasOwn(assets, value.quickMask.asset) ||
         assets[value.quickMask.asset].w !== frameWidth ||
-        assets[value.quickMask.asset].h !== frameHeight))
+        assets[value.quickMask.asset].h !== frameHeight)) ||
+    !validMeasurements(value.measurements, frameWidth, frameHeight)
   )
     return fail();
   if (pixels > 64000000 || !validId(value.active) || !ids.has(value.active))
@@ -1484,17 +1500,19 @@ export async function renderFrame(
       context.strokeStyle = layer.color;
       context.lineWidth = layer.stroke;
       context.beginPath();
-      const cx = layer.width / 2,
-        cy = layer.height / 2,
-        rx = Math.max(0.5, layer.width / 2 - layer.stroke / 2),
-        ry = Math.max(0.5, layer.height / 2 - layer.stroke / 2);
-      for (let i = 0; i < layer.sides; i += 1) {
-        const angle = -Math.PI / 2 + (i * Math.PI * 2) / layer.sides,
-          x = cx + Math.cos(angle) * rx,
-          y = cy + Math.sin(angle) * ry;
-        if (i === 0) context.moveTo(x, y);
-        else context.lineTo(x, y);
-      }
+      const points = shapePoints(
+        Math.max(1, layer.width - layer.stroke),
+        Math.max(1, layer.height - layer.stroke),
+        layer.variant,
+        layer.sides,
+      ).map((point) => ({
+        x: point.x + layer.stroke / 2,
+        y: point.y + layer.stroke / 2,
+      }));
+      points.forEach((point, index) => {
+        if (index === 0) context.moveTo(point.x, point.y);
+        else context.lineTo(point.x, point.y);
+      });
       context.closePath();
       if (layer.fill) context.fill();
       else context.stroke();

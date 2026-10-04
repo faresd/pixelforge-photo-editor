@@ -38,9 +38,10 @@ These tables record the visible commands verbatim where practical. Groups provid
 | Image group | Commands visible in the reference | Dependency / intended increment |
 | --- | --- | --- |
 | Color and correction | Mode ▶; Adjustments ▶; Auto Tone; Auto Contrast; Auto Color | **Auto Tone / Auto Contrast / Auto Color implemented:** deterministic local range and gray-world corrections store editable flags, preserve alpha and transparent hidden RGB, retain immutable source assets and support undo, reload and project round trips. The contract and focused browser/pure evidence live in [`auto-adjustment-contract.md`](./auto-adjustment-contract.md). Document color-space/bit-depth and true adjustment-layer semantics remain planned. |
-| Geometry | Image Size…; Generative Upscale…; Canvas Size…; Image Rotation ▶; Crop; Trim…; Reveal All | Unit/resolution metadata and reversible layer/mask transforms; assisted upscale separated from resampling |
+| Geometry | Image Size…; Generative Upscale…; Canvas Size…; Image Rotation ▶; Crop; Trim…; Reveal All | Unit/resolution metadata and reversible layer/mask transforms; `cropTools.ts` now supplies bounded perspective-crop homographies, deterministic RGBA warps, Frame contain/cover/stretch placement and alpha masks, plus validated named-slice extraction. React command wiring, undo history and downloadable slice files remain gated behind their own acceptance contracts; assisted upscale remains separated from resampling |
 | Image composition | Duplicate…; Apply Image…; Calculations… | Independent duplicate identity; channel arithmetic and source/destination validation |
 | Data and analysis | Variables ▶; Apply Data Set…; Trap…; Analysis ▶ | Typed variable templates and measurement data; print trapping after a validated print/color pipeline |
+| Sampling workspace | Eyedropper; Color Sampler; Ruler; Note; Count | Eyedropper plus rendered RGB/alpha samples, pixel/angle rulers, bounded notes and sequential count markers are active workspace overlays. They persist in frame history and remain omitted from image exports; the I shortcut cycles the family |
 
 | Layer group | Commands visible in the reference | Dependency / intended increment |
 | --- | --- | --- |
@@ -49,7 +50,7 @@ These tables record the visible commands verbatim where practical. Groups provid
 | Masks | Layer Mask ▶; Vector Mask ▶; Create Clipping Mask; Mask All Objects | Raster Layer Mask creation plus invert, disable/enable and removal are active with source-safe rendering and desktop/mobile menu coverage. Vector masks, clipping and automatic object masks remain staged behind their own contracts. |
 | Vector paths | Pen (`P`); Direct Selection (`A`) | Straight-segment Pen and editable Path layers are active. Nodes remain local metadata, with transformed fill/stroke rendering and direct node drags; Freeform/Curvature Pen and anchor conversion remain planned. |
 | Source types | Smart Objects ▶; Video Layers ▶; Rasterize ▶; New Layer Based Slice | Linked/embedded source identity, format support and loss-of-editability disclosure; temporal layers separately scoped |
-| Structure | Group Layers; Ungroup Layers; Hide Layers; Arrange ▶; Combine Shapes ▶; Align ▶; Distribute | Multi-layer selection, group compositing, vector boolean operations and numeric alignment |
+| Structure | Group Layers; Ungroup Layers; Hide Layers; Arrange ▶; Combine Shapes ▶; Align ▶; Distribute | Multi-layer selection, group compositing, vector boolean operations and numeric alignment. Parametric Polygon layers expose editable Triangle and Star variants with deterministic vertices and persistence; boolean combine/align remain staged |
 | Locks and links | Lock Layers…; Link Layers; Select Linked Layers | Persisted lock policy and transform links without corrupting independent assets |
 | Compositing | Merge Layers; Merge Visible; Flatten Image; Matting ▶ | Separate selected/visible/all scope, preserved hidden layers where required, alpha edge handling and reversible history |
 
@@ -64,7 +65,7 @@ These tables record the visible commands verbatim where practical. Groups provid
 | --- | --- | --- |
 | Selection state | All; Deselect; Reselect; Inverse | Current and previous selection snapshots, deterministic alpha algebra |
 | Layer selection | All Layers; Deselect Layers; Find Layers; Isolate Layers | Multi-layer selection and stable layer identifiers |
-| Assisted selection | Color Range…; Focus Area…; Subject; Sky; Select and Mask… | Local color/edge refinement before measured semantic inference; upload consent only if a remote method is introduced |
+| Assisted selection | Color Range…; Focus Area…; Subject; Sky; Select and Mask… | **Color Range… is active** as a deterministic local RGB/fuzziness mask with source-safe alpha and persisted project selection; focus/subject/sky/select-and-mask remain staged behind measured local or remote inference; upload consent is required if a remote method is introduced |
 | Refinement | Modify ▶; Grow; Contract; Similar; Transform Selection | Grow and Contract are active with 1–1,000 px local alpha morphology and project/reload round trips; Border, Smooth, Feather, Similar and semantic refinement remain staged behind individual contracts |
 | Interchange | Edit in Quick Mask Mode; Load Selection…; Save Selection… | Editable alpha overlay, independent named selections and portable selection validation |
 
