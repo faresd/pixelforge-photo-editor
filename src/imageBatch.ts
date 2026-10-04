@@ -7,6 +7,8 @@ import {
 } from './export.ts';
 import { encodeImageWithWorker } from './workerEncode.ts';
 import { describeImportFormat } from './importFormats.ts';
+import { applyBatchActionToCanvas, publicBatchActionDescriptor, runBatchActionQueue } from './batchActions.ts';
+import { bindActionParameters, type ActionParameterValues, type ActionSet } from './actions.ts';
 
 /** Keep anonymous multi-file work bounded on memory-constrained devices. */
 export const MAX_BATCH_INPUTS = 64;
@@ -45,6 +47,13 @@ export type BatchImageManifest = {
   metadata: 'rendered pixels only; source EXIF, GPS and color profiles omitted';
   entries: BatchImageEntry[];
   failures: BatchImageFailure[];
+  /** Present only for a reusable local Action batch; contains no file bytes. */
+  action?: {
+    id: string;
+    name: string;
+    stepCount: number;
+    commands: string[];
+  };
 };
 
 export type BatchImageExportResult = {
@@ -72,6 +81,12 @@ export type BatchImageExportOptions = {
     format: ExportFormat,
     quality: number,
   ) => Promise<Blob>;
+};
+
+export type BatchActionImageExportOptions = Omit<BatchImageExportOptions, 'onProgress'> & {
+  action: ActionSet;
+  parameters?: ActionParameterValues;
+  onProgress?: (progress: BatchImageProgress) => void;
 };
 
 const PRIVACY_METADATA =
@@ -244,6 +259,100 @@ export async function buildImageBatchExport(
     name: 'pixelforge-batch-manifest.json',
     data: JSON.stringify(manifest, null, 2),
   });
+  const blob = await createZip(entries);
+  throwIfAborted(signal);
+  return { blob, manifest };
+}
+
+/**
+ * Apply one recorded local Action to each selected image, then package the
+ * flattened outputs. The queue is sequential and bounded; an unsupported
+ * editor-only command is reported for that file while other files continue.
+ */
+export async function buildImageBatchActionExport(
+  options: BatchActionImageExportOptions,
+): Promise<BatchImageExportResult> {
+  const { sources, format, quality, onProgress, signal, action, parameters } = options;
+  if (!sources.length) throw new Error('Select at least one image for batch export.');
+  if (sources.length > MAX_BATCH_INPUTS)
+    throw new Error(`Batch export supports at most ${MAX_BATCH_INPUTS} images.`);
+  if (!Number.isInteger(quality) || quality < 1 || quality > 100)
+    throw new Error('Choose a valid export quality from 1 to 100.');
+  throwIfAborted(signal);
+  const decode = options.decode || decodeBatchImage;
+  const encode =
+    options.encode ||
+    ((image: HTMLCanvasElement, imageFormat: ExportFormat, imageQuality: number) =>
+      encodeImageWithWorker(image, imageFormat, imageQuality, { signal }));
+  const boundAction = bindActionParameters(action, parameters || {});
+  const extension = format === 'jpeg' ? 'jpg' : format;
+  const usedNames = new Set<string>();
+  const outputs = await runBatchActionQueue(
+    boundAction,
+    sources.map((source) => ({ source: source.name, value: source })),
+    async (item, recipe) => {
+      const image = await decode(item.value);
+      throwIfAborted(signal);
+      if (!image.width || !image.height || image.width * image.height > MAX_BATCH_PIXELS)
+        throw new Error('The selected image exceeds the 16 megapixel safety limit.');
+      const transformed = applyBatchActionToCanvas(image, recipe, signal);
+      const encoded = await encode(transformed, format, quality);
+      throwIfAborted(signal);
+      if (!(encoded instanceof Blob) || !encoded.size)
+        throw new Error('The image encoder returned an empty file.');
+      return { source: item.source, image, encoded };
+    },
+    {
+      signal,
+      parameters,
+      onProgress,
+    },
+  );
+  throwIfAborted(signal);
+  if (!outputs.results.length) {
+    const detail = outputs.failures[0]?.reason || 'No image was exported.';
+    throw new Error(`Batch Action produced no usable images. ${detail}`);
+  }
+  const entries: ZipEntry[] = [];
+  const manifestEntries: BatchImageEntry[] = [];
+  let totalBytes = 0;
+  for (let index = 0; index < outputs.results.length; index += 1) {
+    const result = outputs.results[index];
+    totalBytes += result.encoded.size;
+    if (totalBytes > MAX_BATCH_EXPORT_BYTES)
+      throw new Error('Batch export exceeds the 256 MB safety limit. Export fewer images.');
+    const stem = sourceStem(result.source);
+    let file = `${stem}-${String(index + 1).padStart(3, '0')}.${extension}`;
+    let suffix = 2;
+    while (usedNames.has(file)) {
+      file = `${stem}-${String(index + 1).padStart(3, '0')}-${suffix}.${extension}`;
+      suffix += 1;
+    }
+    usedNames.add(file);
+    entries.push({ name: file, data: result.encoded });
+    manifestEntries.push({
+      file,
+      source: result.source,
+      width: result.image.width,
+      height: result.image.height,
+      bytes: result.encoded.size,
+    });
+  }
+  const manifest: BatchImageManifest = {
+    application: 'pixelforge-photo-editor',
+    kind: 'multi-input-image-export',
+    format,
+    quality,
+    sourceCount: sources.length,
+    exportedCount: manifestEntries.length,
+    failedCount: outputs.failures.length,
+    generatedAt: new Date().toISOString(),
+    metadata: PRIVACY_METADATA,
+    entries: manifestEntries,
+    failures: outputs.failures,
+    action: publicBatchActionDescriptor(boundAction),
+  };
+  entries.push({ name: 'pixelforge-batch-manifest.json', data: JSON.stringify(manifest, null, 2) });
   const blob = await createZip(entries);
   throwIfAborted(signal);
   return { blob, manifest };

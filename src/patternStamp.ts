@@ -4,6 +4,7 @@ import {
   radialStampMask,
   type BrushColor,
   type BrushPressureSettings,
+  type BrushTipSettings,
   type RadialMask,
 } from './brush.ts';
 
@@ -24,7 +25,7 @@ export type PatternId = (typeof PATTERN_IDS)[number];
 export const PATTERN_MIN_TILE = 4;
 export const PATTERN_MAX_TILE = 128;
 
-export type PatternStampRequest = BrushPressureSettings & {
+export type PatternStampRequest = BrushPressureSettings & BrushTipSettings & {
   width: number;
   height: number;
   x: number;

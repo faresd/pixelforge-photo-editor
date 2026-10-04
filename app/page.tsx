@@ -185,16 +185,30 @@ import {
 } from '../src/imageSize';
 import {
   applyRadialStamp,
+  BRUSH_DEFAULT_ANGLE,
+  BRUSH_DEFAULT_ROUNDNESS,
+  BRUSH_DEFAULT_SPACING,
   resolveBrushStamp,
   type BrushColor,
   type BrushMode,
 } from '../src/brush';
 import {
+  BRUSH_PRESETS,
+  brushPresetById,
+  type BrushPresetId,
+} from '../src/brushPresets';
+import {
   PATTERN_IDS,
   applyPatternStamp,
   type PatternId,
 } from '../src/patternStamp';
+import {
+  TOOL_CATEGORIES,
+  flyoutForTool,
+  flyoutTools,
+} from '../src/toolPalette';
 import { removeRedEye } from '../src/redEye';
+import { ToolFlyout } from '../src/ToolFlyout';
 import { eraseBackgroundStroke, eraseMagicRegion } from '../src/erasers';
 import {
   applyDodgeBurnStroke,
@@ -219,6 +233,10 @@ import {
   PATCH_MAX_STROKES,
   type PatchStroke,
 } from '../src/patchTool';
+import {
+  CONTENT_AWARE_MAX_OPERATIONS,
+  type ContentAwareFill,
+} from '../src/contentAwareCleanup';
 import {
   FILTER_EFFECT_TYPES,
   effectiveFilterEffects,
@@ -260,6 +278,7 @@ type Command =
   | 'noop'
   | 'actions'
   | 'patch-tool'
+  | 'content-aware-fill'
   | 'resize'
   | 'canvas-size'
   | 'trim'
@@ -446,6 +465,16 @@ const toolSelectionNotice = (tool: Tool, label: string) =>
   tool === 'magnetic-lasso'
     ? 'Magnetic Lasso: drag along an edge, release to close'
     : `${label} tool selected`;
+const flyoutToolLabel = (tool: Tool, label: string) =>
+  tool === 'select'
+    ? 'Rectangular Marquee'
+    : tool === 'ellipse-select'
+      ? 'Elliptical Marquee'
+    : tool === 'lasso'
+      ? 'Freeform Lasso'
+      : label;
+const flyoutToolKey = (tool: Tool, key: string) =>
+  tool === 'selection-brush' ? 'W' : key;
 const MARQUEE_TOOLS: Tool[] = [
   'select',
   'ellipse-select',
@@ -461,6 +490,7 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   m: MARQUEE_TOOLS,
   i: ['eyedropper', 'color-sampler', 'ruler', 'note', 'count'],
   l: ['lasso', 'polygonal-lasso', 'magnetic-lasso', 'selection-brush'],
+  w: ['selection-brush', 'magic-wand'],
   e: ['eraser', 'background-eraser', 'magic-eraser'],
   o: ['dodge', 'burn', 'sponge'],
   r: ['smudge'],
@@ -528,7 +558,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Action recipes…', command: 'actions' },
     { label: 'Patch Tool', shortcut: 'J', command: 'patch-tool' },
     { label: 'Stroke…', command: 'noop', disabled: true },
-    { label: 'Content-Aware Fill…', command: 'noop', disabled: true },
+    { label: 'Content-Aware Fill…', command: 'content-aware-fill' },
     { label: 'Prompt to Edit…', command: 'noop', disabled: true },
     { label: 'Generative Fill…', command: 'noop', disabled: true },
     { label: 'Generate Image…', command: 'noop', disabled: true },
@@ -836,6 +866,11 @@ type StampCanvasOptions = {
   pressure?: number;
   pressureSize?: boolean;
   pressureOpacity?: boolean;
+  spacing?: number;
+  angle?: number;
+  roundness?: number;
+  flipX?: boolean;
+  flipY?: boolean;
   mode: BrushMode;
   color?: BrushColor;
   source?: HTMLCanvasElement;
@@ -895,6 +930,11 @@ const stampCanvas = (
     pressure: options.pressure,
     pressureSize: options.pressureSize,
     pressureOpacity: options.pressureOpacity,
+    spacing: options.spacing,
+    angle: options.angle,
+    roundness: options.roundness,
+    flipX: options.flipX,
+    flipY: options.flipY,
     mode: options.mode,
     color: options.color,
     source,
@@ -923,11 +963,16 @@ const stampCanvasSegment = (
       pressure: options.pressure,
       pressureSize: options.pressureSize,
       pressureOpacity: options.pressureOpacity,
+      spacing: options.spacing,
+      angle: options.angle,
+      roundness: options.roundness,
+      flipX: options.flipX,
+      flipY: options.flipY,
     }),
     distance = Math.hypot(to.x - from.x, to.y - from.y),
     steps = Math.max(
       1,
-      Math.ceil(distance / Math.max(1, resolved.radius * 0.5)),
+      Math.ceil(distance / Math.max(1, resolved.size * resolved.spacing / 100)),
     );
   let changed = false;
   for (let step = 0; step <= steps; step += 1) {
@@ -967,6 +1012,11 @@ const patternCanvas = (
     pressure?: number;
     pressureSize?: boolean;
     pressureOpacity?: boolean;
+    spacing?: number;
+    angle?: number;
+    roundness?: number;
+    flipX?: boolean;
+    flipY?: boolean;
     pattern: PatternId;
     tileSize: number;
     foreground: BrushColor;
@@ -995,6 +1045,11 @@ const patternCanvas = (
       pressure: options.pressure,
       pressureSize: options.pressureSize,
       pressureOpacity: options.pressureOpacity,
+      spacing: options.spacing,
+      angle: options.angle,
+      roundness: options.roundness,
+      flipX: options.flipX,
+      flipY: options.flipY,
       pattern: options.pattern,
       tileSize: options.tileSize,
       foreground: options.foreground,
@@ -1016,7 +1071,7 @@ const patternCanvasSegment = (
     distance = Math.hypot(to.x - from.x, to.y - from.y),
     steps = Math.max(
       1,
-      Math.ceil(distance / Math.max(1, resolved.radius * 0.5)),
+      Math.ceil(distance / Math.max(1, resolved.size * resolved.spacing / 100)),
     );
   let changed = false;
   for (let step = 0; step <= steps; step += 1) {
@@ -1270,6 +1325,9 @@ export default function Home() {
       paint,
     } = doc;
   const [tool, setTool] = useState<Tool>('move'),
+    [toolFlyout, setToolFlyout] = useState<string | null>(null),
+    [toolFlyoutAnchor, setToolFlyoutAnchor] =
+      useState<HTMLButtonElement | null>(null),
     [selectionOperation, setSelectionOperation] =
       useState<SelectionOperation>('replace'),
     [zoom, setZoom] = useState(72),
@@ -1280,6 +1338,12 @@ export default function Home() {
     [hardness, setHardness] = useState(100),
     [pressureSize, setPressureSize] = useState(false),
     [pressureOpacity, setPressureOpacity] = useState(false),
+    [brushPreset, setBrushPreset] = useState<BrushPresetId>('round-hard'),
+    [brushSpacing, setBrushSpacing] = useState(BRUSH_DEFAULT_SPACING),
+    [brushAngle, setBrushAngle] = useState(BRUSH_DEFAULT_ANGLE),
+    [brushRoundness, setBrushRoundness] = useState(BRUSH_DEFAULT_ROUNDNESS),
+    [brushFlipX, setBrushFlipX] = useState(false),
+    [brushFlipY, setBrushFlipY] = useState(false),
     [patternId, setPatternId] = useState<PatternId>('checker'),
     [patternTileSize, setPatternTileSize] = useState(32),
     [redEyeThreshold, setRedEyeThreshold] = useState(36),
@@ -1296,6 +1360,8 @@ export default function Home() {
     ),
     [text, setText] = useState('Your text'),
     [fontSize, setFontSize] = useState(56);
+  const toolHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toolHoldOpened = useRef(false);
   const [cloneSource, setCloneSource] = useState<{
     x: number;
     y: number;
@@ -1327,6 +1393,7 @@ export default function Home() {
       name: string;
     } | null>(null),
     [batchImages, setBatchImages] = useState<BatchImageSource[] | null>(null),
+    [batchActionId, setBatchActionId] = useState<string>(),
     [drag, setDrag] = useState(false),
     [resizing, setResizing] = useState<{
       width: number;
@@ -1338,7 +1405,8 @@ export default function Home() {
     height: number;
   } | null>(null);
   const recordingActionRef = useRef<string | undefined>(undefined),
-    replayingActionRef = useRef(false);
+    replayingActionRef = useRef(false),
+    batchActionRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     try {
       window.localStorage.setItem(
@@ -1378,6 +1446,16 @@ export default function Home() {
     setActions((currentActions) => currentActions.filter((action) => action.id !== id));
     if (recordingActionRef.current === id) stopActionRecording();
     setNotice('Action recipe deleted from this device');
+  };
+  const beginBatchAction = (id: string) => {
+    const action = actions.find((candidate) => candidate.id === id);
+    if (!action || !action.steps.length) {
+      setNotice('Record at least one command before running a batch Action');
+      return;
+    }
+    batchActionRef.current = id;
+    setNotice(`Choose images for Action “${action.name}”`);
+    batchImageFile.current?.click();
   };
   const recordActionCommand = (command: Command) => {
     const id = recordingActionRef.current;
@@ -1536,6 +1614,12 @@ export default function Home() {
     hardness,
     pressureSize,
     pressureOpacity,
+    brushPreset,
+    spacing: brushSpacing,
+    angle: brushAngle,
+    roundness: brushRoundness,
+    flipX: brushFlipX,
+    flipY: brushFlipY,
     patternId,
     patternTileSize,
     redEyeThreshold,
@@ -1570,6 +1654,12 @@ export default function Home() {
     setHardness(s.hardness ?? 100);
     setPressureSize(s.pressureSize ?? false);
     setPressureOpacity(s.pressureOpacity ?? false);
+    setBrushPreset(s.brushPreset ?? 'round-hard');
+    setBrushSpacing(s.spacing ?? BRUSH_DEFAULT_SPACING);
+    setBrushAngle(s.angle ?? BRUSH_DEFAULT_ANGLE);
+    setBrushRoundness(s.roundness ?? BRUSH_DEFAULT_ROUNDNESS);
+    setBrushFlipX(s.flipX ?? false);
+    setBrushFlipY(s.flipY ?? false);
     setPatternId(s.patternId ?? 'checker');
     setPatternTileSize(s.patternTileSize ?? 32);
     setRedEyeThreshold(s.redEyeThreshold ?? 36);
@@ -1584,6 +1674,21 @@ export default function Home() {
     setExportTargetBytes(s.exportTargetBytes);
     setText(s.text);
     setFontSize(s.fontSize);
+  };
+  const applyBrushPreset = (id: BrushPresetId) => {
+    const preset = brushPresetById(id);
+    if (!preset) return;
+    setBrushPreset(id);
+    setSize(preset.size);
+    setHardness(preset.hardness);
+    setBrushSpacing(preset.spacing ?? BRUSH_DEFAULT_SPACING);
+    setBrushAngle(preset.angle ?? BRUSH_DEFAULT_ANGLE);
+    setBrushRoundness(preset.roundness ?? BRUSH_DEFAULT_ROUNDNESS);
+    setBrushFlipX(preset.flipX ?? false);
+    setBrushFlipY(preset.flipY ?? false);
+    setPressureSize(preset.pressureSize);
+    setPressureOpacity(preset.pressureOpacity);
+    setNotice(`Brush preset “${preset.label}” applied`);
   };
   const resetColors = () => {
     setColor('#000000');
@@ -2707,6 +2812,78 @@ export default function Home() {
       );
     }
   };
+  const applyContentAwareFill = async () => {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!f.selection) {
+      setNotice('Create a selection before using Content-Aware Fill');
+      return;
+    }
+    if (!layer || layer.kind !== 'raster' || !layer.visible) {
+      setNotice('Select a visible raster layer before using Content-Aware Fill');
+      return;
+    }
+    if (layerIsLocked(f, layer)) {
+      setNotice('Unlock this layer before using Content-Aware Fill');
+      return;
+    }
+    if ((layer.contentAwareFills?.length ?? 0) >= CONTENT_AWARE_MAX_OPERATIONS) {
+      setNotice(
+        `This layer has ${CONTENT_AWARE_MAX_OPERATIONS} Content-Aware Fill operations; export a copy before adding more`,
+      );
+      return;
+    }
+    try {
+      const image = await decodeAsset(assets.current[layer.asset]),
+        width = image.naturalWidth,
+        height = image.naturalHeight,
+        mask = await selectionMaskForLayer(
+          f.selection,
+          f,
+          layer,
+          assets.current,
+          width,
+          height,
+        );
+      if (!mask || !mask.some((alpha) => alpha > 0)) {
+        setNotice('The selection does not intersect the active raster layer');
+        return;
+      }
+      if (current() !== f || current().active !== layer.id) {
+        setNotice('The document changed while Content-Aware Fill was prepared');
+        return;
+      }
+      const maskCanvas = surface(width, height),
+        context = maskCanvas.getContext('2d');
+      if (!context) throw new Error('Content-Aware Fill mask is unavailable');
+      const imageData = context.createImageData(width, height);
+      for (let index = 0; index < mask.length; index += 1) {
+        const offset = index * 4;
+        imageData.data[offset] = 255;
+        imageData.data[offset + 1] = 255;
+        imageData.data[offset + 2] = 255;
+        imageData.data[offset + 3] = mask[index];
+      }
+      context.putImageData(imageData, 0, 0);
+      const maskId = addAsset(assets.current, maskCanvas),
+        fill: ContentAwareFill = {
+          version: 1,
+          mask: maskId,
+          radius: Math.max(1, Math.min(128, Math.round(Math.max(4, size / 2)))),
+          opacity: brushOpacity / 100,
+        };
+      if (
+        editLayer({
+          contentAwareFills: [...(layer.contentAwareFills ?? []), fill],
+        })
+      )
+        setNotice(
+          'Content-Aware Fill applied locally; source and alpha remain unchanged',
+        );
+    } catch {
+      setNotice('Content-Aware Fill could not be applied');
+    }
+  };
   const adjust = (patch: Partial<Adjustments>) => {
     const layer = current().layers.find((l) => l.id === current().active)!;
     return editLayer({
@@ -2964,6 +3141,12 @@ export default function Home() {
         hardness,
         pressureSize,
         pressureOpacity,
+        brushPreset,
+        spacing: brushSpacing,
+        angle: brushAngle,
+        roundness: brushRoundness,
+        flipX: brushFlipX,
+        flipY: brushFlipY,
         patternId,
         patternTileSize,
         redEyeThreshold,
@@ -3028,6 +3211,12 @@ export default function Home() {
     hardness,
     pressureSize,
     pressureOpacity,
+    brushPreset,
+    brushSpacing,
+    brushAngle,
+    brushRoundness,
+    brushFlipX,
+    brushFlipY,
     patternId,
     patternTileSize,
     redEyeThreshold,
@@ -4734,6 +4923,14 @@ export default function Home() {
         setNotice('Select a visible, unlocked raster layer before retouching');
         return;
       }
+      // Match Photoshop's Option/Alt-click source workflow.  A source can be
+      // re-anchored between strokes without switching tools; the click only
+      // updates the source point and must never create a history entry.
+      if (tool === 'clone' && e.altKey) {
+        setCloneSource(local);
+        setNotice('Clone source set; drag on the image to paint it');
+        return;
+      }
       if (!cloneSource) {
         setCloneSource(local);
         setNotice('Clone source set; drag on the image to paint it');
@@ -4774,6 +4971,11 @@ export default function Home() {
             pressure: point.pressure,
             pressureSize,
             pressureOpacity,
+            spacing: brushSpacing,
+            angle: brushAngle,
+            roundness: brushRoundness,
+            flipX: brushFlipX,
+            flipY: brushFlipY,
             mode: tool === 'heal' ? 'heal' : 'clone',
             source,
             sourceAnchor,
@@ -4841,6 +5043,11 @@ export default function Home() {
                 pressure: point.pressure,
                 pressureSize,
                 pressureOpacity,
+                spacing: brushSpacing,
+                angle: brushAngle,
+                roundness: brushRoundness,
+                flipX: brushFlipX,
+                flipY: brushFlipY,
                 pattern: g.patternId!,
                 tileSize: g.patternTileSize!,
                 foreground: brushColor(color),
@@ -5208,6 +5415,11 @@ export default function Home() {
               pressure: point.pressure,
               pressureSize: tool !== 'pencil' && pressureSize,
               pressureOpacity: tool !== 'pencil' && pressureOpacity,
+              spacing: brushSpacing,
+              angle: brushAngle,
+              roundness: tool === 'pencil' ? 100 : brushRoundness,
+              flipX: brushFlipX,
+              flipY: brushFlipY,
               mode: tool === 'eraser' ? 'destination-out' : 'source-over',
               color: tool === 'eraser' ? undefined : brushColor(color),
             });
@@ -5340,6 +5552,11 @@ export default function Home() {
         pressure: g.lastPressure,
         pressureSize,
         pressureOpacity,
+        spacing: brushSpacing,
+        angle: brushAngle,
+        roundness: brushRoundness,
+        flipX: brushFlipX,
+        flipY: brushFlipY,
         mode: g.tool === 'heal' ? 'heal' : 'clone',
         source: g.source,
         sourceAnchor: cloneSource,
@@ -5359,6 +5576,11 @@ export default function Home() {
           pressure: g.lastPressure,
           pressureSize,
           pressureOpacity,
+          spacing: brushSpacing,
+          angle: brushAngle,
+          roundness: brushRoundness,
+          flipX: brushFlipX,
+          flipY: brushFlipY,
           pattern: g.patternId!,
           tileSize: g.patternTileSize!,
           foreground: brushColor(color),
@@ -5558,6 +5780,11 @@ export default function Home() {
         pressure: g.lastPressure,
         pressureSize: g.tool !== 'pencil' && pressureSize,
         pressureOpacity: g.tool !== 'pencil' && pressureOpacity,
+        spacing: brushSpacing,
+        angle: brushAngle,
+        roundness: g.tool === 'pencil' ? 100 : brushRoundness,
+        flipX: brushFlipX,
+        flipY: brushFlipY,
         mode: g.tool === 'eraser' ? 'destination-out' : 'source-over',
         color: g.tool === 'eraser' ? undefined : brushColor(color),
       });
@@ -5987,6 +6214,11 @@ export default function Home() {
           pressure: g.lastPressure,
           pressureSize: g.tool !== 'pencil' && pressureSize,
           pressureOpacity: g.tool !== 'pencil' && pressureOpacity,
+          spacing: brushSpacing,
+          angle: brushAngle,
+          roundness: g.tool === 'pencil' ? 100 : brushRoundness,
+          flipX: brushFlipX,
+          flipY: brushFlipY,
           mode: g.tool === 'eraser' ? 'destination-out' : 'source-over',
           color: g.tool === 'eraser' ? undefined : brushColor(color),
         });
@@ -6206,6 +6438,11 @@ export default function Home() {
             pressure: g.lastPressure ?? pressure(e),
             pressureSize,
             pressureOpacity,
+            spacing: brushSpacing,
+            angle: brushAngle,
+            roundness: brushRoundness,
+            flipX: brushFlipX,
+            flipY: brushFlipY,
             pattern: g.patternId!,
             tileSize: g.patternTileSize!,
             foreground: brushColor(color),
@@ -6475,12 +6712,19 @@ export default function Home() {
       setNotice('Fit to screen');
     },
     openFile = () => file.current?.click();
+  const closeToolFlyout = () => {
+    setToolFlyout(null);
+    setToolFlyoutAnchor(null);
+  };
   useEffect(() => {
     const close = (e: PointerEvent) => {
       if (!menuArea.current?.contains(e.target as Node)) setActiveMenu(null);
     };
     window.addEventListener('pointerdown', close);
     return () => window.removeEventListener('pointerdown', close);
+  }, []);
+  useEffect(() => () => {
+    if (toolHoldTimer.current !== null) clearTimeout(toolHoldTimer.current);
   }, []);
   useEffect(() => {
     if (!activeMenu) return;
@@ -6612,6 +6856,7 @@ export default function Home() {
       }
       if (gesture.current) return;
       if (e.key === 'Escape') {
+        closeToolFlyout();
         closeMenu(true);
         return;
       }
@@ -6798,7 +7043,11 @@ export default function Home() {
         assets: { ...assets.current },
         name,
       });
-    else if (command === 'batch-images') batchImageFile.current?.click();
+    else if (command === 'batch-images') {
+      batchActionRef.current = undefined;
+      setBatchActionId(undefined);
+      batchImageFile.current?.click();
+    }
     else if (command === 'project-open') projectFile.current?.click();
     else if (command === 'new-white') newDocument(false);
     else if (command === 'new-transparent') newDocument(true);
@@ -6837,6 +7086,8 @@ export default function Home() {
       setTool('patch');
       setCloneSource(null);
       setNotice('Patch tool selected; click a source, then drag a destination');
+    } else if (command === 'content-aware-fill') {
+      await applyContentAwareFill();
     } else if (command === 'text-tool') {
       setTool('text');
       setNotice('Text tool selected');
@@ -7040,6 +7291,15 @@ export default function Home() {
         return !layer || layer.kind !== 'raster' || locked || !layer.visible;
       case 'patch-tool':
         return !layer || layer.kind !== 'raster' || locked || !layer.visible;
+      case 'content-aware-fill':
+        return (
+          !layer ||
+          layer.kind !== 'raster' ||
+          locked ||
+          !layer.visible ||
+          !frame.selection ||
+          (layer.contentAwareFills?.length ?? 0) >= CONTENT_AWARE_MAX_OPERATIONS
+        );
       case 'invert-layer-mask':
       case 'toggle-layer-mask':
       case 'remove-layer-mask':
@@ -7118,6 +7378,52 @@ export default function Home() {
         return false;
     }
   };
+  const stopToolHold = () => {
+    if (toolHoldTimer.current !== null) {
+      clearTimeout(toolHoldTimer.current);
+      toolHoldTimer.current = null;
+    }
+  };
+  const selectToolbarTool = (id: Tool, label: string) => {
+    toolHoldOpened.current = false;
+    if (cropPreview) cancelCropPreview();
+    if (perspectiveCropPreview) cancelPerspectiveCropPreview();
+    if (slicePreview) cancelSlicePreview();
+    if (gesture.current && gesture.current.tool !== id) {
+      // Switching tools abandons any staged pointer gesture. This is
+      // especially important for click-to-place tools on touch devices.
+      gesture.current = null;
+      void paint(current());
+    }
+    setTool(id);
+    setCloneSource(null);
+    closeToolFlyout();
+    setNotice(toolSelectionNotice(id, label));
+  };
+  const beginToolHold = (id: Tool, button: HTMLButtonElement) => {
+    stopToolHold();
+    toolHoldOpened.current = false;
+    const flyout = flyoutForTool(id);
+    if (!flyout) return;
+    toolHoldTimer.current = setTimeout(() => {
+      toolHoldTimer.current = null;
+      toolHoldOpened.current = true;
+      setToolFlyout(flyout);
+      setToolFlyoutAnchor(button);
+    }, 420);
+  };
+  const openToolFlyoutFromKeyboard = (
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    id: Tool,
+  ) => {
+    if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
+    const flyout = flyoutForTool(id);
+    if (!flyout) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setToolFlyout(flyout);
+    setToolFlyoutAnchor(event.currentTarget);
+  };
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <main
@@ -7171,8 +7477,12 @@ export default function Home() {
         multiple
         onChange={(event) => {
           const files = Array.from(event.target.files || []);
-          if (files.length)
+          const actionId = batchActionRef.current;
+          batchActionRef.current = undefined;
+          if (files.length) {
             setBatchImages(files.map((file) => ({ name: file.name, file })));
+            setBatchActionId(actionId);
+          }
           event.currentTarget.value = '';
         }}
       />
@@ -7249,7 +7559,11 @@ export default function Home() {
       {batchImages && (
         <ImageBatchDialog
           sources={batchImages}
-          close={() => setBatchImages(null)}
+          action={actions.find((candidate) => candidate.id === batchActionId)}
+          close={() => {
+            setBatchImages(null);
+            setBatchActionId(undefined);
+          }}
           downloaded={setNotice}
         />
       )}
@@ -7262,6 +7576,7 @@ export default function Home() {
           start={beginActionRecording}
           stop={stopActionRecording}
           run={(id) => void runActionRecipe(id)}
+          batch={beginBatchAction}
           remove={removeActionRecipe}
         />
       )}
@@ -7416,33 +7731,113 @@ export default function Home() {
           aria-label="Tools"
           data-testid="tool-palette"
         >
-          {TOOLS.map(({ id, label, icon: Icon, key }) => (
-            <button
-              key={id}
-              className={tool === id ? 'active' : ''}
-              onClick={() => {
-                if (cropPreview) cancelCropPreview();
-                if (perspectiveCropPreview) cancelPerspectiveCropPreview();
-                if (slicePreview) cancelSlicePreview();
-                if (gesture.current && gesture.current.tool !== id) {
-                  // Switching tools abandons any staged pointer gesture. This
-                  // is especially important for Magnetic Lasso, which keeps
-                  // a tap armed so Escape can cancel it on touch devices.
-                  gesture.current = null;
-                  void paint(current());
-                }
-                setTool(id);
-                setCloneSource(null);
-                setNotice(toolSelectionNotice(id, label));
-              }}
-              aria-label={`${label} tool`}
-              aria-pressed={tool === id}
-              title={`${label} (${key})`}
+          {TOOL_CATEGORIES.map((category) => (
+            <section
+              className="tool-category"
+              aria-label={`${category.label} tools`}
+              key={category.id}
             >
-              <Icon />
-              <span>{label}</span>
-              <kbd>{key}</kbd>
-            </button>
+              <h3>{category.label}</h3>
+              <div className="tool-category-grid">
+                {category.tools.map((toolId) => {
+                  const item = TOOLS.find((candidate) => candidate.id === toolId);
+                  if (!item) return null;
+                  const { id, label, icon: Icon, key } = item,
+                    flyout = flyoutForTool(id),
+                    subtools = flyout ? flyoutTools(flyout) : [];
+                  return (
+                    <div className="tool-button-wrap" key={id}>
+                      <button
+                        id={`toolbar-${id}`}
+                        className={tool === id ? 'active' : ''}
+                        data-tool-id={id}
+                        onPointerDown={(event) => {
+                          if (event.button === 0)
+                            beginToolHold(id, event.currentTarget);
+                        }}
+                        onPointerUp={stopToolHold}
+                        onPointerCancel={stopToolHold}
+                        onPointerLeave={stopToolHold}
+                        onContextMenu={(event) => {
+                          if (!flyout) return;
+                          event.preventDefault();
+                          stopToolHold();
+                          setToolFlyout(flyout);
+                          setToolFlyoutAnchor(event.currentTarget);
+                        }}
+                        onKeyDown={(event) =>
+                          openToolFlyoutFromKeyboard(event, id)
+                        }
+                        onClick={() => {
+                          if (toolHoldOpened.current) {
+                            // Releasing a long press opens the flyout without
+                            // immediately selecting the parent tool.
+                            toolHoldOpened.current = false;
+                            return;
+                          }
+                          selectToolbarTool(id, label);
+                        }}
+                        aria-label={`${label} tool`}
+                        aria-pressed={tool === id}
+                        aria-haspopup={flyout ? 'menu' : undefined}
+                        aria-expanded={
+                          flyout
+                            ? toolFlyout === flyout &&
+                              toolFlyoutAnchor?.dataset.toolId === id
+                            : undefined
+                        }
+                        title={
+                          flyout
+                            ? `${label} (${key}) · press and hold for subtools`
+                            : `${label} (${key})`
+                        }
+                      >
+                        <Icon />
+                        <span>{label}</span>
+                        <kbd>{key}</kbd>
+                      </button>
+                      {flyout &&
+                        toolFlyout === flyout &&
+                        toolFlyoutAnchor?.dataset.toolId === id && (
+                          <ToolFlyout
+                            label={label}
+                            trigger={toolFlyoutAnchor}
+                            selected={tool}
+                            items={subtools.flatMap((subtoolId) => {
+                              const subtool = TOOLS.find(
+                                (candidate) => candidate.id === subtoolId,
+                              );
+                              return subtool
+                                ? [
+                                    {
+                                      id: subtool.id,
+                                      label: flyoutToolLabel(
+                                        subtool.id,
+                                        subtool.label,
+                                      ),
+                                      key: flyoutToolKey(
+                                        subtool.id,
+                                        subtool.key,
+                                      ),
+                                    },
+                                  ]
+                                : [];
+                            })}
+                            onSelect={(subtoolId) => {
+                              const subtool = TOOLS.find(
+                                (candidate) => candidate.id === subtoolId,
+                              );
+                              if (subtool)
+                                selectToolbarTool(subtool.id, subtool.label);
+                            }}
+                            onClose={closeToolFlyout}
+                          />
+                        )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
           ))}
           <button
             className={
@@ -8414,6 +8809,24 @@ export default function Home() {
                 tool === 'pattern-stamp' ||
                 tool === 'selection-brush') && (
                 <>
+                  {(tool === 'brush' || tool === 'pencil') && (
+                    <label className="select-row">
+                      <span>Brush preset</span>
+                      <select
+                        aria-label="Brush preset"
+                        value={brushPreset}
+                        onChange={(event) =>
+                          applyBrushPreset(event.target.value as BrushPresetId)
+                        }
+                      >
+                        {BRUSH_PRESETS.map((preset) => (
+                          <option key={preset.id} value={preset.id}>
+                            {preset.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
                   {tool !== 'pencil' &&
                     tool !== 'color-replace' &&
                     tool !== 'magic-eraser' &&
@@ -8457,6 +8870,62 @@ export default function Home() {
                       set={setBrushOpacity}
                       suffix="%"
                     />
+                  )}
+                  {(tool === 'brush' ||
+                    tool === 'pencil' ||
+                    tool === 'eraser' ||
+                    tool === 'clone' ||
+                    tool === 'heal' ||
+                    tool === 'pattern-stamp') && (
+                    <>
+                      <Slider
+                        label="Spacing"
+                        value={brushSpacing}
+                        min={1}
+                        max={100}
+                        set={setBrushSpacing}
+                        suffix="%"
+                      />
+                      <Slider
+                        label="Angle"
+                        value={brushAngle}
+                        min={-180}
+                        max={180}
+                        set={setBrushAngle}
+                        suffix="°"
+                      />
+                      <Slider
+                        label="Roundness"
+                        value={brushRoundness}
+                        min={1}
+                        max={100}
+                        set={setBrushRoundness}
+                        suffix="%"
+                      />
+                      <label className="check-row">
+                        <input
+                          aria-label="Flip tip horizontal"
+                          type="checkbox"
+                          checked={brushFlipX}
+                          onChange={(event) => setBrushFlipX(event.target.checked)}
+                        />
+                        Flip tip horizontal
+                      </label>
+                      <label className="check-row">
+                        <input
+                          aria-label="Flip tip vertical"
+                          type="checkbox"
+                          checked={brushFlipY}
+                          onChange={(event) => setBrushFlipY(event.target.checked)}
+                        />
+                        Flip tip vertical
+                      </label>
+                      <p className="adjust-note">
+                        Tip settings apply to future local dabs. Advanced
+                        scattering, texture, dual-brush and wet-media dynamics
+                        remain staged for a later bounded renderer increment.
+                      </p>
+                    </>
                   )}
                   {tool !== 'pencil' &&
                     tool !== 'color-replace' &&
@@ -8593,6 +9062,14 @@ export default function Home() {
                         device.
                       </p>
                     </>
+                  )}
+                  {(tool === 'clone' || tool === 'heal') && (
+                    <p className="adjust-note">
+                      Option/Alt-click the canvas to set or re-anchor the
+                      source point. Drag to paint with a fixed source offset;
+                      the source pixels stay unchanged until you commit the
+                      stroke.
+                    </p>
                   )}
                   {tool === 'selection-brush' && (
                     <p className="adjust-note">

@@ -19,6 +19,21 @@ export type BrushPressureSettings = {
   /** Defaults to false; pressure modulation is opt-in and explicit. */
   pressureOpacity?: boolean;
 };
+/** Bounded brush-tip geometry controls shared by raster brush tools. */
+export type BrushTipSettings = {
+  /** Distance between dabs as a percentage of the brush diameter. */
+  spacing?: number;
+  /** Tip rotation in degrees. */
+  angle?: number;
+  /** Tip roundness, where 100 is circular and lower values are elliptical. */
+  roundness?: number;
+  /** Mirror the tip around its local horizontal/vertical axis. */
+  flipX?: boolean;
+  flipY?: boolean;
+};
+export const BRUSH_DEFAULT_SPACING = 25;
+export const BRUSH_DEFAULT_ANGLE = 0;
+export const BRUSH_DEFAULT_ROUNDNESS = 100;
 export type BrushStampSettings = BrushPressureSettings & {
   size: number;
   hardness: number;
@@ -26,7 +41,7 @@ export type BrushStampSettings = BrushPressureSettings & {
   opacity: number;
   pressure?: number;
   pointerType?: BrushPointerType;
-};
+} & BrushTipSettings;
 export type ResolvedBrushStamp = {
   pressure: number;
   size: number;
@@ -35,6 +50,11 @@ export type ResolvedBrushStamp = {
   opacity: number;
   pressureSize: boolean;
   pressureOpacity: boolean;
+  spacing: number;
+  angle: number;
+  roundness: number;
+  flipX: boolean;
+  flipY: boolean;
 };
 export type StampBounds = { left: number; top: number; right: number; bottom: number };
 export type RadialMask = {
@@ -101,6 +121,31 @@ export function effectiveBrushPressureSettings(value: BrushPressureSettings | un
   };
 }
 
+export function validBrushTipSettings(value: unknown): value is BrushTipSettings {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as BrushTipSettings;
+  return (
+    (candidate.spacing === undefined ||
+      (finite(candidate.spacing) && candidate.spacing >= 1 && candidate.spacing <= 100)) &&
+    (candidate.angle === undefined ||
+      (finite(candidate.angle) && candidate.angle >= -180 && candidate.angle <= 180)) &&
+    (candidate.roundness === undefined ||
+      (finite(candidate.roundness) && candidate.roundness >= 1 && candidate.roundness <= 100)) &&
+    (candidate.flipX === undefined || typeof candidate.flipX === 'boolean') &&
+    (candidate.flipY === undefined || typeof candidate.flipY === 'boolean')
+  );
+}
+
+export function effectiveBrushTipSettings(value: BrushTipSettings | undefined): Required<BrushTipSettings> {
+  return {
+    spacing: value?.spacing ?? BRUSH_DEFAULT_SPACING,
+    angle: value?.angle ?? BRUSH_DEFAULT_ANGLE,
+    roundness: value?.roundness ?? BRUSH_DEFAULT_ROUNDNESS,
+    flipX: value?.flipX ?? false,
+    flipY: value?.flipY ?? false,
+  };
+}
+
 /** Match PointerEvent behavior: mouse and missing/zero touch pressure use a deterministic full-pressure fallback. */
 export function normalizeBrushPressure(pointerType: string | undefined, pressure: number | undefined): number {
   return (pointerType === 'pen' || pointerType === 'touch') && finite(pressure) && pressure > 0 && pressure <= 1
@@ -116,8 +161,10 @@ export function resolveBrushStamp(settings: BrushStampSettings): ResolvedBrushSt
   if (!finite(settings.opacity) || settings.opacity < 0 || settings.opacity > 1)
     throw new Error('Brush opacity must be between 0 and 1');
   if (!validBrushPressureSettings(settings)) throw new Error('Brush pressure settings are invalid');
+  if (!validBrushTipSettings(settings)) throw new Error('Brush tip settings are invalid');
   const pressure = normalizeBrushPressure(settings.pointerType, settings.pressure),
     flags = effectiveBrushPressureSettings(settings),
+    tip = effectiveBrushTipSettings(settings),
     size = settings.size * (flags.pressureSize ? pressure : 1),
     opacity = settings.opacity * (flags.pressureOpacity ? pressure : 1);
   return {
@@ -127,6 +174,7 @@ export function resolveBrushStamp(settings: BrushStampSettings): ResolvedBrushSt
     hardness: settings.hardness,
     opacity: clamp(opacity, 0, 1),
     ...flags,
+    ...tip,
   };
 }
 
@@ -139,6 +187,39 @@ export function radialCoverage(distance: number, radius: number, hardness: numbe
   const softRadius = radius * (1 - hardness / 100),
     plateau = radius - softRadius;
   return distance <= plateau ? 1 : clamp((radius - distance) / Math.max(0.0000001, softRadius), 0, 1);
+}
+
+/** Return alpha coverage for a rotated, optionally mirrored elliptical tip. */
+export function brushCoverage(
+  dx: number,
+  dy: number,
+  radius: number,
+  hardness: number,
+  roundness = BRUSH_DEFAULT_ROUNDNESS,
+  angle = BRUSH_DEFAULT_ANGLE,
+  flipX = false,
+  flipY = false,
+): number {
+  if (!finite(dx) || !finite(dy) || !finite(radius) || radius <= 0)
+    throw new Error('Brush tip geometry is invalid');
+  if (!finite(roundness) || roundness < 1 || roundness > 100)
+    throw new Error('Brush roundness must be between 1 and 100');
+  if (!finite(angle) || angle < -180 || angle > 180)
+    throw new Error('Brush angle must be between -180 and 180');
+  if (typeof flipX !== 'boolean' || typeof flipY !== 'boolean')
+    throw new Error('Brush tip flip settings are invalid');
+  const radians = (angle * Math.PI) / 180,
+    cos = Math.cos(radians),
+    sin = Math.sin(radians);
+  // Rotate into tip-local space. Mirrors are retained as explicit controls;
+  // symmetric round/elliptical tips intentionally remain pixel-identical.
+  let localX = dx * cos + dy * sin,
+    localY = -dx * sin + dy * cos;
+  if (flipX) localX = -localX;
+  if (flipY) localY = -localY;
+  const verticalScale = roundness / 100,
+    distance = Math.hypot(localX, localY / verticalScale);
+  return radialCoverage(distance, radius, hardness);
 }
 
 function stampBounds(width: number, height: number, x: number, y: number, radius: number): StampBounds {
@@ -161,7 +242,16 @@ export function radialStampMask(request: RadialStampRequest): RadialMask {
     scale = stamp.opacity * 255;
   for (let py = bounds.top; py < bounds.bottom; py += 1) {
     for (let px = bounds.left; px < bounds.right; px += 1) {
-      const coverage = radialCoverage(Math.hypot(px - request.x, py - request.y), stamp.radius, stamp.hardness);
+      const coverage = brushCoverage(
+        px - request.x,
+        py - request.y,
+        stamp.radius,
+        stamp.hardness,
+        stamp.roundness,
+        stamp.angle,
+        stamp.flipX,
+        stamp.flipY,
+      );
       if (coverage > 0) data[(py - bounds.top) * width + (px - bounds.left)] = Math.round(coverage * scale);
     }
   }

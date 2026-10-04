@@ -24,8 +24,10 @@ import { effectiveImageSize } from './imageSize.ts';
 import {
   effectiveBrushPressureSettings,
   validBrushPressureSettings,
+  validBrushTipSettings,
   type BrushPressureSettings,
 } from './brush.ts';
+import { validBrushPresetId, type BrushPresetId } from './brushPresets.ts';
 import {
   PATTERN_IDS,
   normalizePatternTileSize,
@@ -99,6 +101,17 @@ export type Settings = {
   pressureSize?: boolean;
   /** Opt-in pen/touch pressure mapping for brush alpha. */
   pressureOpacity?: boolean;
+  /** Optional deterministic local Brush preset selected in the tool panel. */
+  brushPreset?: BrushPresetId;
+  /** Spacing between brush dabs as a percent of diameter. */
+  spacing?: number;
+  /** Brush tip rotation in degrees. */
+  angle?: number;
+  /** Brush tip roundness (100 is circular). */
+  roundness?: number;
+  /** Mirror the brush tip around its local axes. */
+  flipX?: boolean;
+  flipY?: boolean;
   /** Deterministic local source selected by Pattern Stamp. */
   patternId?: PatternId;
   /** Bounded tile edge in canvas pixels for Pattern Stamp. */
@@ -250,6 +263,8 @@ function validSettings(settings: unknown): settings is Settings {
       (typeof candidate.backgroundColor !== 'string' ||
         !/^#[a-f\d]{6}$/i.test(candidate.backgroundColor))) ||
     !validBrushPressureSettings(candidate) ||
+    !validBrushTipSettings(candidate) ||
+    (candidate.brushPreset !== undefined && !validBrushPresetId(candidate.brushPreset)) ||
     (candidate.patternId !== undefined &&
       !PATTERN_IDS.includes(candidate.patternId as PatternId)) ||
     (candidate.redEyeThreshold !== undefined &&
@@ -272,6 +287,9 @@ function validSettings(settings: unknown): settings is Settings {
   const brushRanges: [number, number, number][] = [
     [candidate.brushOpacity ?? 100, 1, 100] as [number, number, number],
     [candidate.hardness ?? 100, 0, 100] as [number, number, number],
+    [candidate.spacing ?? 25, 1, 100] as [number, number, number],
+    [candidate.angle ?? 0, -180, 180] as [number, number, number],
+    [candidate.roundness ?? 100, 1, 100] as [number, number, number],
     [candidate.colorTolerance ?? 24, 0, 255] as [number, number, number],
     [candidate.tonalExposure ?? 50, 1, 100] as [number, number, number],
     [candidate.spongeVibrance ?? 50, 1, 100] as [number, number, number],

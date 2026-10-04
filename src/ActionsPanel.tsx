@@ -9,6 +9,7 @@ type ActionsPanelProps = {
   start: (name: string) => void;
   stop: () => void;
   run: (id: string) => void;
+  batch: (id: string) => void;
   remove: (id: string) => void;
 };
 
@@ -25,6 +26,7 @@ export default function ActionsPanel({
   start,
   stop,
   run,
+  batch,
   remove,
 }: ActionsPanelProps) {
   const [name, setName] = useState('Color pass');
@@ -108,6 +110,13 @@ export default function ActionsPanel({
                   disabled={!action.steps.length || Boolean(recordingId) || Boolean(busyId)}
                 >
                   {busyId === action.id ? 'Running…' : 'Run'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => batch(action.id)}
+                  disabled={!action.steps.length || Boolean(recordingId) || Boolean(busyId)}
+                >
+                  Batch…
                 </button>
                 <button
                   type="button"

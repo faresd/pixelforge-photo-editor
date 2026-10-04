@@ -222,6 +222,35 @@ test('brush pressure controls are accessible, opt-in, persisted, and backward-co
   await expect(page.locator('footer')).toContainText('Saved document is not supported');
 });
 
+test('brush tip presets and geometry controls persist across project reload', async ({ page }) => {
+  await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
+  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await page.getByLabel('Brush preset', { exact: true }).selectOption('ink-angled');
+  await expect(page.locator('footer')).toContainText('Brush preset “Ink angled” applied');
+  await page.getByLabel('Spacing', { exact: true }).fill('42');
+  await page.getByLabel('Angle', { exact: true }).fill('-27');
+  await page.getByLabel('Roundness', { exact: true }).fill('58');
+  await page.getByLabel('Flip tip horizontal', { exact: true }).check();
+  await page.getByLabel('Flip tip vertical', { exact: true }).check();
+  await saved(page);
+  const out = await project(page);
+  expect(out.settings).toMatchObject({
+    brushPreset: 'ink-angled',
+    spacing: 42,
+    angle: -27,
+    roundness: 58,
+    flipX: true,
+    flipY: true,
+  });
+  await page.reload();
+  await expect(page.getByLabel('Brush preset', { exact: true })).toHaveValue('ink-angled');
+  await expect(page.getByLabel('Spacing', { exact: true })).toHaveValue('42');
+  await expect(page.getByLabel('Angle', { exact: true })).toHaveValue('-27');
+  await expect(page.getByLabel('Roundness', { exact: true })).toHaveValue('58');
+  await expect(page.getByLabel('Flip tip horizontal', { exact: true })).toBeChecked();
+  await expect(page.getByLabel('Flip tip vertical', { exact: true })).toBeChecked();
+});
+
 test('pressure-off fallback keeps pen strokes at configured size and opacity', async ({ page }) => {
   await newTransparentPaintLayer(page);
   await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
@@ -403,6 +432,51 @@ test('clone source stays fixed and healing commits through the shared stamp path
   expect(clippedDestination.slice(0, 3)).toEqual(sourcePixel.slice(0, 3));
   expect(clippedDestination[3]).toBe(sourcePixel[3]);
   expect(retainedSource).toEqual(sourcePixel);
+
+  // Photoshop-compatible Option/Alt-click re-anchors the source while the
+  // Clone tool remains selected. The source click must not create history;
+  // the following stroke should copy the newly painted colour instead of the
+  // original source at 0.3.
+  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await page.getByLabel('Drawing color', { exact: true }).fill('#1c5bd9');
+  await pointerStroke(page, 1, 0.6, 'mouse');
+  const secondSourceFrame = await project(page);
+  const secondSourceAsset = secondSourceFrame.assets[
+    secondSourceFrame.history[secondSourceFrame.index].layers.at(-1)!.asset!
+  ];
+  const secondSourcePixel = (await samplePixels(page, secondSourceAsset, [{ xRatio: 0.6 }]))[0];
+  expect(secondSourcePixel[3]).toBeGreaterThan(180);
+
+  await page.getByRole('button', { name: 'Clone tool', exact: true }).click();
+  const altSourcePoint = await canvasPoint(page, 0.6);
+  await canvas.dispatchEvent('pointerdown', {
+    pointerId: 20,
+    pointerType: 'mouse',
+    pressure: 1,
+    altKey: true,
+    clientX: altSourcePoint.clientX,
+    clientY: altSourcePoint.clientY,
+    buttons: 1,
+    isPrimary: true,
+  });
+  await canvas.dispatchEvent('pointerup', {
+    pointerId: 20,
+    pointerType: 'mouse',
+    pressure: 1,
+    altKey: true,
+    clientX: altSourcePoint.clientX,
+    clientY: altSourcePoint.clientY,
+    buttons: 0,
+    isPrimary: true,
+  });
+  await expect(page.locator('footer')).toContainText('Clone source set; drag on the image to paint it');
+  await toolStroke(page, 'Clone', 'Clone stroke applied', 0.88, false);
+  const reanchored = await project(page);
+  const reanchoredAsset = reanchored.assets[
+    reanchored.history[reanchored.index].layers.at(-1)!.asset!
+  ];
+  const reanchoredDestination = (await samplePixels(page, reanchoredAsset, [{ xRatio: 0.88 }]))[0];
+  expect(reanchoredDestination.slice(0, 3)).toEqual(secondSourcePixel.slice(0, 3));
 
   await page.getByRole('button', { name: 'Healing tool', exact: true }).click();
   const healingSource = await canvasPoint(page, 0.3);
