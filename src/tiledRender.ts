@@ -141,16 +141,14 @@ export function createTiledRenderPlan(
  * reads or bypass the shared memory limits.
  */
 export function validateTiledRenderRequest(value: unknown): TiledRenderRequest {
-  const id = record(value) ? value.id : undefined;
-  const width = record(value) ? value.width : undefined;
-  const height = record(value) ? value.height : undefined;
+  if (!record(value)) throw new RangeError('Invalid tiled render request');
+  const { id, width, height } = value;
   if (
-    !record(value) ||
     value.kind !== 'render-tiles' ||
     value.version !== TILED_RENDER_PROTOCOL_VERSION ||
     !positiveInteger(id) ||
-    !Number.isSafeInteger(width) ||
-    !Number.isSafeInteger(height) ||
+    !positiveInteger(width) ||
+    !positiveInteger(height) ||
     width < 1 ||
     height < 1 ||
     width > TILE_MAX_DIMENSION ||
@@ -159,9 +157,9 @@ export function validateTiledRenderRequest(value: unknown): TiledRenderRequest {
   )
     throw new RangeError('Invalid tiled render request');
   const request = buildRequest(id, width, height, {
-    tileSize: value.tileSize,
-    overlap: value.overlap,
-    maxBatchBytes: value.maxBatchBytes,
+    tileSize: value.tileSize as TiledRenderTileSize | undefined,
+    overlap: value.overlap as number | undefined,
+    maxBatchBytes: value.maxBatchBytes as number | undefined,
   });
   return request;
 }
