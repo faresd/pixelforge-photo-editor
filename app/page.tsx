@@ -1395,6 +1395,7 @@ export default function Home() {
     colorBalance,
     sharpenNoise,
     filterEffects,
+    photoAdjustments,
   } = adjustments;
   const dimensions = frame ? `${frame.w} × ${frame.h} px` : 'Opening…',
     canUndo = Boolean(slicePreview) || index.current > 0,
@@ -2660,6 +2661,9 @@ export default function Home() {
     adjust({ sharpenNoise: { ...sharpenNoise, ...patch } });
   const setFilterEffects = (patch: Partial<Adjustments['filterEffects']>) =>
     adjust({ filterEffects: { ...filterEffects, ...patch } });
+  const setPhotoAdjustments = (
+    patch: Partial<Adjustments['photoAdjustments']>,
+  ) => adjust({ photoAdjustments: { ...photoAdjustments, ...patch } });
   const chooseFilterEffect = (type: FilterEffectType, label: string) => {
     if (
       adjust({
@@ -7625,6 +7629,35 @@ export default function Home() {
               set={setBlur}
               suffix="px"
             />
+            <div className="adjustment-subtitle">Photo finishing</div>
+            <Slider
+              label="Exposure"
+              value={photoAdjustments.exposure}
+              min={-5}
+              max={5}
+              step={0.1}
+              set={(value) => setPhotoAdjustments({ exposure: value })}
+              suffix=" EV"
+            />
+            <Slider
+              label="Vibrance"
+              value={photoAdjustments.vibrance}
+              min={-100}
+              max={100}
+              set={(value) => setPhotoAdjustments({ vibrance: value })}
+              suffix=""
+            />
+            <label className="check-row">
+              <input
+                aria-label="Black and White"
+                type="checkbox"
+                checked={photoAdjustments.blackAndWhite}
+                onChange={(event) =>
+                  setPhotoAdjustments({ blackAndWhite: event.target.checked })
+                }
+              />
+              Black and White
+            </label>
             <div className="adjustment-subtitle">Levels (nondestructive)</div>
             <Slider
               label="Levels black point"

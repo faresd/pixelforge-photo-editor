@@ -66,6 +66,14 @@ import {
   validArtboards,
   type Artboard,
 } from './artboards.ts';
+import {
+  applyPhotoAdjustments,
+  effectivePhotoAdjustments,
+  isNeutralPhotoAdjustments,
+  neutralPhotoAdjustments,
+  validPhotoAdjustments,
+  type PhotoAdjustments,
+} from './photoAdjustments.ts';
 
 /** Version 2 stores immutable raster assets once; history contains editable layer metadata. */
 export const BLENDS = [
@@ -108,6 +116,8 @@ export type Adjustments = {
   auto: AutoAdjustments;
   /** Nondestructive local Filter menu effect parameters. */
   filterEffects: FilterEffects;
+  /** Nondestructive photographic finishing controls. */
+  photoAdjustments: PhotoAdjustments;
 };
 export const neutral: Adjustments = {
   brightness: 100,
@@ -129,6 +139,7 @@ export const neutral: Adjustments = {
   },
   auto: { ...neutralAuto },
   filterEffects: { ...neutralFilterEffects },
+  photoAdjustments: { ...neutralPhotoAdjustments },
 };
 export const FILTER_VALUES = [
   'none',
@@ -593,6 +604,7 @@ export function effectiveAdjustments(value: Partial<Adjustments>): Adjustments {
     curves: effectiveCurves(value.curves),
     auto: effectiveAutoAdjustments(value.auto),
     filterEffects: effectiveFilterEffects(value.filterEffects),
+    photoAdjustments: effectivePhotoAdjustments(value.photoAdjustments),
   };
 }
 
@@ -795,7 +807,8 @@ export function validAdjustments(v: unknown): v is Adjustments {
     validSharpenNoise(v.sharpenNoise ?? neutral.sharpenNoise) &&
     validCurves(v.curves ?? neutral.curves) &&
     validAutoAdjustments(v.auto ?? neutral.auto) &&
-    validFilterEffects(v.filterEffects ?? neutral.filterEffects)
+    validFilterEffects(v.filterEffects ?? neutral.filterEffects) &&
+    validPhotoAdjustments(v.photoAdjustments ?? neutral.photoAdjustments)
   );
 }
 export function validAsset(value: unknown): value is Asset {
@@ -1425,6 +1438,9 @@ export async function renderFrame(
         !isNeutralAuto(effectiveAdjustments(layer.adjustments).auto) ||
         !isNeutralFilterEffects(
           effectiveAdjustments(layer.adjustments).filterEffects,
+        ) ||
+        !isNeutralPhotoAdjustments(
+          effectiveAdjustments(layer.adjustments).photoAdjustments,
         ))
     ) {
       // Keep text and shape layers editable: render their existing transform
@@ -1443,6 +1459,7 @@ export async function renderFrame(
                 hue: 0,
                 auto: { ...neutralAuto },
                 filterEffects: { ...neutralFilterEffects },
+                photoAdjustments: { ...neutralPhotoAdjustments },
               },
             },
           ],
@@ -1461,6 +1478,7 @@ export async function renderFrame(
       applyCurves(coloured, layer.adjustments);
       applyAutoAdjustments(coloured, layer.adjustments);
       applyFilterEffects(coloured, layer.adjustments.filterEffects);
+      applyPhotoAdjustments(coloured, layer.adjustments.photoAdjustments);
       context.save();
       context.globalAlpha = layer.opacity * groupOpacity;
       context.globalCompositeOperation = layer.blend;
@@ -1497,6 +1515,7 @@ export async function renderFrame(
       applySharpenNoise(masked, layer.adjustments);
       applyCurves(masked, layer.adjustments);
       applyAutoAdjustments(masked, layer.adjustments);
+      applyPhotoAdjustments(masked, layer.adjustments.photoAdjustments);
       const maskImage = await decodeAsset(assets[layer.mask]);
       if (!maskSettings.inverted) {
         // The common path can use the compositor directly and avoids a second
@@ -1552,7 +1571,10 @@ export async function renderFrame(
           effectiveAdjustments(layer.adjustments).sharpenNoise,
         ) ||
         !isNeutralCurves(effectiveAdjustments(layer.adjustments).curves) ||
-        !isNeutralAuto(effectiveAdjustments(layer.adjustments).auto))
+        !isNeutralAuto(effectiveAdjustments(layer.adjustments).auto) ||
+        !isNeutralPhotoAdjustments(
+          effectiveAdjustments(layer.adjustments).photoAdjustments,
+        ))
     ) {
       const leveled = surface(frame.w, frame.h),
         leveledContext = leveled.getContext('2d')!;
@@ -1569,6 +1591,7 @@ export async function renderFrame(
       applySharpenNoise(leveled, layer.adjustments);
       applyCurves(leveled, layer.adjustments);
       applyAutoAdjustments(leveled, layer.adjustments);
+      applyPhotoAdjustments(leveled, layer.adjustments.photoAdjustments);
       context.save();
       context.globalAlpha = layer.opacity * groupOpacity;
       context.globalCompositeOperation = layer.blend;
