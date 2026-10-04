@@ -24,7 +24,7 @@ test('categories and families resolve stable labels for common Photoshop groups'
   assert.equal(categoryForTool('clone'), 'retouch');
   assert.equal(categoryForTool('polygon'), 'draw');
   assert.equal(familyForTool('clone'), 's');
-  assert.equal(familyForTool('magic-wand'), undefined);
+  assert.equal(familyForTool('magic-wand'), 'w');
   assert.equal(flyoutForTool('select'), 'marquee');
   assert.equal(flyoutForTool('lasso'), 'lasso');
   assert.equal(flyoutForTool('selection-brush'), 'selection');

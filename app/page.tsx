@@ -208,6 +208,7 @@ import {
   flyoutTools,
 } from '../src/toolPalette';
 import { removeRedEye } from '../src/redEye';
+import { ToolFlyout } from '../src/ToolFlyout';
 import { eraseBackgroundStroke, eraseMagicRegion } from '../src/erasers';
 import {
   applyDodgeBurnStroke,
@@ -467,11 +468,11 @@ const toolSelectionNotice = (tool: Tool, label: string) =>
 const flyoutToolLabel = (tool: Tool, label: string) =>
   tool === 'select'
     ? 'Rectangular Marquee'
+    : tool === 'ellipse-select'
+      ? 'Elliptical Marquee'
     : tool === 'lasso'
       ? 'Freeform Lasso'
-      : tool === 'selection-brush'
-        ? 'Quick Selection'
-        : label;
+      : label;
 const flyoutToolKey = (tool: Tool, key: string) =>
   tool === 'selection-brush' ? 'W' : key;
 const MARQUEE_TOOLS: Tool[] = [
@@ -489,6 +490,7 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   m: MARQUEE_TOOLS,
   i: ['eyedropper', 'color-sampler', 'ruler', 'note', 'count'],
   l: ['lasso', 'polygonal-lasso', 'magnetic-lasso', 'selection-brush'],
+  w: ['selection-brush', 'magic-wand'],
   e: ['eraser', 'background-eraser', 'magic-eraser'],
   o: ['dodge', 'burn', 'sponge'],
   r: ['smudge'],
@@ -1324,6 +1326,8 @@ export default function Home() {
     } = doc;
   const [tool, setTool] = useState<Tool>('move'),
     [toolFlyout, setToolFlyout] = useState<string | null>(null),
+    [toolFlyoutAnchor, setToolFlyoutAnchor] =
+      useState<HTMLButtonElement | null>(null),
     [selectionOperation, setSelectionOperation] =
       useState<SelectionOperation>('replace'),
     [zoom, setZoom] = useState(72),
@@ -6708,11 +6712,13 @@ export default function Home() {
       setNotice('Fit to screen');
     },
     openFile = () => file.current?.click();
+  const closeToolFlyout = () => {
+    setToolFlyout(null);
+    setToolFlyoutAnchor(null);
+  };
   useEffect(() => {
     const close = (e: PointerEvent) => {
       if (!menuArea.current?.contains(e.target as Node)) setActiveMenu(null);
-      if (!(e.target as Element)?.closest?.('.tool-button-wrap'))
-        setToolFlyout(null);
     };
     window.addEventListener('pointerdown', close);
     return () => window.removeEventListener('pointerdown', close);
@@ -6850,7 +6856,7 @@ export default function Home() {
       }
       if (gesture.current) return;
       if (e.key === 'Escape') {
-        setToolFlyout(null);
+        closeToolFlyout();
         closeMenu(true);
         return;
       }
@@ -7379,6 +7385,7 @@ export default function Home() {
     }
   };
   const selectToolbarTool = (id: Tool, label: string) => {
+    toolHoldOpened.current = false;
     if (cropPreview) cancelCropPreview();
     if (perspectiveCropPreview) cancelPerspectiveCropPreview();
     if (slicePreview) cancelSlicePreview();
@@ -7390,10 +7397,10 @@ export default function Home() {
     }
     setTool(id);
     setCloneSource(null);
-    setToolFlyout(null);
+    closeToolFlyout();
     setNotice(toolSelectionNotice(id, label));
   };
-  const beginToolHold = (id: Tool) => {
+  const beginToolHold = (id: Tool, button: HTMLButtonElement) => {
     stopToolHold();
     toolHoldOpened.current = false;
     const flyout = flyoutForTool(id);
@@ -7402,18 +7409,20 @@ export default function Home() {
       toolHoldTimer.current = null;
       toolHoldOpened.current = true;
       setToolFlyout(flyout);
+      setToolFlyoutAnchor(button);
     }, 420);
   };
   const openToolFlyoutFromKeyboard = (
     event: React.KeyboardEvent<HTMLButtonElement>,
     id: Tool,
   ) => {
-    if (!['Enter', ' ', 'ArrowDown', 'ArrowUp'].includes(event.key)) return;
+    if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
     const flyout = flyoutForTool(id);
     if (!flyout) return;
     event.preventDefault();
     event.stopPropagation();
     setToolFlyout(flyout);
+    setToolFlyoutAnchor(event.currentTarget);
   };
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
@@ -7739,10 +7748,23 @@ export default function Home() {
                   return (
                     <div className="tool-button-wrap" key={id}>
                       <button
+                        id={`toolbar-${id}`}
                         className={tool === id ? 'active' : ''}
-                        onPointerDown={() => beginToolHold(id)}
+                        data-tool-id={id}
+                        onPointerDown={(event) => {
+                          if (event.button === 0)
+                            beginToolHold(id, event.currentTarget);
+                        }}
                         onPointerUp={stopToolHold}
                         onPointerCancel={stopToolHold}
+                        onPointerLeave={stopToolHold}
+                        onContextMenu={(event) => {
+                          if (!flyout) return;
+                          event.preventDefault();
+                          stopToolHold();
+                          setToolFlyout(flyout);
+                          setToolFlyoutAnchor(event.currentTarget);
+                        }}
                         onKeyDown={(event) =>
                           openToolFlyoutFromKeyboard(event, id)
                         }
@@ -7758,44 +7780,59 @@ export default function Home() {
                         aria-label={`${label} tool`}
                         aria-pressed={tool === id}
                         aria-haspopup={flyout ? 'menu' : undefined}
-                        aria-expanded={flyout ? toolFlyout === flyout : undefined}
-                        title={`${label} (${key}) · press and hold for subtools`}
+                        aria-expanded={
+                          flyout
+                            ? toolFlyout === flyout &&
+                              toolFlyoutAnchor?.dataset.toolId === id
+                            : undefined
+                        }
+                        title={
+                          flyout
+                            ? `${label} (${key}) · press and hold for subtools`
+                            : `${label} (${key})`
+                        }
                       >
                         <Icon />
                         <span>{label}</span>
                         <kbd>{key}</kbd>
                       </button>
-                      {flyout && toolFlyout === flyout && (
-                        <div
-                          className="tool-flyout"
-                          role="menu"
-                          aria-label={`${label} subtools`}
-                          onPointerDown={(event) => event.stopPropagation()}
-                        >
-                          {subtools.map((subtoolId) => {
-                            const subtool = TOOLS.find(
-                              (candidate) => candidate.id === subtoolId,
-                            );
-                            if (!subtool) return null;
-                            return (
-                              <button
-                                key={subtool.id}
-                                role="menuitem"
-                                className={tool === subtool.id ? 'active' : ''}
-                                onClick={() =>
-                                  selectToolbarTool(
-                                    subtool.id,
-                                    subtool.label,
-                                  )
-                                }
-                              >
-                                <span>{flyoutToolLabel(subtool.id, subtool.label)}</span>
-                                <kbd>{flyoutToolKey(subtool.id, subtool.key)}</kbd>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
+                      {flyout &&
+                        toolFlyout === flyout &&
+                        toolFlyoutAnchor?.dataset.toolId === id && (
+                          <ToolFlyout
+                            label={label}
+                            trigger={toolFlyoutAnchor}
+                            selected={tool}
+                            items={subtools.flatMap((subtoolId) => {
+                              const subtool = TOOLS.find(
+                                (candidate) => candidate.id === subtoolId,
+                              );
+                              return subtool
+                                ? [
+                                    {
+                                      id: subtool.id,
+                                      label: flyoutToolLabel(
+                                        subtool.id,
+                                        subtool.label,
+                                      ),
+                                      key: flyoutToolKey(
+                                        subtool.id,
+                                        subtool.key,
+                                      ),
+                                    },
+                                  ]
+                                : [];
+                            })}
+                            onSelect={(subtoolId) => {
+                              const subtool = TOOLS.find(
+                                (candidate) => candidate.id === subtoolId,
+                              );
+                              if (subtool)
+                                selectToolbarTool(subtool.id, subtool.label);
+                            }}
+                            onClose={closeToolFlyout}
+                          />
+                        )}
                     </div>
                   );
                 })}
