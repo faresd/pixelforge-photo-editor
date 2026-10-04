@@ -18,8 +18,9 @@ oversized labels fail closed. The renderer uses the same bounded local
 ImageData mask as Brush, Eraser, Clone, Healing and Pattern Stamp.
 
 The panel deliberately does not present Photoshop-equivalent claims for
-scattering, texture, dual brush, color dynamics, transfer, pose, noise, wet
-edges, build-up, protect texture, mixer media, or custom imported brush files.
+smoothing/stabilization, scattering, texture, dual brush, color dynamics,
+transfer, pose, noise, wet edges, build-up, protect texture, mixer media, or
+custom imported brush files.
 Those features require a measured worker/tile renderer and a separate privacy,
 quota and cancellation contract. They remain roadmap items rather than silent
 no-op controls.
@@ -28,4 +29,3 @@ Acceptance coverage includes pure bounds/identity validation, deterministic
 elliptical and rotated tip masks, preset selection and local persistence, and
 desktop/mobile browser checks for control visibility, project export and
 reload-safe settings.
-
