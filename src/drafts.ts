@@ -41,6 +41,7 @@ export type Tool =
   | 'heal'
   | 'crop'
   | 'perspective-crop'
+  | 'slice'
   | 'brush'
   | 'pencil'
   | 'color-replace'
@@ -177,6 +178,7 @@ function validSettings(settings: unknown): settings is Settings {
       'heal',
       'crop',
       'perspective-crop',
+      'slice',
       'brush',
       'pencil',
       'color-replace',
