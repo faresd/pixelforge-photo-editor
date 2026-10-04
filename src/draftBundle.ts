@@ -202,7 +202,7 @@ export async function decodeDraftBundle(
   if (!isDraftBundleManifest(manifest)) throw new Error('Draft bundle manifest is invalid');
   if (chunks.length !== manifest.chunkCount)
     throw new Error('Draft bundle is incomplete');
-  const ordered = new Array<Uint8Array>(manifest.chunkCount);
+  const ordered = Array.from<Uint8Array | undefined>({ length: manifest.chunkCount });
   for (const value of chunks) {
     if (!isDraftBundleChunk(value)) throw new Error('Draft bundle chunk is invalid');
     const chunk = value as DraftBundleChunk;
@@ -222,6 +222,7 @@ export async function decodeDraftBundle(
   const payload = new Uint8Array(manifest.byteLength);
   let offset = 0;
   for (const chunk of ordered) {
+    if (!chunk) throw new Error('Draft bundle is incomplete');
     if (offset + chunk.byteLength > payload.byteLength)
       throw new Error('Draft bundle byte length is invalid');
     payload.set(chunk, offset);

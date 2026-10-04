@@ -36,7 +36,6 @@ import {
   createDraftBundle,
   decodeDraftBundle,
   isDraftBundleManifest,
-  isDraftBundleChunk,
   type DraftBundleManifest,
   type DraftBundleChunk,
 } from './draftBundle.ts';
@@ -83,6 +82,7 @@ export type Tool =
   | 'column-select'
   | 'lasso'
   | 'polygonal-lasso'
+  | 'magnetic-lasso'
   | 'selection-brush'
   | 'magic-wand';
 export type Shot = { url: string; w: number; h: number };
@@ -232,6 +232,7 @@ function validSettings(settings: unknown): settings is Settings {
       'column-select',
       'lasso',
       'polygonal-lasso',
+      'magnetic-lasso',
       'selection-brush',
       'magic-wand',
     ].includes(candidate.tool as Tool) ||
@@ -659,7 +660,7 @@ async function readStoredDraft(
       pointer = pointerRequest.result as StoredDraftPointer | undefined;
       if (pointer === undefined || !isDraftBundleManifest(pointer)) return;
       decodePending = true;
-      chunkValues = new Array(pointer.chunks.length);
+      chunkValues = Array.from({ length: pointer.chunks.length });
       pointer.chunks.forEach((key, index) => {
         const chunkRequest = blobs.get(key);
         chunkRequest.onsuccess = () => {

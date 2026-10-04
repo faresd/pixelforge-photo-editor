@@ -925,6 +925,48 @@ test('lasso selection stores polygon points and survives project round-trip', as
   expect(reloaded.value.history[reloaded.value.index].selection.shape).toBe('polygon');
 });
 
+test('Magnetic Lasso snaps an edge-following path and survives reload', async ({
+  page,
+}) => {
+  const canvas = page.getByTestId('editor-canvas');
+  const box = (await canvas.boundingBox())!;
+  await page.getByRole('button', { name: 'Magnetic Lasso tool', exact: true }).click();
+  await expect(page.getByText(/Magnetic Lasso:/)).toBeVisible();
+  const points = [
+    [0.16, 0.18],
+    [0.78, 0.18],
+    [0.84, 0.72],
+    [0.18, 0.76],
+  ];
+  await page.mouse.move(box.x + box.width * points[0][0], box.y + box.height * points[0][1]);
+  await page.mouse.down();
+  for (const [x, y] of points.slice(1))
+    await page.mouse.move(box.x + box.width * x, box.y + box.height * y, { steps: 4 });
+  await page.mouse.up();
+  await expect(page.getByText('Magnetic selection created', { exact: true })).toBeVisible();
+  const exported = await project(page),
+    frame = exported.value.history[exported.value.index];
+  expect(frame.selection.shape).toBe('polygon');
+  expect(frame.selection.points.length).toBeGreaterThanOrEqual(3);
+  await page.reload();
+  const reloaded = await project(page);
+  expect(reloaded.value.history[reloaded.value.index].selection.points.length).toBeGreaterThanOrEqual(3);
+});
+
+test('Magnetic Lasso touch cancellation leaves the draft unchanged', async ({
+  page,
+}, testInfo) => {
+  testInfo.skip(testInfo.project.name !== 'mobile', 'Touch cancellation runs in the mobile profile');
+  const canvas = page.getByTestId('editor-canvas');
+  const box = (await canvas.boundingBox())!;
+  await page.getByRole('button', { name: 'Magnetic Lasso tool', exact: true }).click();
+  await page.touchscreen.tap(box.x + box.width * 0.25, box.y + box.height * 0.25);
+  await page.keyboard.press('Escape');
+  await expect(page.getByText('Magnetic Lasso cancelled', { exact: true })).toBeVisible();
+  const exported = await project(page);
+  expect(exported.value.history[exported.value.index].selection).toBeUndefined();
+});
+
 test('polygonal lasso closes by vertex, masks representative pixels and survives reload', async ({
   page,
 }) => {
