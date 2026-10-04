@@ -291,6 +291,8 @@ test('Pinch is enabled as a nondestructive Distort effect with centred controls 
   await page.getByRole('menuitem', { name: /^Undo/ }).click();
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
   await expect.poll(() => pixel(page, 4, 2)).toEqual(sourcePixel);
 });
