@@ -102,8 +102,7 @@ const beginPatch = async (page: Page) => {
 const beginPatchFromMenu = async (page: Page) => {
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   const item = page.getByRole('menuitem', {
-    name: 'Patch Tool',
-    exact: true,
+    name: /^Patch Tool/,
   });
   await item.scrollIntoViewIfNeeded();
   await item.click();
