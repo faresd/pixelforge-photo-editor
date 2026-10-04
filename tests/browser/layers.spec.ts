@@ -200,14 +200,14 @@ test('layer folders persist visibility, opacity, locking and collapsed workspace
   expect(reloadedFrame.layers[0].groupId).toBeUndefined();
 });
 
-test('legacy projects migrate with history and the original bookmark is preserved', async ({
+test('legacy projects migrate with history while the original pointer stays recoverable', async ({
   page,
 }) => {
   const oldId = '739d75a0-66c0-4c52-a11c-2b6548dff828';
   await page.evaluate(
     async ({ oldId, png, defaults }) => {
       await new Promise<void>((resolve, reject) => {
-        const open = indexedDB.open('pixelforge-documents', 1);
+        const open = indexedDB.open('pixelforge-documents', 2);
         open.onsuccess = () => {
           const db = open.result,
             tx = db.transaction('drafts', 'readwrite');
@@ -234,23 +234,44 @@ test('legacy projects migrate with history and the original bookmark is preserve
   await page.goto('/editor#draft=' + oldId);
   await expect(page.getByLabel('Document name')).toHaveValue('Legacy safe');
   await saved(page);
+  const newId = new URL(page.url()).hash.match(/^#draft=([a-f0-9-]{36})$/)?.[1];
+  expect(newId).toBeTruthy();
+  expect(newId).not.toBe(oldId);
   expect(page.url()).not.toContain(oldId);
-  const legacyVersion = await page.evaluate(
-    async (oldId) =>
-      await new Promise<number>((resolve) => {
-        const request = indexedDB.open('pixelforge-documents', 1);
+  const pointers = await page.evaluate(
+    async ({ oldId, newId }) =>
+      await new Promise<{
+        oldPointer?: { kind?: string; version?: number; name?: string };
+        newPointer?: { kind?: string; version?: number; name?: string };
+      }>((resolve) => {
+        const request = indexedDB.open('pixelforge-documents', 2);
         request.onsuccess = () => {
-          const db = request.result,
-            read = db.transaction('drafts').objectStore('drafts').get(oldId);
-          read.onsuccess = () => {
-            resolve(read.result.version);
+          const db = request.result;
+          const transaction = db.transaction('drafts');
+          const store = transaction.objectStore('drafts');
+          const oldRead = store.get(oldId);
+          const newRead = store.get(newId);
+          let oldPointer: { kind?: string; version?: number; name?: string } | undefined;
+          let newPointer: { kind?: string; version?: number; name?: string } | undefined;
+          oldRead.onsuccess = () => { oldPointer = oldRead.result; };
+          newRead.onsuccess = () => { newPointer = newRead.result; };
+          transaction.oncomplete = () => {
+            resolve({ oldPointer, newPointer });
             db.close();
           };
         };
       }),
-    oldId,
+    { oldId, newId: newId! },
   );
-  expect(legacyVersion).toBe(1);
+  // Loading a v1 record migrates it in memory, then creates a fresh bookmark
+  // and persists the converted v2 document there. The old pointer remains a
+  // valid v1 recovery source for users who still have that URL bookmarked.
+  expect(pointers.oldPointer?.kind).toBeUndefined();
+  expect(pointers.oldPointer?.version).toBe(1);
+  expect(pointers.oldPointer?.name).toBe('Legacy safe');
+  expect(pointers.newPointer?.kind).toBe('pixelforge-draft-bundle');
+  expect(pointers.newPointer?.version).toBe(1);
+  expect(pointers.newPointer?.name).toBe('Legacy safe');
   const out = await project(page);
   expect(out.value.version).toBe(2);
   expect(out.value.history[0].layers[0].kind).toBe('raster');
@@ -922,6 +943,48 @@ test('lasso selection stores polygon points and survives project round-trip', as
   await page.reload();
   const reloaded = await project(page);
   expect(reloaded.value.history[reloaded.value.index].selection.shape).toBe('polygon');
+});
+
+test('Magnetic Lasso snaps an edge-following path and survives reload', async ({
+  page,
+}) => {
+  const canvas = page.getByTestId('editor-canvas');
+  const box = (await canvas.boundingBox())!;
+  await page.getByRole('button', { name: 'Magnetic Lasso tool', exact: true }).click();
+  await expect(page.getByText(/Magnetic Lasso:/)).toBeVisible();
+  const points = [
+    [0.16, 0.18],
+    [0.78, 0.18],
+    [0.84, 0.72],
+    [0.18, 0.76],
+  ];
+  await page.mouse.move(box.x + box.width * points[0][0], box.y + box.height * points[0][1]);
+  await page.mouse.down();
+  for (const [x, y] of points.slice(1))
+    await page.mouse.move(box.x + box.width * x, box.y + box.height * y, { steps: 4 });
+  await page.mouse.up();
+  await expect(page.getByText('Magnetic selection created', { exact: true })).toBeVisible();
+  const exported = await project(page),
+    frame = exported.value.history[exported.value.index];
+  expect(frame.selection.shape).toBe('polygon');
+  expect(frame.selection.points.length).toBeGreaterThanOrEqual(3);
+  await page.reload();
+  const reloaded = await project(page);
+  expect(reloaded.value.history[reloaded.value.index].selection.points.length).toBeGreaterThanOrEqual(3);
+});
+
+test('Magnetic Lasso touch cancellation leaves the draft unchanged', async ({
+  page,
+}, testInfo) => {
+  testInfo.skip(testInfo.project.name !== 'mobile', 'Touch cancellation runs in the mobile profile');
+  const canvas = page.getByTestId('editor-canvas');
+  const box = (await canvas.boundingBox())!;
+  await page.getByRole('button', { name: 'Magnetic Lasso tool', exact: true }).click();
+  await page.touchscreen.tap(box.x + box.width * 0.25, box.y + box.height * 0.25);
+  await page.keyboard.press('Escape');
+  await expect(page.getByText('Magnetic Lasso cancelled', { exact: true })).toBeVisible();
+  const exported = await project(page);
+  expect(exported.value.history[exported.value.index].selection).toBeUndefined();
 });
 
 test('polygonal lasso closes by vertex, masks representative pixels and survives reload', async ({

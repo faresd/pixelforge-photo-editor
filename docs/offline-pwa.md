@@ -18,7 +18,7 @@ The worker follows two rules:
 
 This milestone requires one successful online visit before the shell and app
 assets are available offline. Draft pixels, settings and undo history continue
-to use IndexedDB in the browser; a cached shell does not make cloud save or
+to use the versioned IndexedDB manifest/blob bundle described in [`draft-storage-contract.md`](./draft-storage-contract.md); a cached shell does not make cloud save or
 project-library operations available without a connection. Bump `CACHE_NAME`
 in `public/sw.js` when the cache contract changes. The browser removes older
 `pixelforge-shell-*` caches during activation.

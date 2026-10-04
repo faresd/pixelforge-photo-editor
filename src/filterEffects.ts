@@ -17,6 +17,7 @@ export const FILTER_EFFECT_TYPES = [
   'tilt-shift',
   'mosaic',
   'color-halftone',
+  'pinch',
   'ripple',
   'twirl',
 ] as const;
@@ -158,6 +159,61 @@ function sourcePixel(
     source[offset + 1],
     source[offset + 2],
     source[offset + 3],
+  ];
+}
+
+/**
+ * Sample a fractional source coordinate without pulling hidden RGB out of
+ * transparent pixels. Premultiplied-alpha interpolation keeps pinch edges
+ * free of halos while still producing a visible result on tiny canvases where
+ * nearest-neighbour rounding would map a subpixel displacement back to the
+ * original pixel.
+ */
+function sourcePixelBilinear(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+): [number, number, number, number] {
+  const sampleX = clamp(x, 0, width - 1),
+    sampleY = clamp(y, 0, height - 1),
+    left = Math.floor(sampleX),
+    top = Math.floor(sampleY),
+    right = Math.min(width - 1, left + 1),
+    bottom = Math.min(height - 1, top + 1),
+    tx = sampleX - left,
+    ty = sampleY - top,
+    weights = [
+      (1 - tx) * (1 - ty),
+      tx * (1 - ty),
+      (1 - tx) * ty,
+      tx * ty,
+    ],
+    offsets = [
+      (top * width + left) * 4,
+      (top * width + right) * 4,
+      (bottom * width + left) * 4,
+      (bottom * width + right) * 4,
+    ];
+  let alpha = 0,
+    red = 0,
+    green = 0,
+    blue = 0;
+  for (let index = 0; index < offsets.length; index += 1) {
+    const pixelAlpha = source[offsets[index] + 3] / 255,
+      weight = weights[index] * pixelAlpha;
+    alpha += weights[index] * pixelAlpha;
+    red += source[offsets[index]] * weight;
+    green += source[offsets[index] + 1] * weight;
+    blue += source[offsets[index] + 2] * weight;
+  }
+  if (alpha <= 0) return [0, 0, 0, 0];
+  return [
+    clampByte(red / alpha),
+    clampByte(green / alpha),
+    clampByte(blue / alpha),
+    clampByte(alpha * 255),
   ];
 }
 
@@ -523,7 +579,13 @@ function applyDistort(
   const amount = effect.amount / 100,
     centerX = effect.centerX * (width - 1),
     centerY = effect.centerY * (height - 1),
-    radius = Math.max(1, Math.min(width, height) * 0.7),
+    radius =
+      effect.type === 'pinch'
+        ? Math.max(
+            1,
+            (Math.min(width, height) * 0.7 * Math.max(1, effect.radius)) / 64,
+          )
+        : Math.max(1, Math.min(width, height) * 0.7),
     angle = (effect.angle * Math.PI) / 180;
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
@@ -541,12 +603,25 @@ function applyDistort(
           sine = Math.sin(turn);
         sampleX = centerX + dx * cosine - dy * sine;
         sampleY = centerY + dx * sine + dy * cosine;
+      } else if (effect.type === 'pinch' && distance < radius) {
+        // Inverse-map the destination into a bounded radial influence. A
+        // positive amount pulls pixels toward the editable centre while the
+        // squared falloff leaves the edge of the influence continuous. The
+        // source is sampled only; output never feeds a later pixel, so the
+        // operation remains deterministic and nondestructive.
+        const falloff = 1 - normalized;
+        const scale = 1 - amount * falloff * falloff;
+        sampleX = centerX + dx * scale;
+        sampleY = centerY + dy * scale;
       } else if (effect.type === 'ripple') {
         const wave = Math.sin(distance / Math.max(1, effect.radius || 8) * Math.PI * 2) * amount * Math.max(1, effect.radius || 8);
         sampleX = x + (dx / Math.max(1, distance)) * wave;
         sampleY = y + (dy / Math.max(1, distance)) * wave;
       }
-      const sample = sourcePixel(source, width, height, sampleX, sampleY);
+      const sample =
+        effect.type === 'pinch'
+          ? sourcePixelBilinear(source, width, height, sampleX, sampleY)
+          : sourcePixel(source, width, height, sampleX, sampleY);
       if (sample[3] === 0) continue;
       output[offset] = sample[0];
       output[offset + 1] = sample[1];

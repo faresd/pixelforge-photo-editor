@@ -160,6 +160,7 @@ import {
   combineSelectionBrushMasks,
   paintSelectionBrushSegment,
 } from '../src/selectionBrush';
+import { snapMagneticPoint } from '../src/magneticLasso';
 import { colorRangeMask } from '../src/colorRange';
 import {
   createQuickMask,
@@ -348,6 +349,7 @@ type Command =
   | 'filter-tilt-shift'
   | 'filter-mosaic'
   | 'filter-color-halftone'
+  | 'filter-pinch'
   | 'filter-ripple'
   | 'filter-twirl'
   | 'filter-clear-effect'
@@ -427,6 +429,12 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
     key: 'L',
   },
   {
+    id: 'magnetic-lasso',
+    label: 'Magnetic Lasso',
+    icon: WandSparkles,
+    key: 'L',
+  },
+  {
     id: 'selection-brush',
     label: 'Selection Brush',
     icon: WandSparkles,
@@ -434,6 +442,10 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   },
   { id: 'magic-wand', label: 'Magic Wand', icon: Wand2, key: 'W' },
 ];
+const toolSelectionNotice = (tool: Tool, label: string) =>
+  tool === 'magnetic-lasso'
+    ? 'Magnetic Lasso: drag along an edge, release to close'
+    : `${label} tool selected`;
 const MARQUEE_TOOLS: Tool[] = [
   'select',
   'ellipse-select',
@@ -448,7 +460,7 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   u: ['rectangle', 'ellipse', 'line', 'polygon'],
   m: MARQUEE_TOOLS,
   i: ['eyedropper', 'color-sampler', 'ruler', 'note', 'count'],
-  l: ['lasso', 'polygonal-lasso', 'selection-brush'],
+  l: ['lasso', 'polygonal-lasso', 'magnetic-lasso', 'selection-brush'],
   e: ['eraser', 'background-eraser', 'magic-eraser'],
   o: ['dodge', 'burn', 'sponge'],
   r: ['smudge'],
@@ -705,7 +717,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Iris Blur…', command: 'noop', disabled: true },
     { label: 'Distort', command: 'noop', disabled: true },
     { label: 'Displace…', command: 'noop', disabled: true },
-    { label: 'Pinch…', command: 'noop', disabled: true },
+    { label: 'Pinch…', command: 'filter-pinch' },
     { label: 'Ripple…', command: 'filter-ripple' },
     { label: 'Shear…', command: 'noop', disabled: true },
     { label: 'Spherize…', command: 'noop', disabled: true },
@@ -783,6 +795,11 @@ type Gesture = {
   pathIndex?: number;
   /** Local path model at pointer-down, used to keep a drag deterministic. */
   pathOrigin?: PathModel;
+  /** Composite RGBA sample used by the bounded Magnetic Lasso snapper. */
+  magneticData?: Uint8ClampedArray;
+  magneticRadius?: number;
+  /** Pointer movement received while the async edge sample is prepared. */
+  magneticPendingPoints?: { x: number; y: number }[];
   pending?: Promise<void>;
   queued?: Array<{
     x: number;
@@ -2789,6 +2806,8 @@ export default function Home() {
                 radius:
                   type === 'mosaic' || type === 'color-halftone'
                     ? 10
+                    : type === 'pinch'
+                      ? 40
                     : type === 'radial-blur'
                       ? 18
                       : 6,
@@ -5012,6 +5031,60 @@ export default function Home() {
       }
       return;
     }
+    if (tool === 'magnetic-lasso') {
+      if (layerIsLocked(f, layer) || !layer.visible || layer.kind !== 'raster') {
+        setNotice('Select a visible, unlocked raster layer before using Magnetic Lasso');
+        return;
+      }
+      setNotice('Magnetic Lasso: drag along an edge, release to close');
+      canvas.current?.setPointerCapture(e.pointerId);
+      const g: Gesture = {
+        tool,
+        start: p,
+        last: p,
+        frame: f,
+        layer,
+        points: [p],
+        magneticRadius: Math.max(6, Math.min(24, Math.round(size / 2))),
+        moved: false,
+      };
+      gesture.current = g;
+      g.pending = (async () => {
+        try {
+          const rendered = await renderFrame({ ...f, layers: [layer] }, assets.current);
+          if (gesture.current !== g) return;
+          const context = rendered.getContext('2d');
+          if (!context) throw new Error('Magnetic Lasso could not sample the layer');
+          g.magneticData = context.getImageData(0, 0, f.w, f.h).data;
+          const pending = g.magneticPendingPoints;
+          if (pending?.length && gesture.current === g) {
+            for (const point of pending) {
+              const snapped = snapMagneticPoint(
+                g.magneticData,
+                f.w,
+                f.h,
+                point,
+                g.magneticRadius ?? 12,
+              );
+              if (Math.hypot(snapped.x - g.last.x, snapped.y - g.last.y) >= 2) {
+                g.points?.push(snapped);
+                g.moved = true;
+                g.last = snapped;
+              }
+            }
+            g.magneticPendingPoints = undefined;
+          }
+          setNotice('Magnetic Lasso: drag along an edge, release to close');
+        } catch {
+          if (gesture.current === g) {
+            gesture.current = null;
+            setNotice('Could not prepare Magnetic Lasso');
+          }
+        }
+      })();
+      await g.pending;
+      return;
+    }
     if (tool === 'row-select' || tool === 'column-select') {
       // Photoshop's single-row and single-column marquees are one-pixel
       // precision presets. A click is enough; using the pointer-down point
@@ -5625,6 +5698,42 @@ export default function Home() {
         x.stroke();
         x.restore();
       });
+    } else if (g.tool === 'magnetic-lasso') {
+      const points = g.points || (g.points = [g.start]);
+      if (!g.magneticData) {
+        const pending = g.magneticPendingPoints || [];
+        // Keep enough of a fast drag to reconstruct a useful polygon after
+        // the asynchronous layer sample completes, while bounding memory for
+        // a stalled render on very high-frequency pointer devices.
+        g.magneticPendingPoints =
+          pending.length < 512 ? [...pending, p] : [...pending.slice(1), p];
+        return;
+      }
+      const snapped = snapMagneticPoint(
+        g.magneticData,
+        g.frame.w,
+        g.frame.h,
+        p,
+        g.magneticRadius ?? 12,
+      );
+      if (Math.hypot(snapped.x - g.last.x, snapped.y - g.last.y) >= 2) {
+        points.push(snapped);
+        g.moved = true;
+        g.last = snapped;
+      }
+      void paint(g.frame).then(() => {
+        if (gesture.current !== g) return;
+        const x = canvas.current!.getContext('2d')!;
+        x.save();
+        x.strokeStyle = '#fff';
+        x.lineWidth = 2;
+        x.setLineDash([8, 5]);
+        x.beginPath();
+        x.moveTo(points[0].x, points[0].y);
+        for (const point of points.slice(1)) x.lineTo(point.x, point.y);
+        x.stroke();
+        x.restore();
+      });
     } else if (g.tool === 'polygonal-lasso') {
       const points = g.points || (g.points = [g.start]);
       void paint(g.frame).then(() => {
@@ -5729,6 +5838,25 @@ export default function Home() {
       }
       // A polygonal lasso remains active after each click. It is finalized by
       // clicking its first vertex or by the double-click handler below.
+      return;
+    }
+    if (g.tool === 'magnetic-lasso') {
+      await g.pending;
+      if (gesture.current !== g) return;
+      if (e.type === 'pointercancel') {
+        gesture.current = null;
+        void paint(current());
+        setNotice('Magnetic Lasso cancelled');
+      } else if (!g.moved) {
+        // A tap only arms the tool. Keep the gesture alive so Escape can
+        // cancel it, matching Photoshop's staged lasso interaction on touch.
+        void paint(g.frame);
+        setNotice('Magnetic Lasso: drag along an edge, release to close');
+      } else {
+        gesture.current = null;
+        finishPolygonalLasso(g);
+        setNotice('Magnetic selection created');
+      }
       return;
     }
     if (g.tool === 'pen') {
@@ -6378,10 +6506,19 @@ export default function Home() {
           target.isContentEditable,
         command = e.ctrlKey || e.metaKey;
       if (!ready || cloudBusy || document.querySelector('dialog[open]')) return;
-      if (e.key === 'Escape' && gesture.current?.tool === 'polygonal-lasso') {
+      if (
+        e.key === 'Escape' &&
+        (gesture.current?.tool === 'polygonal-lasso' ||
+          gesture.current?.tool === 'magnetic-lasso')
+      ) {
+        const canceled = gesture.current.tool;
         gesture.current = null;
         void paint(current());
-        setNotice('Polygonal lasso cancelled');
+        setNotice(
+          canceled === 'magnetic-lasso'
+            ? 'Magnetic Lasso cancelled'
+            : 'Polygonal lasso cancelled',
+        );
         return;
       }
       if (
@@ -6584,7 +6721,10 @@ export default function Home() {
           ];
         setTool(next);
         setNotice(
-          `${TOOLS.find((item) => item.id === next)?.label || next} tool selected`,
+          toolSelectionNotice(
+            next,
+            TOOLS.find((item) => item.id === next)?.label || next,
+          ),
         );
         return;
       }
@@ -6593,7 +6733,10 @@ export default function Home() {
         e.preventDefault();
         setTool(alias);
         setNotice(
-          `${TOOLS.find((item) => item.id === alias)?.label || alias} tool selected`,
+          toolSelectionNotice(
+            alias,
+            TOOLS.find((item) => item.id === alias)?.label || alias,
+          ),
         );
         return;
       }
@@ -6772,6 +6915,8 @@ export default function Home() {
       chooseFilterEffect('color-halftone', 'Color Halftone');
     else if (command === 'filter-ripple')
       chooseFilterEffect('ripple', 'Ripple');
+    else if (command === 'filter-pinch')
+      chooseFilterEffect('pinch', 'Pinch');
     else if (command === 'filter-twirl') chooseFilterEffect('twirl', 'Twirl');
     else if (command === 'crop') {
       if (slicePreview) cancelSlicePreview();
@@ -7279,9 +7424,16 @@ export default function Home() {
                 if (cropPreview) cancelCropPreview();
                 if (perspectiveCropPreview) cancelPerspectiveCropPreview();
                 if (slicePreview) cancelSlicePreview();
+                if (gesture.current && gesture.current.tool !== id) {
+                  // Switching tools abandons any staged pointer gesture. This
+                  // is especially important for Magnetic Lasso, which keeps
+                  // a tap armed so Escape can cancel it on touch devices.
+                  gesture.current = null;
+                  void paint(current());
+                }
                 setTool(id);
                 setCloneSource(null);
-                setNotice(`${label} tool selected`);
+                setNotice(toolSelectionNotice(id, label));
               }}
               aria-label={`${label} tool`}
               aria-pressed={tool === id}
@@ -8564,8 +8716,10 @@ export default function Home() {
                           filterEffects.type === 'gaussian-blur' ||
                           filterEffects.type === 'motion-blur'
                           ? 'Blur radius'
-                        : filterEffects.type === 'radial-blur'
+                      : filterEffects.type === 'radial-blur'
                           ? 'Angular sweep'
+                      : filterEffects.type === 'pinch'
+                          ? 'Pinch radius'
                       : 'Radius'
                   }
                   value={filterEffects.radius}
@@ -8583,6 +8737,26 @@ export default function Home() {
                     set={(value) => setFilterEffects({ angle: value })}
                     suffix="°"
                   />
+                )}
+                {filterEffects.type === 'pinch' && (
+                  <>
+                    <Slider
+                      label="Pinch center X"
+                      value={Math.round(filterEffects.centerX * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      suffix="%"
+                    />
+                    <Slider
+                      label="Pinch center Y"
+                      value={Math.round(filterEffects.centerY * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      suffix="%"
+                    />
+                  </>
                 )}
                 {filterEffects.type === 'motion-blur' && (
                   <Slider
