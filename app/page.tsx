@@ -320,6 +320,7 @@ type Command =
   | 'filter-box-blur'
   | 'filter-gaussian-blur'
   | 'filter-motion-blur'
+  | 'filter-radial-blur'
   | 'filter-field-blur'
   | 'filter-tilt-shift'
   | 'filter-mosaic'
@@ -671,7 +672,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Box Blur…', command: 'filter-box-blur' },
     { label: 'Gaussian Blur…', command: 'filter-gaussian-blur' },
     { label: 'Motion Blur…', command: 'filter-motion-blur' },
-    { label: 'Radial Blur…', command: 'noop', disabled: true },
+    { label: 'Radial Blur…', command: 'filter-radial-blur' },
     { label: 'Smart Blur…', command: 'noop', disabled: true },
     { label: 'Blur Gallery', command: 'noop', disabled: true },
     { label: 'Iris Blur…', command: 'noop', disabled: true },
@@ -1394,6 +1395,7 @@ export default function Home() {
     colorBalance,
     sharpenNoise,
     filterEffects,
+    photoAdjustments,
   } = adjustments;
   const dimensions = frame ? `${frame.w} × ${frame.h} px` : 'Opening…',
     canUndo = Boolean(slicePreview) || index.current > 0,
@@ -2659,6 +2661,9 @@ export default function Home() {
     adjust({ sharpenNoise: { ...sharpenNoise, ...patch } });
   const setFilterEffects = (patch: Partial<Adjustments['filterEffects']>) =>
     adjust({ filterEffects: { ...filterEffects, ...patch } });
+  const setPhotoAdjustments = (
+    patch: Partial<Adjustments['photoAdjustments']>,
+  ) => adjust({ photoAdjustments: { ...photoAdjustments, ...patch } });
   const chooseFilterEffect = (type: FilterEffectType, label: string) => {
     if (
       adjust({
@@ -2674,7 +2679,12 @@ export default function Home() {
                     : type === 'box-blur' || type === 'gaussian-blur'
                       ? 85
                       : 70,
-                radius: type === 'mosaic' || type === 'color-halftone' ? 10 : 6,
+                radius:
+                  type === 'mosaic' || type === 'color-halftone'
+                    ? 10
+                    : type === 'radial-blur'
+                      ? 18
+                      : 6,
                 angle: type === 'twirl' ? 75 : 0,
               },
       })
@@ -6483,6 +6493,8 @@ export default function Home() {
       chooseFilterEffect('gaussian-blur', 'Gaussian Blur');
     else if (command === 'filter-motion-blur')
       chooseFilterEffect('motion-blur', 'Motion Blur');
+    else if (command === 'filter-radial-blur')
+      chooseFilterEffect('radial-blur', 'Radial Blur');
     else if (command === 'filter-field-blur')
       chooseFilterEffect('field-blur', 'Field Blur');
     else if (command === 'filter-tilt-shift')
@@ -7617,6 +7629,39 @@ export default function Home() {
               set={setBlur}
               suffix="px"
             />
+            {tool !== 'dodge' && tool !== 'burn' && tool !== 'sponge' && (
+              <>
+                <div className="adjustment-subtitle">Photo finishing</div>
+                <Slider
+                  label="Exposure"
+                  value={photoAdjustments.exposure}
+                  min={-5}
+                  max={5}
+                  step={0.1}
+                  set={(value) => setPhotoAdjustments({ exposure: value })}
+                  suffix=" EV"
+                />
+                <Slider
+                  label="Vibrance"
+                  value={photoAdjustments.vibrance}
+                  min={-100}
+                  max={100}
+                  set={(value) => setPhotoAdjustments({ vibrance: value })}
+                  suffix=""
+                />
+                <label className="check-row">
+                  <input
+                    aria-label="Black and White"
+                    type="checkbox"
+                    checked={photoAdjustments.blackAndWhite}
+                    onChange={(event) =>
+                      setPhotoAdjustments({ blackAndWhite: event.target.checked })
+                    }
+                  />
+                  Black and White
+                </label>
+              </>
+            )}
             <div className="adjustment-subtitle">Levels (nondestructive)</div>
             <Slider
               label="Levels black point"
@@ -8169,13 +8214,15 @@ export default function Home() {
                           filterEffects.type === 'gaussian-blur' ||
                           filterEffects.type === 'motion-blur'
                           ? 'Blur radius'
+                        : filterEffects.type === 'radial-blur'
+                          ? 'Angular sweep'
                       : 'Radius'
                   }
                   value={filterEffects.radius}
                   min={1}
                   max={64}
                   set={(value) => setFilterEffects({ radius: value })}
-                  suffix=" px"
+                  suffix={filterEffects.type === 'radial-blur' ? '°' : ' px'}
                 />
                 {filterEffects.type === 'twirl' && (
                   <Slider
@@ -8196,6 +8243,26 @@ export default function Home() {
                     set={(value) => setFilterEffects({ angle: value })}
                     suffix="°"
                   />
+                )}
+                {filterEffects.type === 'radial-blur' && (
+                  <>
+                    <Slider
+                      label="Blur center X"
+                      value={Math.round(filterEffects.centerX * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      suffix="%"
+                    />
+                    <Slider
+                      label="Blur center Y"
+                      value={Math.round(filterEffects.centerY * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      suffix="%"
+                    />
+                  </>
                 )}
                 {filterEffects.type === 'tilt-shift' && (
                   <Slider
