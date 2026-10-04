@@ -5037,6 +5037,7 @@ export default function Home() {
         return;
       }
       setNotice('Magnetic Lasso: drag along an edge, release to close');
+      canvas.current?.setPointerCapture(e.pointerId);
       const g: Gesture = {
         tool,
         start: p,
