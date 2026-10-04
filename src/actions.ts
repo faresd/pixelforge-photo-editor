@@ -107,7 +107,7 @@ export function bindActionParameters(
     if (expanded.length > 1024) throw new RangeError('Expanded action parameter is too long');
     return expanded;
   };
-  return {
+  const bound = {
     ...action,
     steps: action.steps.map((step) => ({
       ...step,
@@ -121,6 +121,8 @@ export function bindActionParameters(
         : {}),
     })),
   };
+  if (!validActionSet(bound)) throw new RangeError('Expanded action exceeds recipe limits');
+  return bound;
 }
 
 export const REPLAYABLE_ACTION_COMMANDS = new Set([
