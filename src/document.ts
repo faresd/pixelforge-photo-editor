@@ -808,7 +808,13 @@ export function validAdjustments(v: unknown): v is Adjustments {
     validCurves(v.curves ?? neutral.curves) &&
     validAutoAdjustments(v.auto ?? neutral.auto) &&
     validFilterEffects(v.filterEffects ?? neutral.filterEffects) &&
-    validPhotoAdjustments(v.photoAdjustments ?? neutral.photoAdjustments)
+    // Omitted photo metadata is the legacy neutral default; an explicitly
+    // supplied value must be a complete, bounded record so imports fail closed.
+    validPhotoAdjustments(
+      v.photoAdjustments === undefined
+        ? neutral.photoAdjustments
+        : v.photoAdjustments,
+    )
   );
 }
 export function validAsset(value: unknown): value is Asset {
@@ -1457,6 +1463,9 @@ export async function renderFrame(
               adjustments: {
                 ...effectiveAdjustments(layer.adjustments),
                 hue: 0,
+                colorBalance: { ...neutralColorBalance },
+                sharpenNoise: { ...neutralSharpenNoise },
+                curves: effectiveCurves(undefined),
                 auto: { ...neutralAuto },
                 filterEffects: { ...neutralFilterEffects },
                 photoAdjustments: { ...neutralPhotoAdjustments },

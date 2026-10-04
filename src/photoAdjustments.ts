@@ -156,6 +156,9 @@ export function applyPhotoAdjustments(
   canvas: HTMLCanvasElement,
   value: Partial<PhotoAdjustments> | undefined,
 ): HTMLCanvasElement {
+  // Neutral controls are common on imported/legacy layers. Avoid a full
+  // readback/copy when no photographic correction is requested.
+  if (isNeutralPhotoAdjustments(value)) return canvas;
   const context = canvas.getContext('2d');
   if (!context) return canvas;
   const image = context.getImageData(0, 0, canvas.width, canvas.height);

@@ -19,6 +19,7 @@ import {
   type Frame,
   type Adjustments,
 } from './document.ts';
+import { validPhotoAdjustments } from './photoAdjustments.ts';
 import { effectiveImageSize } from './imageSize.ts';
 import {
   effectiveBrushPressureSettings,
@@ -296,6 +297,18 @@ type DraftCandidate = Omit<Draft, 'version' | 'settings' | 'history'> & {
 };
 type DraftMigration = (value: DraftCandidate, settings: Settings) => Draft;
 
+function validRawPhotoMetadata(history: unknown): boolean {
+  if (!Array.isArray(history)) return true;
+  return history.every((frame) => {
+    if (!record(frame) || !Array.isArray(frame.layers)) return true;
+    return frame.layers.every((layer) => {
+      if (!record(layer) || !record(layer.adjustments)) return true;
+      const value = layer.adjustments.photoAdjustments;
+      return value === undefined || validPhotoAdjustments(value);
+    });
+  });
+}
+
 /** Versioned migration registry; unknown document versions fail closed. */
 export const DRAFT_MIGRATIONS: Readonly<Record<number, DraftMigration>> = {
   1: (value, settings) => {
@@ -350,6 +363,8 @@ export function validateDraft(input: unknown): Draft {
   const value = input as DraftCandidate;
   if (value.version !== 1 && value.version !== CURRENT_DRAFT_VERSION)
     throw new Error('Unsupported project version');
+  if (!validRawPhotoMetadata(value.history))
+    throw new Error('Saved document is not supported');
   // v2 drafts created before Levels shipped omit its three fields. Normalize
   // them at the persistence boundary so the UI and renderer always receive a
   // complete adjustment record while keeping old bookmarks importable.
