@@ -78,6 +78,22 @@ request. A newer render invalidates an older render in `useDocument`; only the
 newest completed result can be published. Published image sources are closed
 after they are drawn or discarded.
 
+## Bounded tile schedule seed
+
+The shared [`tilePlan.ts`](../src/tilePlan.ts) module now exposes a deterministic
+`planTiles` plus `scheduleTiles` contract. `scheduleTiles` validates every inner
+and expanded read rectangle, preserves row-major order, and groups work under a
+16 MiB expanded-RGBA batch budget (with a hard 64 MiB ceiling). The bounded
+image-encode worker consumes these batches and releases each temporary tile
+buffer before advancing. This protects worker operations from accidentally
+turning a neighbourhood read into an unbounded queue.
+
+The schedule is a reusable planning boundary for the future document renderer;
+it does not change the current full-frame document result protocol, stream
+partial pixels, or increase the 16 MP safety limit. Overlap remains explicit so
+blur, healing and other neighbourhood effects can adopt the same plan only
+after their edge and compositing rules are tested.
+
 ## Fallback and interactive edits
 
 The renderer uses the existing main-thread `renderFrame` path when worker

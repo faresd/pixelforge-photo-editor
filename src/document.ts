@@ -61,6 +61,11 @@ import {
   validFilterEffects,
   type FilterEffects,
 } from './filterEffects.ts';
+import {
+  transformArtboard,
+  validArtboards,
+  type Artboard,
+} from './artboards.ts';
 
 /** Version 2 stores immutable raster assets once; history contains editable layer metadata. */
 export const BLENDS = [
@@ -265,6 +270,10 @@ export type Frame = {
   quickMask?: { asset: string; active: boolean };
   /** Workspace-only sampling, ruler, note and count overlays. */
   measurements?: MeasurementAnnotation[];
+  /** Bounded named viewports; artboards do not duplicate or flatten assets. */
+  artboards?: Artboard[];
+  /** Optional active artboard pointer, validated against `artboards`. */
+  activeArtboardId?: string;
 };
 export type Asset = { url: string; w: number; h: number };
 export type Assets = Record<string, Asset>;
@@ -445,22 +454,40 @@ export const transformFrame = (
   matrix: Matrix,
   w = frame.w,
   h = frame.h,
-): Frame => ({
-  ...frame,
-  w,
-  h,
-  imageSize: effectiveImageSize(frame.imageSize),
-  selection: undefined,
-  previousSelection: undefined,
-  // Geometric transforms change the canvas bounds. Named snapshots are
-  // cleared until they can be transformed with an explicit selection contract.
-  savedSelections: undefined,
-  quickMask: undefined,
-  layers: frame.layers.map((layer) => ({
-    ...layer,
-    matrix: multiply(matrix, layer.matrix),
-  })),
-});
+): Frame => {
+  const artboards = frame.artboards?.flatMap((artboard) => {
+    try {
+      return [transformArtboard(artboard, matrix, w, h)];
+    } catch {
+      // A crop may remove a named viewport completely. Dropping that metadata
+      // is safer than retaining an invalid pointer or changing pixel assets.
+      return [];
+    }
+  });
+  const activeArtboardId =
+    frame.activeArtboardId && artboards?.some((item) => item.id === frame.activeArtboardId)
+      ? frame.activeArtboardId
+      : artboards?.[0]?.id;
+  return {
+    ...frame,
+    w,
+    h,
+    imageSize: effectiveImageSize(frame.imageSize),
+    selection: undefined,
+    previousSelection: undefined,
+    // Geometric transforms change the canvas bounds. Named snapshots are
+    // cleared until they can be transformed with an explicit selection contract.
+    savedSelections: undefined,
+    quickMask: undefined,
+    layers: frame.layers.map((layer) => ({
+      ...layer,
+      matrix: multiply(matrix, layer.matrix),
+    })),
+    ...(artboards?.length
+      ? { artboards, ...(activeArtboardId ? { activeArtboardId } : {}) }
+      : {}),
+  };
+};
 
 /**
  * Applies a document transform while also transforming canvas-space layer
@@ -856,6 +883,18 @@ export function validateFrame(
       return fail();
     ids.add(group.id);
   }
+  if (
+    value.artboards !== undefined &&
+    (!validArtboards(
+      value.artboards,
+      Number(value.w),
+      Number(value.h),
+      value.activeArtboardId,
+    ))
+  )
+    return fail();
+  if (value.artboards === undefined && value.activeArtboardId !== undefined)
+    return fail();
   const groupIds = new Set(groups.map((group) => group.id));
   let pixels = 0;
   for (const layer of value.layers) {

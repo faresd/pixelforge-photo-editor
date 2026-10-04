@@ -6,6 +6,9 @@ import {
   TILE_MAX_COUNT,
   TILE_MAX_SIZE,
   TILE_MIN_SIZE,
+  DEFAULT_TILE_BATCH_BYTES,
+  TILE_MAX_BATCH_BYTES,
+  scheduleTiles,
   TileCache,
   planTiles,
   readTile,
@@ -64,6 +67,29 @@ test('tile bounds reject unsafe plans', () => {
   assert.throws(() => planTiles(1, 1, { tileSize: TILE_MAX_SIZE + 1 }), /Tile size/);
   assert.throws(() => planTiles(1, 1, { tileSize: DEFAULT_TILE_SIZE, overlap: 257 }), /overlap/);
   assert.equal(TILE_MAX_COUNT, 4096);
+});
+
+test('tile scheduling preserves row-major order under an expanded-byte budget', () => {
+  const plan = planTiles(1300, 900, { tileSize: 512, overlap: 8 });
+  const firstTileBytes = plan.tiles[0].readWidth * plan.tiles[0].readHeight * 4;
+  const schedule = scheduleTiles(plan, { maxBatchBytes: firstTileBytes * 2 });
+  assert.equal(schedule.tileCount, plan.tiles.length);
+  assert.ok(schedule.batches.length > 1);
+  assert.ok(schedule.batches.every((batch) => batch.bytes <= firstTileBytes * 2));
+  assert.deepEqual(schedule.batches.flatMap((batch) => batch.tiles), plan.tiles);
+  assert.deepEqual(schedule.batches.map((batch) => batch.index), schedule.batches.map((_, index) => index));
+});
+
+test('tile scheduling rejects forged plans and unsafe byte budgets', () => {
+  const plan = planTiles(1300, 900, { tileSize: 512, overlap: 8 });
+  assert.equal(DEFAULT_TILE_BATCH_BYTES, 16 * 1024 * 1024);
+  assert.equal(TILE_MAX_BATCH_BYTES, 64 * 1024 * 1024);
+  assert.throws(() => scheduleTiles({ ...plan, tiles: [] }), /non-empty/);
+  assert.throws(() => scheduleTiles(plan, { maxBatchBytes: 0 }), /positive integer/);
+  assert.throws(() => scheduleTiles(plan, { maxBatchBytes: TILE_MAX_BATCH_BYTES + 1 }), /no larger/);
+  const forged = { ...plan, tiles: [{ ...plan.tiles[0], readWidth: 1400 }] };
+  assert.throws(() => scheduleTiles(forged), /outside the image/);
+  assert.throws(() => scheduleTiles(plan, { maxBatchBytes: 1 }), /exceeds the configured batch byte budget/);
 });
 
 test('tile reads and writes reject forged rectangles', () => {

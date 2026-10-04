@@ -15,6 +15,10 @@ export const TILE_MAX_DIMENSION = 16000;
 export const TILE_MAX_PIXELS = 16_000_000;
 /** A malformed request must not be able to create an unbounded tile list. */
 export const TILE_MAX_COUNT = 4096;
+/** Default expanded RGBA budget for one scheduled worker batch. */
+export const DEFAULT_TILE_BATCH_BYTES = 16 * 1024 * 1024;
+/** Keep a caller from opting into an unbounded temporary allocation. */
+export const TILE_MAX_BATCH_BYTES = 64 * 1024 * 1024;
 
 export type Tile = {
   x: number;
@@ -35,6 +39,21 @@ export type TilePlan = {
   tiles: Tile[];
   /** Maximum temporary RGBA bytes needed for one expanded tile. */
   maxTileBytes: number;
+};
+
+export type TileBatch = {
+  /** Stable zero-based row-major batch number. */
+  index: number;
+  /** Tiles are retained in the same order as the source plan. */
+  tiles: Tile[];
+  /** Sum of expanded read-buffer bytes in this batch. */
+  bytes: number;
+};
+
+export type TileSchedule = {
+  maxBatchBytes: number;
+  batches: TileBatch[];
+  tileCount: number;
 };
 
 const integer = (value: unknown): value is number =>
@@ -141,6 +160,64 @@ export function planTiles(
       0,
     ),
   };
+}
+
+function tileReadBytes(tile: Tile): number {
+  return tile.readWidth * tile.readHeight * 4;
+}
+
+/**
+ * Group an existing row-major plan into memory-bounded worker batches.
+ *
+ * A batch is a scheduling boundary, not a promise that tiles are rendered in
+ * parallel. Callers may process each tile serially and release its expanded
+ * read buffer before moving to the next one, or use the batch as the upper
+ * bound for a small worker pool. Keeping this contract separate from
+ * `planTiles` lets document rendering adopt it without changing the current
+ * full-frame result protocol.
+ */
+export function scheduleTiles(
+  plan: TilePlan,
+  options: { maxBatchBytes?: number } = {},
+): TileSchedule {
+  if (
+    !plan ||
+    !integer(plan.width) ||
+    !integer(plan.height) ||
+    !Array.isArray(plan.tiles) ||
+    plan.tiles.length < 1 ||
+    plan.tiles.length > TILE_MAX_COUNT
+  )
+    throw new RangeError('Tile schedule requires a bounded non-empty tile plan');
+  assertDimensions(plan.width, plan.height);
+  const maxBatchBytes = options.maxBatchBytes ?? DEFAULT_TILE_BATCH_BYTES;
+  if (
+    !Number.isSafeInteger(maxBatchBytes) ||
+    maxBatchBytes < 1 ||
+    maxBatchBytes > TILE_MAX_BATCH_BYTES
+  )
+    throw new RangeError(
+      `Tile batch bytes must be a positive integer no larger than ${TILE_MAX_BATCH_BYTES}`,
+    );
+
+  const batches: TileBatch[] = [];
+  let tiles: Tile[] = [];
+  let bytes = 0;
+  for (const tile of plan.tiles) {
+    assertTile(tile, plan.width, plan.height);
+    const tileBytes = tileReadBytes(tile);
+    if (tileBytes > maxBatchBytes)
+      throw new RangeError('Tile exceeds the configured batch byte budget');
+    if (tiles.length > 0 && bytes + tileBytes > maxBatchBytes) {
+      batches.push({ index: batches.length, tiles, bytes });
+      tiles = [];
+      bytes = 0;
+    }
+    tiles.push(tile);
+    bytes += tileBytes;
+  }
+  if (tiles.length > 0) batches.push({ index: batches.length, tiles, bytes });
+  return { maxBatchBytes, batches, tileCount: plan.tiles.length };
 }
 
 /** Copy an expanded RGBA tile out of a tightly packed source buffer. */
