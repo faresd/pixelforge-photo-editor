@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect, type Page } from '@playwright/test';
 
 const openEditor = async (page: Page) => {
@@ -161,7 +162,7 @@ const pointerStrokeWithReleasePressure = async (
   await saved(page);
 };
 const toolStroke = async (page: Page, tool: string, notice: string, fraction: number, select = true) => {
-  if (select) await page.getByRole('button', { name: `${tool} tool`, exact: true }).click();
+  if (select) await selectTool(page, tool);
   const point = await canvasPoint(page, fraction);
   const canvas = page.getByTestId('editor-canvas');
   await canvas.evaluate((element) => {
@@ -180,7 +181,7 @@ const toolStroke = async (page: Page, tool: string, notice: string, fraction: nu
 
 test('brush pressure controls are accessible, opt-in, persisted, and backward-compatible', async ({ page }) => {
   await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
-  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await selectTool(page, 'Brush');
   await expect(page.getByLabel('Pressure affects size', { exact: true })).not.toBeChecked();
   await expect(page.getByLabel('Pressure affects opacity', { exact: true })).not.toBeChecked();
   await page.getByLabel('Size', { exact: true }).fill('44');
@@ -224,7 +225,7 @@ test('brush pressure controls are accessible, opt-in, persisted, and backward-co
 
 test('brush tip presets and geometry controls persist across project reload', async ({ page }) => {
   await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
-  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await selectTool(page, 'Brush');
   await page.getByLabel('Brush preset', { exact: true }).selectOption('ink-angled');
   await expect(page.locator('footer')).toContainText('Brush preset “Ink angled” applied');
   await page.getByLabel('Spacing', { exact: true }).fill('42');
@@ -253,7 +254,7 @@ test('brush tip presets and geometry controls persist across project reload', as
 
 test('pressure-off fallback keeps pen strokes at configured size and opacity', async ({ page }) => {
   await newTransparentPaintLayer(page);
-  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await selectTool(page, 'Brush');
   await page.getByLabel('Size', { exact: true }).fill('60');
   await page.getByLabel('Hardness', { exact: true }).fill('100');
   await page.getByLabel('Opacity', { exact: true }).fill('100');
@@ -278,7 +279,7 @@ test('pressure-off fallback keeps pen strokes at configured size and opacity', a
 
 test('pressure size and opacity flags operate independently on committed pixels', async ({ page }) => {
   await newTransparentPaintLayer(page);
-  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await selectTool(page, 'Brush');
   await page.getByLabel('Size', { exact: true }).fill('54');
   await page.getByLabel('Hardness', { exact: true }).fill('100');
   await page.getByLabel('Opacity', { exact: true }).fill('100');
@@ -297,7 +298,7 @@ test('pressure size and opacity flags operate independently on committed pixels'
   // Start a clean transparent layer so the opacity comparison cannot be
   // explained by overlap with the size-only strokes above.
   await newTransparentPaintLayer(page);
-  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await selectTool(page, 'Brush');
   await page.getByLabel('Size', { exact: true }).fill('54');
   await page.getByLabel('Hardness', { exact: true }).fill('100');
   await page.getByLabel('Opacity', { exact: true }).fill('100');
@@ -319,7 +320,7 @@ test('pressure size and opacity flags operate independently on committed pixels'
 
 test('hardness zero produces a soft edge and pencil remains a hard-edge tool', async ({ page }) => {
   await newTransparentPaintLayer(page);
-  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await selectTool(page, 'Brush');
   await page.getByLabel('Size', { exact: true }).fill('80');
   await page.getByLabel('Opacity', { exact: true }).fill('100');
   await page.getByLabel('Hardness', { exact: true }).fill('0');
@@ -334,7 +335,7 @@ test('hardness zero produces a soft edge and pencil remains a hard-edge tool', a
   expect(softMetrics.outside).toBe(0);
 
   await newTransparentPaintLayer(page);
-  await page.getByRole('button', { name: 'Pencil tool', exact: true }).click();
+  await selectTool(page, 'Pencil');
   await expect(page.getByLabel('Hardness', { exact: true })).toHaveCount(0);
   await expect(page.getByLabel('Pressure affects size', { exact: true })).toHaveCount(0);
   await page.getByLabel('Size', { exact: true }).fill('80');
@@ -349,15 +350,15 @@ test('hardness zero produces a soft edge and pencil remains a hard-edge tool', a
 
   // Pressure controls are deliberately unavailable for tools whose pixel
   // contract does not use the brush stamp (replace and vector shapes).
-  await page.getByRole('button', { name: 'Color Replace tool', exact: true }).click();
+  await selectTool(page, 'Color Replace');
   await expect(page.getByLabel('Pressure affects opacity', { exact: true })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Shape tool', exact: true }).click();
+  await selectTool(page, 'Shape');
   await expect(page.getByLabel('Pressure affects size', { exact: true })).toHaveCount(0);
 });
 
 test('eraser honors opacity and restores through undo', async ({ page }) => {
   await newTransparentPaintLayer(page);
-  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await selectTool(page, 'Brush');
   await page.getByLabel('Size', { exact: true }).fill('80');
   await page.getByLabel('Hardness', { exact: true }).fill('100');
   await page.getByLabel('Opacity', { exact: true }).fill('100');
@@ -366,7 +367,7 @@ test('eraser honors opacity and restores through undo', async ({ page }) => {
   const paintedLayer = painted.history[painted.index].layers.at(-1)!;
   const paintedAsset = painted.assets[paintedLayer.asset!];
   const paintedMetrics = await radialMetrics(page, paintedAsset, 0.5, 0.5, 44);
-  await page.getByRole('button', { name: 'Eraser tool', exact: true }).click();
+  await selectTool(page, 'Eraser');
   await page.getByLabel('Opacity', { exact: true }).fill('25');
   await pointerStroke(page, 1, 0.5, 'mouse');
   const erased = await project(page);
@@ -398,7 +399,7 @@ test('eraser honors opacity and restores through undo', async ({ page }) => {
 test('clone source stays fixed and healing commits through the shared stamp path', async ({ page }) => {
   await newTransparentPaintLayer(page);
   await page.getByLabel('Drawing color', { exact: true }).fill('#d91c5b');
-  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await selectTool(page, 'Brush');
   await page.getByLabel('Size', { exact: true }).fill('64');
   await page.getByLabel('Hardness', { exact: true }).fill('100');
   await page.getByLabel('Opacity', { exact: true }).fill('100');
@@ -411,7 +412,7 @@ test('clone source stays fixed and healing commits through the shared stamp path
   const sourcePixel = (await samplePixels(page, paintedAsset, [{ xRatio: 0.3 }]))[0];
   expect(sourcePixel[3]).toBeGreaterThan(180);
 
-  await page.getByRole('button', { name: 'Clone tool', exact: true }).click();
+  await selectTool(page, 'Clone');
   const sourcePoint = await canvasPoint(page, 0.3);
   const canvas = page.getByTestId('editor-canvas');
   await canvas.dispatchEvent('pointerdown', { pointerId: 18, pointerType: 'mouse', pressure: 1, clientX: sourcePoint.clientX, clientY: sourcePoint.clientY, buttons: 1, isPrimary: true });
@@ -437,7 +438,7 @@ test('clone source stays fixed and healing commits through the shared stamp path
   // Clone tool remains selected. The source click must not create history;
   // the following stroke should copy the newly painted colour instead of the
   // original source at 0.3.
-  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await selectTool(page, 'Brush');
   await page.getByLabel('Drawing color', { exact: true }).fill('#1c5bd9');
   await pointerStroke(page, 1, 0.6, 'mouse');
   const secondSourceFrame = await project(page);
@@ -447,7 +448,7 @@ test('clone source stays fixed and healing commits through the shared stamp path
   const secondSourcePixel = (await samplePixels(page, secondSourceAsset, [{ xRatio: 0.6 }]))[0];
   expect(secondSourcePixel[3]).toBeGreaterThan(180);
 
-  await page.getByRole('button', { name: 'Clone tool', exact: true }).click();
+  await selectTool(page, 'Clone');
   const altSourcePoint = await canvasPoint(page, 0.6);
   await canvas.dispatchEvent('pointerdown', {
     pointerId: 20,
@@ -478,7 +479,7 @@ test('clone source stays fixed and healing commits through the shared stamp path
   const reanchoredDestination = (await samplePixels(page, reanchoredAsset, [{ xRatio: 0.88 }]))[0];
   expect(reanchoredDestination.slice(0, 3)).toEqual(secondSourcePixel.slice(0, 3));
 
-  await page.getByRole('button', { name: 'Healing tool', exact: true }).click();
+  await selectTool(page, 'Healing');
   const healingSource = await canvasPoint(page, 0.3);
   await canvas.dispatchEvent('pointerdown', { pointerId: 19, pointerType: 'mouse', pressure: 1, clientX: healingSource.clientX, clientY: healingSource.clientY, buttons: 1, isPrimary: true });
   await canvas.dispatchEvent('pointerup', { pointerId: 19, pointerType: 'mouse', pressure: 1, clientX: healingSource.clientX, clientY: healingSource.clientY, buttons: 0, isPrimary: true });
@@ -498,7 +499,7 @@ test('clone source stays fixed and healing commits through the shared stamp path
 test('Spot Healing removes a local blemish nondestructively and survives undo/reload', async ({ page }) => {
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: /^New white document/ }).click();
-  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await selectTool(page, 'Brush');
   await page.getByLabel('Drawing color', { exact: true }).fill('#e51c23');
   await page.getByLabel('Size', { exact: true }).fill('72');
   await page.getByLabel('Hardness', { exact: true }).fill('100');
@@ -510,7 +511,7 @@ test('Spot Healing removes a local blemish nondestructively and survives undo/re
   expect(paintedLayer.spotHealing).toBeUndefined();
   const sourceAsset = paintedLayer.asset;
 
-  await page.getByRole('button', { name: 'Spot Healing tool', exact: true }).click();
+  await selectTool(page, 'Spot Healing');
   await expect(page.getByText(/bounded local context ring/, { exact: false })).toBeVisible();
   await toolStroke(page, 'Spot Healing', 'Spot Healing applied nondestructively', 0.5, false);
   const cleaned = await project(page);
@@ -539,7 +540,7 @@ test('Spot Healing removes a local blemish nondestructively and survives undo/re
 
 test('pen pointer-up pressure zero does not create a full-pressure endpoint', async ({ page }) => {
   await newTransparentPaintLayer(page);
-  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await selectTool(page, 'Brush');
   await page.getByLabel('Size', { exact: true }).fill('80');
   await page.getByLabel('Hardness', { exact: true }).fill('100');
   await page.getByLabel('Opacity', { exact: true }).fill('100');
@@ -559,7 +560,7 @@ test('pen pointer-up pressure zero does not create a full-pressure endpoint', as
 
 test('touch stroke commits once and pointer cancellation leaves the draft unchanged', async ({ page }) => {
   await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
-  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await selectTool(page, 'Brush');
   const before = await project(page);
   const point = await canvasPoint(page, 0.3);
   const canvas = page.getByTestId('editor-canvas');

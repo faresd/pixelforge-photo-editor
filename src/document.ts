@@ -97,6 +97,7 @@ import {
   type LayerStyles,
 } from './layerStyles.ts';
 import { GROUP_BLEND_MODES } from './groupCompositing.ts';
+import { validSelectedLayerIds } from './layerSelection.ts';
 
 /** Version 2 stores immutable raster assets once; history contains editable layer metadata. */
 export const BLENDS = GROUP_BLEND_MODES;
@@ -299,6 +300,8 @@ export type Frame = {
   imageSize?: ImageSizeMetadata;
   layers: Layer[];
   active: string;
+  /** Selected layer IDs; legacy frames omit this and normalize to active. */
+  selectedLayerIds?: string[];
   /** Optional for backwards compatibility with v2 drafts created before folders. */
   groups?: Group[];
   selection?: Selection;
@@ -1137,6 +1140,14 @@ export function validateFrame(
   }
   const frameWidth = Number(value.w),
     frameHeight = Number(value.h);
+  if (
+    value.selectedLayerIds !== undefined &&
+    !validSelectedLayerIds(
+      value.selectedLayerIds,
+      value.layers.map((layer) => layer.id),
+    )
+  )
+    return fail();
   if (value.savedSelections !== undefined) {
     try {
       const book = parseSavedSelections(value.savedSelections, {
@@ -1266,6 +1277,7 @@ export function rasterFrame(
     h: canvas.height,
     layers: [layer],
     active: layer.id,
+    selectedLayerIds: [layer.id],
   };
 }
 const decoded = new Map<Asset, Promise<HTMLImageElement>>();

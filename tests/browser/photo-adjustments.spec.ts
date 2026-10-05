@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect, type Page } from '@playwright/test';
 
 type RGBA = [number, number, number, number];
@@ -257,7 +258,7 @@ test('Black and White converts imported colors to perceptual gray while preservi
 
 test('photo finishing respects raster masks and partial alpha without baking either source asset', async ({ page }) => {
   await importFixture(page, [[48, 64, 80, 255], [32, 48, 64, 128], [96, 80, 64, 255]], 'masked-photo');
-  await page.getByRole('button', { name: 'Select tool', exact: true }).click();
+  await selectTool(page, 'Select');
   await drag(page, [0.08, 0.1], [0.7, 0.9]);
   await page.getByRole('button', { name: 'Mask from selection', exact: true }).click();
   await expect(page.getByText('Nondestructive mask active', { exact: true })).toBeVisible();
@@ -287,7 +288,7 @@ test('photo finishing composes with Hue on editable translucent vector shapes wi
   page.on('pageerror', (error) => errors.push(error.message));
   await importFixture(page, [[0, 0, 0, 0]], 'vector-backdrop');
   await page.getByLabel('Drawing color', { exact: true }).fill('#403020');
-  await page.getByRole('button', { name: 'Shape tool', exact: true }).click();
+  await selectTool(page, 'Shape');
   await drag(page, [0.1, 0.15], [0.75, 0.85]);
   await page.getByLabel('Filled shape', { exact: true }).check();
   await page.getByLabel('Shape color', { exact: true }).fill('#403020');

@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect } from '@playwright/test';
 
 async function project(page: import('@playwright/test').Page) {
@@ -23,7 +24,7 @@ test.beforeEach(async ({ page }) => {
 test('polygon variants expose triangle and star metadata and survive reload', async ({ page }) => {
   const canvas = page.getByTestId('editor-canvas');
   const box = (await canvas.boundingBox())!;
-  await page.getByRole('button', { name: 'Polygon tool', exact: true }).click();
+  await selectTool(page, 'Polygon');
   await page.mouse.move(box.x + 140, box.y + 120);
   await page.mouse.down();
   await page.mouse.move(box.x + 380, box.y + 330, { steps: 5 });

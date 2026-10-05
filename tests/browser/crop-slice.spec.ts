@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect } from '@playwright/test';
 import * as tools from '../../src/cropTools.ts';
 
@@ -55,7 +56,7 @@ const dimensions = (page: import('@playwright/test').Page) =>
 test('crop drag stages an overlay, supports cancel and only commits on confirmation', async ({ page }) => {
   const canvas = page.getByTestId('editor-canvas');
   const before = await dimensions(page);
-  await page.getByRole('button', { name: 'Crop tool', exact: true }).click();
+  await selectTool(page, 'Crop');
   const box = (await canvas.boundingBox())!;
   await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.2);
   await page.mouse.down();
@@ -67,7 +68,7 @@ test('crop drag stages an overlay, supports cancel and only commits on confirmat
   await page.getByTestId('crop-cancel').click();
   await expect(page.getByTestId('crop-preview-controls')).toBeHidden();
   await expect.poll(() => dimensions(page)).toEqual(before);
-  await page.getByRole('button', { name: 'Crop tool', exact: true }).click();
+  await selectTool(page, 'Crop');
   await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.2);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width * 0.8, box.y + box.height * 0.75, { steps: 2 });
@@ -84,7 +85,7 @@ test('confirmed crop persists through project export/reload and remains undoable
   const canvas = page.getByTestId('editor-canvas');
   const before = await dimensions(page);
   const box = (await canvas.boundingBox())!;
-  await page.getByRole('button', { name: 'Crop tool', exact: true }).click();
+  await selectTool(page, 'Crop');
   await page.mouse.move(box.x + box.width * 0.1, box.y + box.height * 0.1);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.7, { steps: 2 });
@@ -131,7 +132,7 @@ test('slice tool stages a named export, supports menu/mobile cancellation and le
   await page.getByRole('menuitem', { name: /^Undo/ }).click();
   await expect(page.getByTestId('slice-preview-controls')).toBeHidden();
   await expect.poll(() => dimensions(page)).toEqual(before);
-  await page.getByRole('button', { name: 'Slice tool', exact: true }).click();
+  await selectTool(page, 'Slice');
   await page.mouse.move(box.x + box.width * 0.22, box.y + box.height * 0.18);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width * 0.72, box.y + box.height * 0.66, { steps: 2 });
@@ -148,7 +149,7 @@ test('perspective crop stages editable convex corners, applies once, and undo re
   const canvas = page.getByTestId('editor-canvas');
   const before = await dimensions(page);
   const box = (await canvas.boundingBox())!;
-  await page.getByRole('button', { name: 'Perspective Crop tool', exact: true }).click();
+  await selectTool(page, 'Perspective Crop');
   await page.mouse.move(box.x + box.width * 0.12, box.y + box.height * 0.14);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width * 0.84, box.y + box.height * 0.78, { steps: 3 });
@@ -173,7 +174,7 @@ test('perspective crop cancel and Escape keep pixels unchanged on a mobile viewp
   const canvas = page.getByTestId('editor-canvas');
   const before = await dimensions(page);
   const box = (await canvas.boundingBox())!;
-  await page.getByRole('button', { name: 'Perspective Crop tool', exact: true }).click();
+  await selectTool(page, 'Perspective Crop');
   await page.mouse.move(box.x + box.width * 0.18, box.y + box.height * 0.2);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width * 0.72, box.y + box.height * 0.7, { steps: 2 });

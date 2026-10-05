@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect, type Page } from '@playwright/test';
 
 /**
@@ -154,7 +155,7 @@ test('2. Crop and Resize update dimensions, persist, and undo independently', as
   const resized = await project(page);
   expect(resized.history[resized.index].w).toBe(1000);
 
-  await page.getByRole('button', { name: 'Crop tool', exact: true }).click();
+  await selectTool(page, 'Crop');
   await drag(page, [0.15, 0.15], [0.75, 0.75]);
   await page.keyboard.press('Enter');
   const cropped = await project(page);
@@ -168,11 +169,11 @@ test('2. Crop and Resize update dimensions, persist, and undo independently', as
 });
 
 test('3. Marquee and Lasso selections keep editable geometry through reload', async ({ page }) => {
-  await page.getByRole('button', { name: 'Select tool', exact: true }).click();
+  await selectTool(page, 'Select');
   await drag(page, [0.2, 0.2], [0.65, 0.65]);
   let exported = await project(page);
   expect(exported.history[exported.index].selection).toMatchObject({ shape: 'rectangle' });
-  await page.getByRole('button', { name: 'Lasso tool', exact: true }).click();
+  await selectTool(page, 'Lasso');
   const canvas = page.getByTestId('editor-canvas'), box = (await canvas.boundingBox())!;
   await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.25);
   await page.mouse.down();
@@ -188,7 +189,7 @@ test('3. Marquee and Lasso selections keep editable geometry through reload', as
 });
 
 test('4. Magic Wand creates a color-based selection mask and restores on reload', async ({ page }) => {
-  await page.getByRole('button', { name: 'Magic Wand tool', exact: true }).click();
+  await selectTool(page, 'Magic Wand');
   await page.getByTestId('editor-canvas').click({ position: { x: 20, y: 20 } });
   let exported = await project(page);
   const frame = exported.history[exported.index];
@@ -204,7 +205,7 @@ test('4. Magic Wand creates a color-based selection mask and restores on reload'
 test('5. Brush paints source-safe pixels and persists the raster asset', async ({ page }) => {
   await newPaintLayer(page);
   await page.getByLabel('Drawing color', { exact: true }).fill('#e31b23');
-  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await selectTool(page, 'Brush');
   await page.getByLabel('Size', { exact: true }).fill('84');
   const before = await project(page);
   await stroke(page, 0.3, 0.45);
@@ -224,14 +225,14 @@ test('5. Brush paints source-safe pixels and persists the raster asset', async (
 test('6. Eraser removes alpha without losing undo history', async ({ page }) => {
   await newPaintLayer(page);
   await page.getByLabel('Drawing color', { exact: true }).fill('#4b7bec');
-  await page.getByRole('button', { name: 'Fill tool', exact: true }).click();
+  await selectTool(page, 'Fill');
   const fillPoint = await canvasPoint(page, 0.5);
   const canvas = page.getByTestId('editor-canvas');
   await canvas.evaluate((element) => { element.setPointerCapture = () => undefined; });
   await canvas.dispatchEvent('pointerdown', { pointerId: 52, pointerType: 'mouse', pressure: 1, clientX: fillPoint.clientX, clientY: fillPoint.clientY, buttons: 1, isPrimary: true });
   await expect(page.locator('footer')).toContainText('Area filled', { timeout: 10000 });
   const filled = await pixelAt(page);
-  await page.getByRole('button', { name: 'Eraser tool', exact: true }).click();
+  await selectTool(page, 'Eraser');
   await page.getByLabel('Size', { exact: true }).fill('100');
   await stroke(page, 0.5, 0.52, 53);
   const erased = await pixelAt(page);
@@ -248,13 +249,13 @@ test('6. Eraser removes alpha without losing undo history', async ({ page }) => 
 test('7. Clone and Healing use an explicit source and commit editable raster history', async ({ page }) => {
   await newPaintLayer(page);
   await page.getByLabel('Drawing color', { exact: true }).fill('#d91c5b');
-  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await selectTool(page, 'Brush');
   await page.getByLabel('Size', { exact: true }).fill('70');
   await page.getByLabel('Hardness', { exact: true }).fill('100');
   await stroke(page, 0.3, 0.3);
   const painted = await project(page);
   const sourcePixel = await pixelAt(page, 0.3);
-  await page.getByRole('button', { name: 'Clone tool', exact: true }).click();
+  await selectTool(page, 'Clone');
   const source = await canvasPoint(page, 0.3);
   const canvas = page.getByTestId('editor-canvas');
   await canvas.dispatchEvent('pointerdown', { pointerId: 61, pointerType: 'mouse', pressure: 1, clientX: source.clientX, clientY: source.clientY, buttons: 1, isPrimary: true });
@@ -264,7 +265,7 @@ test('7. Clone and Healing use an explicit source and commit editable raster his
   const cloned = await project(page);
   expect(cloned.history.length).toBeGreaterThan(painted.history.length);
   expect((await pixelAt(page, 0.05))[0]).toBe(sourcePixel[0]);
-  await page.getByRole('button', { name: 'Healing tool', exact: true }).click();
+  await selectTool(page, 'Healing');
   await canvas.dispatchEvent('pointerdown', { pointerId: 63, pointerType: 'mouse', pressure: 1, clientX: source.clientX, clientY: source.clientY, buttons: 1, isPrimary: true });
   await canvas.dispatchEvent('pointerup', { pointerId: 63, pointerType: 'mouse', pressure: 1, clientX: source.clientX, clientY: source.clientY, buttons: 0, isPrimary: true });
   await stroke(page, 0.8, 0.83, 64);
@@ -276,7 +277,7 @@ test('7. Clone and Healing use an explicit source and commit editable raster his
 test('8. Levels, Curves and photo color controls stay nondestructive and persist', async ({ page }) => {
   await newPaintLayer(page);
   await page.getByLabel('Drawing color', { exact: true }).fill('#808080');
-  await page.getByRole('button', { name: 'Fill tool', exact: true }).click();
+  await selectTool(page, 'Fill');
   const point = await canvasPoint(page, 0.5);
   const canvas = page.getByTestId('editor-canvas');
   await canvas.evaluate((element) => { element.setPointerCapture = () => undefined; });
@@ -309,7 +310,7 @@ test('8. Levels, Curves and photo color controls stay nondestructive and persist
 });
 
 test('9. Layers and masks keep source assets, visibility and mask metadata editable', async ({ page }) => {
-  await page.getByRole('button', { name: 'Select tool', exact: true }).click();
+  await selectTool(page, 'Select');
   await drag(page, [0.2, 0.2], [0.7, 0.7]);
   await page.getByRole('button', { name: 'Mask from selection', exact: true }).click();
   await expect(page.getByText('Nondestructive mask active', { exact: true })).toBeVisible();
@@ -329,7 +330,7 @@ test('9. Layers and masks keep source assets, visibility and mask metadata edita
 });
 
 test('10. Editable Text persists and exports valid PNG JPEG and WebP files', async ({ page }) => {
-  await page.getByRole('button', { name: 'Text tool', exact: true }).click();
+  await selectTool(page, 'Text');
   await page.getByTestId('editor-canvas').click({ position: { x: 120, y: 120 } });
   await page.getByLabel('Edit layer text', { exact: true }).fill('PixelForge title');
   await page.getByLabel('Layer name', { exact: true }).fill('Headline');

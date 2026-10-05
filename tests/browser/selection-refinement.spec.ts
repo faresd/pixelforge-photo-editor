@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
@@ -55,7 +56,7 @@ const alphaCoverage = async (page: Page, asset: { url: string; w: number; h: num
 test.beforeEach(async ({ page }) => prepare(page));
 
 test('Grow and Contract refine alpha nondestructively and survive project reload', async ({ page }) => {
-  await page.getByRole('button', { name: 'Select tool', exact: true }).click();
+  await selectTool(page, 'Select');
   await drag(page, [0.25, 0.25], [0.55, 0.55]);
   await page.getByRole('button', { name: 'Select', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Grow…', exact: true }).click();
@@ -110,7 +111,7 @@ test('Grow and Contract refine alpha nondestructively and survive project reload
 });
 
 test('Grow rejects invalid radius without mutating the active selection', async ({ page }) => {
-  await page.getByRole('button', { name: 'Select tool', exact: true }).click();
+  await selectTool(page, 'Select');
   await drag(page, [0.25, 0.25], [0.55, 0.55]);
   const before = await project(page);
   await page.getByRole('button', { name: 'Select', exact: true }).click();
@@ -123,7 +124,7 @@ test('Grow rejects invalid radius without mutating the active selection', async 
 });
 
 test('Border rejects an over-limit radius without mutating the active selection', async ({ page }) => {
-  await page.getByRole('button', { name: 'Select tool', exact: true }).click();
+  await selectTool(page, 'Select');
   await drag(page, [0.25, 0.25], [0.55, 0.55]);
   const before = await project(page);
   await page.getByRole('button', { name: 'Select', exact: true }).click();

@@ -5,8 +5,11 @@ layout, expanding to three columns on wide editor viewports. Tools are grouped
 under Navigate, Measure, Marquee, Lasso, Selection, Crop & Slice, Retouch,
 Paint & Fill, and Draw & Type headings. Category grids use the same two/three
 column geometry as the palette, so each category stays aligned at desktop and
-wide desktop breakpoints. The grouping is presentation metadata; it does not
-hide a tool or change its persisted `Tool` identifier.
+wide desktop breakpoints. Each repeated-key/flyout family occupies one compact
+category slot; the active variant replaces that slot's label and icon while the
+other variants remain in the press-and-hold menu. This removes duplicate
+toolbar buttons without hiding a tool or changing its persisted `Tool`
+identifier.
 
 Tool buttons with Photoshop-style subtools expose `aria-haspopup="menu"` and a
 stable `id`. There is one flyout at a time, rendered against the viewport so
@@ -19,7 +22,8 @@ selects the trigger. Arrow Up/Down and the context menu open the flyout. A
 flyout owns focus on open: Home/End move to the first/last item, Up/Down rove
 between items, and Escape or an outside pointer dismisses it and returns focus
 to its trigger. Flyout items are ordinary menu buttons, retain the existing
-tool IDs and shortcuts, and can be activated by touch, mouse or keyboard.
+tool IDs and shortcuts, display the same Lucide icon vocabulary as the toolbar,
+and can be activated by touch, mouse or keyboard.
 
 Repeated Photoshop keys continue to cycle the existing keyboard families:
 `M` marquee, `L` lasso, `W` selection, `C` crop, `G` fill, `B` paint, `U`

@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect } from '@playwright/test';
 
 test.beforeEach(async ({ page }) => {
@@ -27,7 +28,7 @@ const canvasPoint = async (
 test('Red Eye exposes bounded local correction controls and commits one undoable edit', async ({
   page,
 }) => {
-  await page.getByRole('button', { name: 'Red Eye tool', exact: true }).click();
+  await selectTool(page, 'Red Eye');
   await expect(page.getByLabel('Red threshold', { exact: true })).toHaveValue(
     '36',
   );
@@ -86,7 +87,7 @@ test('Red Eye exposes bounded local correction controls and commits one undoable
 test('Red Eye rejects locked layers without creating a raster edit', async ({
   page,
 }) => {
-  await page.getByRole('button', { name: 'Red Eye tool', exact: true }).click();
+  await selectTool(page, 'Red Eye');
   await page.getByLabel('Lock layer', { exact: true }).check();
   const point = await canvasPoint(page, 0.78, 0.27);
   const canvas = page.getByTestId('editor-canvas');

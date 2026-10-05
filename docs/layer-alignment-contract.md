@@ -9,10 +9,12 @@ and raster source assets remain unchanged.
 
 `Layer → Align Left`, `Align Horizontal Centers`, `Align Right`, `Align Top`,
 `Align Vertical Centers` and `Align Bottom` use the transformed painted bounds
-of the active unlocked layer. Bounds include the layer's local geometry and a
-bounded blur tail. The resulting delta places the corresponding edge or
-center on the document canvas; negative and oversized bounds are valid. A
-no-op alignment does not create a history entry.
+of the active unlocked layer. When more than one layer is selected, the
+combined painted bounds are used and the same translation is applied to every
+selected unlocked layer, preserving their relative arrangement. Bounds include
+the layer's local geometry and a bounded blur tail. The resulting delta places
+the corresponding edge or center on the document canvas; negative and
+oversized bounds are valid. A no-op alignment does not create a history entry.
 
 ## Folder distribution
 
@@ -23,6 +25,8 @@ ties. The first and last children stay fixed; interior centers receive equal
 spacing. Folders with fewer than three eligible children are rejected. The
 operation changes only translation and is one undoable commit.
 
-These commands do not yet claim Photoshop's multi-selection model, nested
-folders or edge-based distribution. Isolated group blending is covered by the
-separate [`group-compositing-contract.md`](./group-compositing-contract.md).
+Selected-set gesture and persistence semantics are defined in
+[`layer-selection-contract.md`](./layer-selection-contract.md). These commands
+do not yet claim Photoshop's nested folders or edge-based multi-selection
+distribution. Isolated group blending is covered by the separate
+[`group-compositing-contract.md`](./group-compositing-contract.md).

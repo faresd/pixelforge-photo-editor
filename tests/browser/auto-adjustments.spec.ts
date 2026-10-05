@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect, type Page } from '@playwright/test';
 
 type Project = {
@@ -193,7 +194,7 @@ test('Auto Tone follows its Photoshop shortcut and disables safely for locked la
   await page
     .getByRole('menuitem', { name: 'New transparent document', exact: true })
     .click();
-  await page.getByRole('button', { name: 'Text tool', exact: true }).click();
+  await selectTool(page, 'Text');
   await page
     .getByTestId('editor-canvas')
     .click({ position: { x: 120, y: 120 } });

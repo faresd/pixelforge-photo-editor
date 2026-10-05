@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
@@ -70,7 +71,7 @@ const nonTransparentPixels = async (page: Page, asset: { url: string; w: number;
 test.beforeEach(async ({ page }) => prepare(page));
 
 test('Transform Selection applies an affine matrix, clips masks, and survives project reload', async ({ page }) => {
-  await page.getByRole('button', { name: 'Select tool', exact: true }).click();
+  await selectTool(page, 'Select');
   await drag(page, [0.2, 0.25], [0.55, 0.65]);
   await page.getByRole('button', { name: 'Select', exact: true }).click();
   await expect(page.getByRole('menuitem', { name: 'Transform Selection', exact: true })).toBeEnabled();
@@ -102,7 +103,7 @@ test('Transform Selection applies an affine matrix, clips masks, and survives pr
 });
 
 test('Select Reselect restores the last selection through undo, reload and mobile focus', async ({ page }) => {
-  await page.getByRole('button', { name: 'Select tool', exact: true }).click();
+  await selectTool(page, 'Select');
   await drag(page, [0.2, 0.2], [0.5, 0.5]);
   let saved = await project(page);
   const first = saved.history[saved.index].selection!;
@@ -126,7 +127,7 @@ test('Select Reselect restores the last selection through undo, reload and mobil
 });
 
 test('Transform Selection rejects malformed decimal input without mutating selection', async ({ page }) => {
-  await page.getByRole('button', { name: 'Select tool', exact: true }).click();
+  await selectTool(page, 'Select');
   await drag(page, [0.2, 0.2], [0.5, 0.5]);
   const before = await project(page);
   await page.getByRole('button', { name: 'Select', exact: true }).click();

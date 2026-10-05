@@ -45,7 +45,7 @@ test('tool palette keeps two columns and usable touch targets', async ({
   expect(layout.xPositions.length).toBe(2);
   expect(layout.touchTargets).toBe(true);
   expect(layout.labels).toContain('Move tool');
-  expect(layout.labels).toContain('Magic Wand tool');
+  expect(layout.labels).toContain('Selection Brush tool');
   expect(layout.labels).toContain('Quick Mask mode');
 });
 
@@ -184,6 +184,7 @@ test('M/L/W flyouts retain Photoshop tool names and shortcuts', async ({ page })
   const elliptical = flyout.getByRole('menuitem', { name: 'Elliptical Marquee', exact: true });
   await expect(rectangular).toBeVisible();
   await expect(elliptical).toBeVisible();
+  await expect(rectangular.locator('svg')).toBeVisible();
   await expect(rectangular.locator('kbd')).toHaveText('M');
   await expect(elliptical.locator('kbd')).toHaveText('M');
   await page.keyboard.press('Escape');
@@ -196,6 +197,7 @@ test('M/L/W flyouts retain Photoshop tool names and shortcuts', async ({ page })
   const magnetic = flyout.getByRole('menuitem', { name: 'Magnetic Lasso', exact: true });
   await expect(freeform).toBeVisible();
   await expect(magnetic).toBeVisible();
+  await expect(magnetic.locator('svg')).toBeVisible();
   await expect(freeform.locator('kbd')).toHaveText('L');
   await expect(magnetic.locator('kbd')).toHaveText('L');
   await page.keyboard.press('Escape');
@@ -208,7 +210,40 @@ test('M/L/W flyouts retain Photoshop tool names and shortcuts', async ({ page })
   const wand = flyout.getByRole('menuitem', { name: 'Magic Wand', exact: true });
   await expect(selection).toBeVisible();
   await expect(wand).toBeVisible();
+  await expect(wand.locator('svg')).toBeVisible();
   await expect(selection.locator('kbd')).toHaveText('W');
   await expect(wand.locator('kbd')).toHaveText('W');
   await expect(flyout.getByRole('menuitem', { name: 'Quick Selection', exact: true })).toHaveCount(0);
+});
+
+test('family variants occupy one category slot without duplicate toolbar ids', async ({ page }) => {
+  await openEditor(page);
+  const palette = page.getByTestId('tool-palette');
+  const ids = await palette.locator(':scope > .tool-category .tool-button-wrap > button').evaluateAll((buttons) =>
+    buttons.map((button) => button.getAttribute('data-tool-id')),
+  );
+  expect(new Set(ids).size).toBe(ids.length);
+  expect(ids).not.toContain('magic-wand');
+  expect(ids).toContain('selection-brush');
+  expect(ids).toContain('lasso');
+  expect(ids).not.toContain('polygonal-lasso');
+});
+
+test('family slots remember the last chosen subtool after switching tools', async ({ page }) => {
+  await openEditor(page);
+  const lasso = page.getByRole('button', { name: 'Lasso tool', exact: true });
+  await lasso.focus();
+  await page.keyboard.press('ArrowDown');
+  await page
+    .locator('[role="menu"]:visible')
+    .getByRole('menuitem', { name: 'Magnetic Lasso', exact: true })
+    .click();
+  await expect(page.getByRole('button', { name: 'Magnetic Lasso tool', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+
+  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Magnetic Lasso tool', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Lasso tool', exact: true })).toHaveCount(0);
 });

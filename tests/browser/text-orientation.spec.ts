@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
@@ -49,7 +50,7 @@ const saved = async (page: Page) => {
 const addText = async (page: Page) => {
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
-  await page.getByRole('button', { name: 'Text tool', exact: true }).click();
+  await selectTool(page, 'Text');
   await page.getByLabel('Text content', { exact: true }).fill('ABCD');
   const canvas = page.getByTestId('editor-canvas');
   await canvas.scrollIntoViewIfNeeded();

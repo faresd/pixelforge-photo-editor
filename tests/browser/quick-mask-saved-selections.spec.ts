@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
@@ -95,7 +96,7 @@ test.beforeEach(async ({ page }) => prepare(page));
 test('Quick Mask enters from a selection, paints alpha, exits to a mask selection, and persists', async ({
   page,
 }) => {
-  await page.getByRole('button', { name: 'Select tool', exact: true }).click();
+  await selectTool(page, 'Select');
   await drag(page, [0.2, 0.2], [0.8, 0.8]);
   await page.getByRole('button', { name: 'Select', exact: true }).click();
   const selectionDownload = page.waitForEvent('download');
@@ -142,7 +143,7 @@ test('Quick Mask enters from a selection, paints alpha, exits to a mask selectio
 test('Quick Mask active state restores after reload and mobile pointer input is reachable', async ({
   page,
 }) => {
-  await page.getByRole('button', { name: 'Select tool', exact: true }).click();
+  await selectTool(page, 'Select');
   await drag(page, [0.25, 0.25], [0.7, 0.7]);
   await page
     .getByRole('button', { name: 'Quick Mask mode', exact: true })
@@ -165,7 +166,7 @@ test('Quick Mask active state restores after reload and mobile pointer input is 
 test('saved selections are named, loaded, renamed, deleted and retained in project history', async ({
   page,
 }) => {
-  await page.getByRole('button', { name: 'Select tool', exact: true }).click();
+  await selectTool(page, 'Select');
   await drag(page, [0.15, 0.2], [0.45, 0.55]);
   await page
     .getByLabel('Saved selection name', { exact: true })

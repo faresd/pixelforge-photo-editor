@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect, type Page } from '@playwright/test';
 
 type PathLayer = {
@@ -29,7 +30,7 @@ const upload = async (page: Page, value: Project) => {
 };
 
 const triangle = async (page: Page) => {
-  await page.getByRole('button', { name: 'Pen tool', exact: true }).click();
+  await selectTool(page, 'Pen');
   const box = (await page.getByTestId('editor-canvas').boundingBox())!;
   for (const [x, y] of [[0.2, 0.2], [0.7, 0.2], [0.45, 0.65], [0.2, 0.2]])
     await page.mouse.click(box.x + box.width * x, box.y + box.height * y);
@@ -63,7 +64,7 @@ test('imported affine paths retain editable nodes and Direct Selection converts 
     y: box.y + box.height * (b * x + d * y + f) / frame.h,
   });
   const start = screen(node.x, node.y), end = screen(node.x + 48, node.y + 32);
-  await page.getByRole('button', { name: 'Direct Selection tool', exact: true }).click();
+  await selectTool(page, 'Direct Selection');
   await page.mouse.move(start.x, start.y);
   await page.mouse.down();
   await page.mouse.move(end.x, end.y, { steps: 3 });

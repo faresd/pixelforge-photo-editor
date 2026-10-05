@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect } from '@playwright/test';
 
 async function project(page: import('@playwright/test').Page) {
@@ -294,7 +295,7 @@ test('imports a local image and exposes text controls', async ({ page }) => {
   });
   await expect(page.getByLabel('Document name')).toHaveValue('sample');
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '1');
-  await page.getByRole('button', { name: 'Text tool', exact: true }).click();
+  await selectTool(page, 'Text');
   await expect(page.getByLabel('Text content')).toBeVisible();
 });
 

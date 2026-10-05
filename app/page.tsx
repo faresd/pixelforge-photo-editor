@@ -42,7 +42,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import {
   LOCAL_CONFLICT,
@@ -132,6 +132,7 @@ import {
   type DistributionAxis,
 } from '../src/layerAlignment';
 import { layerMergeReason, planLayerMerge } from '../src/layerMerge';
+import { combineSelectionBounds } from '../src/layerSelection';
 import CurveEditor from '../src/CurveEditor';
 import { type CurveChannel, type CurvePoints } from '../src/curves';
 import { applyAutoAdjustmentsPixels, type AutoMode } from '../src/auto';
@@ -211,6 +212,7 @@ import {
 } from '../src/patternStamp';
 import {
   TOOL_CATEGORIES,
+  compactCategoryTools,
   flyoutForTool,
   flyoutTools,
 } from '../src/toolPalette';
@@ -331,6 +333,9 @@ type Command =
   | 'text-orientation-horizontal'
   | 'text-orientation-vertical'
   | 'select-all'
+  | 'select-all-layers'
+  | 'deselect-layers'
+  | 'isolate-layers'
   | 'deselect'
   | 'reselect'
   | 'invert-selection'
@@ -723,10 +728,10 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Reselect', command: 'reselect' },
     { label: 'Inverse', shortcut: 'Ctrl+Shift+I', command: 'invert-selection' },
     { label: '', command: 'noop', separator: true },
-    { label: 'All Layers', command: 'noop', disabled: true },
-    { label: 'Deselect Layers', command: 'noop', disabled: true },
+    { label: 'All Layers', command: 'select-all-layers' },
+    { label: 'Deselect Layers', command: 'deselect-layers' },
     { label: 'Find Layers', command: 'noop', disabled: true },
-    { label: 'Isolate Layers', command: 'noop', disabled: true },
+    { label: 'Isolate Layers', command: 'isolate-layers' },
     { label: 'Color Range…', command: 'color-range' },
     { label: 'Focus Area…', command: 'noop', disabled: true },
     { label: 'Subject', command: 'noop', disabled: true },
@@ -1353,10 +1358,12 @@ export default function Home() {
       commit,
       install,
       select,
+      setLayerSelection,
       travel,
       paint,
     } = doc;
-  const [tool, setTool] = useState<Tool>('move'),
+  const [tool, setActiveTool] = useState<Tool>('move'),
+    [toolFamilyChoices, setToolFamilyChoices] = useState<Record<string, Tool>>({}),
     [toolFlyout, setToolFlyout] = useState<string | null>(null),
     [toolFlyoutAnchor, setToolFlyoutAnchor] =
       useState<HTMLButtonElement | null>(null),
@@ -1392,6 +1399,14 @@ export default function Home() {
     ),
     [text, setText] = useState('Your text'),
     [fontSize, setFontSize] = useState(56);
+  const setTool = useCallback((next: Tool) => {
+    setActiveTool(next);
+    const family = flyoutForTool(next);
+    if (family)
+      setToolFamilyChoices((current) =>
+        current[family] === next ? current : { ...current, [family]: next },
+      );
+  }, []);
   const toolHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toolHoldOpened = useRef(false);
   const [cloneSource, setCloneSource] = useState<{
@@ -1678,7 +1693,7 @@ export default function Home() {
     name,
     settings: settings(),
   });
-  const restoreSettings = (s: Settings) => {
+  const restoreSettings = useCallback((s: Settings) => {
     setTool(s.tool);
     setZoom(s.zoom);
     setColor(s.color);
@@ -1708,7 +1723,37 @@ export default function Home() {
     setExportTargetBytes(s.exportTargetBytes);
     setText(s.text);
     setFontSize(s.fontSize);
-  };
+  }, [
+    setTool,
+    setZoom,
+    setColor,
+    setBackgroundColor,
+    setSize,
+    setBrushOpacity,
+    setHardness,
+    setPressureSize,
+    setPressureOpacity,
+    setBrushPreset,
+    setBrushSpacing,
+    setBrushAngle,
+    setBrushRoundness,
+    setBrushFlipX,
+    setBrushFlipY,
+    setPatternId,
+    setPatternTileSize,
+    setRedEyeThreshold,
+    setRedEyeAmount,
+    setColorTolerance,
+    setTonalExposure,
+    setTonalRange,
+    setSpongeMode,
+    setSpongeVibrance,
+    setExportFormat,
+    setExportQuality,
+    setExportTargetBytes,
+    setText,
+    setFontSize,
+  ]);
   const applyBrushPreset = (id: BrushPresetId) => {
     const preset = brushPresetById(id);
     if (!preset) return;
@@ -1735,6 +1780,44 @@ export default function Home() {
     setNotice('Foreground and background colors swapped');
   };
   const current = () => history.current[index.current];
+  const selectedIdsForFrame = (f: Frame): string[] =>
+    f.selectedLayerIds === undefined
+      ? [f.active]
+      : f.selectedLayerIds.filter((id) => f.layers.some((layer) => layer.id === id));
+  const selectedLayersForFrame = (f: Frame): Layer[] => {
+    const ids = new Set(selectedIdsForFrame(f));
+    return f.layers.filter((layer) => ids.has(layer.id));
+  };
+  const selectAllLayers = () => {
+    const f = current();
+    setLayerSelection(f.layers.map((layer) => layer.id), f.active);
+    setNotice('All layers selected');
+  };
+  const deselectLayers = () => {
+    const f = current();
+    setLayerSelection([], f.active);
+    setNotice('Layers deselected; the active layer remains the edit anchor');
+  };
+  const isolateLayers = () => {
+    const f = current(),
+      ids = new Set(selectedIdsForFrame(f));
+    if (!ids.size) {
+      setNotice('Select at least one layer to isolate');
+      return;
+    }
+    const changed = f.layers.some((layer) => layer.visible !== ids.has(layer.id));
+    if (!changed) {
+      setNotice('Selected layers are already isolated');
+      return;
+    }
+    if (
+      commit({
+        ...f,
+        layers: f.layers.map((layer) => ({ ...layer, visible: ids.has(layer.id) })),
+      })
+    )
+      setNotice('Selected layers isolated; undo restores visibility');
+  };
   const cancelCropPreview = () => {
     if (!cropPreview) return;
     cropPreviewId.current += 1;
@@ -3163,7 +3246,7 @@ export default function Home() {
       cancelled = true;
     };
     // Settings are loaded once from the opening bookmark.
-  }, [assets, commit, install, paint]);
+  }, [assets, commit, install, paint, restoreSettings]);
   useLayoutEffect(() => {
     if (!ready || index.current < 0 || discarding.current) return;
     const sequence = ++saveSequence.current;
@@ -3631,7 +3714,14 @@ export default function Home() {
       void paint(f);
       return false;
     }
-    if (commit({ ...f, layers: [...f.layers, layer], active: layer.id })) {
+    if (
+      commit({
+        ...f,
+        layers: [...f.layers, layer],
+        active: layer.id,
+        selectedLayerIds: [layer.id],
+      })
+    ) {
       setNotice('Layer added');
       return true;
     }
@@ -3639,10 +3729,17 @@ export default function Home() {
   };
   const groupActiveLayer = () => {
     const f = current(),
-      layer = f.layers.find((item) => item.id === f.active);
-    if (!layer) return;
-    if (layer.groupId) {
-      setNotice('The active layer is already in a group');
+      layers = selectedLayersForFrame(f);
+    if (!layers.length) {
+      setNotice('Select at least one layer before grouping');
+      return;
+    }
+    if (layers.some((layer) => layer.groupId)) {
+      setNotice('Ungroup selected layers before grouping them together');
+      return;
+    }
+    if (layers.some((layer) => layerIsLocked(f, layer))) {
+      setNotice('Unlock all selected layers before grouping');
       return;
     }
     if ((f.groups || []).length >= 32) {
@@ -3663,11 +3760,17 @@ export default function Home() {
         ...f,
         groups: [...(f.groups || []), group],
         layers: f.layers.map((item) =>
-          item.id === layer.id ? { ...item, groupId: group.id } : item,
+          layers.some((selected) => selected.id === item.id)
+            ? { ...item, groupId: group.id }
+            : item,
         ),
       })
     )
-      setNotice('Layer added to a new group');
+      setNotice(
+        layers.length === 1
+          ? 'Layer added to a new group'
+          : `${layers.length} layers added to a new group`,
+      );
   };
   const ungroupActiveLayer = () => {
     const f = current(),
@@ -3701,29 +3804,40 @@ export default function Home() {
   };
   const alignActiveLayer = (mode: AlignmentMode) => {
     const f = current(),
-      layer = f.layers.find((item) => item.id === f.active);
-    if (!layer) return;
-    if (layerIsLocked(f, layer)) {
-      setNotice('Unlock this layer before aligning it');
+      activeLayer = f.layers.find((item) => item.id === f.active),
+      selected = selectedLayersForFrame(f),
+      targets = selected.length ? selected : activeLayer ? [activeLayer] : [];
+    if (!targets.length) return;
+    if (targets.some((layer) => layerIsLocked(f, layer))) {
+      setNotice('Unlock all selected layers before aligning them');
       return;
     }
     try {
-      const bounds = layerBounds(layer, assets.current),
-        delta = alignmentDelta(bounds, f.w, f.h, mode);
+      const bounds = combineSelectionBounds(
+          targets.map((layer) => layerBounds(layer, assets.current)),
+        ),
+        layer = targets[0];
+      if (!bounds || !layer) throw new Error('No selected layer bounds');
+      const delta = alignmentDelta(bounds, f.w, f.h, mode);
       if (Math.abs(delta.x) < 0.000001 && Math.abs(delta.y) < 0.000001) {
-        setNotice('Layer is already aligned');
+        setNotice('Selected layers are already aligned');
         return;
       }
-      const matrix = translateMatrix(layer.matrix, delta);
       if (
         commit({
           ...f,
           layers: f.layers.map((item) =>
-            item.id === layer.id ? { ...item, matrix } : item,
+            targets.some((target) => target.id === item.id)
+              ? { ...item, matrix: translateMatrix(item.matrix, delta) }
+              : item,
           ),
         })
       )
-        setNotice('Layer aligned to canvas');
+        setNotice(
+          targets.length === 1
+            ? 'Layer aligned to canvas'
+            : `${targets.length} layers aligned to canvas`,
+        );
     } catch (error) {
       setNotice(
         error instanceof Error ? error.message : 'Could not align layer',
@@ -3800,14 +3914,38 @@ export default function Home() {
   };
   const duplicate = () => {
     const f = current(),
-      layer = f.layers.find((l) => l.id === f.active)!;
-    if (layerIsLocked(f, layer)) return;
-    addLayer({
-      ...layer,
+      layers = selectedLayersForFrame(f);
+    if (!layers.length) {
+      setNotice('Select at least one layer before duplicating');
+      return;
+    }
+    if (layers.some((layer) => layerIsLocked(f, layer))) {
+      setNotice('Unlock all selected layers before duplicating');
+      return;
+    }
+    if (f.layers.length + layers.length > 32) {
+      setNotice('32-layer limit reached');
+      return;
+    }
+    const copies = layers.map((layer) => ({
+      ...structuredClone(layer),
       id: crypto.randomUUID(),
       name: (layer.name + ' copy').slice(0, 160),
       locked: false,
-    });
+    }));
+    if (
+      commit({
+        ...f,
+        layers: [...f.layers, ...copies],
+        active: copies.at(-1)!.id,
+        selectedLayerIds: copies.map((layer) => layer.id),
+      })
+    )
+      setNotice(
+        copies.length === 1
+          ? 'Layer duplicated'
+          : `${copies.length} layers duplicated`,
+      );
   };
   const copyLayer = () => {
     const f = current(),
@@ -4026,6 +4164,7 @@ export default function Home() {
           layers,
           groups: (f.groups || []).filter((group) => usedGroups.has(group.id)),
           active: merged.layers[0].id,
+          selectedLayerIds: [merged.layers[0].id],
         })
       )
         setNotice('Visible layers merged; undo restores the individual layers');
@@ -4072,10 +4211,11 @@ export default function Home() {
       layers.splice(plan.lowerIndex, 2, merged);
       if (
         commit({
-          ...f,
-          layers,
-          active: merged.id,
-        })
+        ...f,
+        layers,
+        active: merged.id,
+        selectedLayerIds: [merged.id],
+      })
       )
         setNotice('Layers merged; undo restores the individual layers');
     } catch {
@@ -4087,7 +4227,7 @@ export default function Home() {
       const f = current(),
         image = await renderFrame(f, assets.current),
         flattened = rasterFrame(image, assets.current, 'Flattened image');
-      if (commit(flattened))
+      if (commit({ ...flattened, selectedLayerIds: [flattened.active] }))
         setNotice('Image flattened; undo restores editable layers');
     } catch {
       setNotice('Could not flatten the image');
@@ -4095,12 +4235,29 @@ export default function Home() {
   };
   const remove = () => {
     const f = current(),
-      layer = f.layers.find((l) => l.id === f.active);
-    if (!layer || layerIsLocked(f, layer) || f.layers.length === 1)
+      selected = selectedLayersForFrame(f),
+      ids = new Set(selected.map((layer) => layer.id));
+    if (!selected.length) {
+      setNotice('Select at least one layer before deleting');
       return false;
-    const layers = f.layers.filter((l) => l.id !== f.active);
-    if (!commit({ ...f, layers, active: layers.at(-1)!.id })) return false;
-    setNotice('Layer deleted. Undo restores it.');
+    }
+    if (selected.some((layer) => layerIsLocked(f, layer))) {
+      setNotice('Unlock all selected layers before deleting');
+      return false;
+    }
+    if (selected.length >= f.layers.length) {
+      setNotice('Keep at least one layer in the document');
+      return false;
+    }
+    const layers = f.layers.filter((layer) => !ids.has(layer.id)),
+      active = layers.find((layer) => layer.id === f.active)?.id || layers.at(-1)!.id,
+      selectedLayerIds = selectedIdsForFrame(f).filter((id) => !ids.has(id));
+    if (!commit({ ...f, layers, active, selectedLayerIds })) return false;
+    setNotice(
+      selected.length === 1
+        ? 'Layer deleted. Undo restores it.'
+        : `${selected.length} layers deleted. Undo restores them.`,
+    );
     return true;
   };
   const reorder = (direction: number) => {
@@ -7437,6 +7594,9 @@ export default function Home() {
     else if (command === 'text-orientation-vertical')
       setTextOrientation('vertical');
     else if (command === 'select-all') selectAll();
+    else if (command === 'select-all-layers') selectAllLayers();
+    else if (command === 'deselect-layers') deselectLayers();
+    else if (command === 'isolate-layers') isolateLayers();
     else if (command === 'deselect') setSelection(undefined);
     else if (command === 'reselect') reselect();
     else if (command === 'invert-selection') invertSelection();
@@ -7615,12 +7775,24 @@ export default function Home() {
       case 'fill-layer':
         return !layer || layer.kind !== 'raster' || locked || !layer.visible;
       case 'duplicate-layer':
-        return !layer || locked || frame.layers.length >= 32;
+        return (
+          !selectedIdsForFrame(frame).length ||
+          selectedIdsForFrame(frame).some((id) => {
+            const candidate = frame.layers.find((item) => item.id === id);
+            return !candidate || layerIsLocked(frame, candidate);
+          }) ||
+          frame.layers.length + selectedIdsForFrame(frame).length > 32
+        );
       case 'delete-layer':
         return !layer || locked || frame.layers.length <= 1;
       case 'group-layer':
         return (
-          !layer || Boolean(layer.groupId) || (frame.groups || []).length >= 32
+          !selectedIdsForFrame(frame).length ||
+          selectedIdsForFrame(frame).some((id) => {
+            const candidate = frame.layers.find((item) => item.id === id);
+            return !candidate || Boolean(candidate.groupId) || layerIsLocked(frame, candidate);
+          }) ||
+          (frame.groups || []).length >= 32
         );
       case 'ungroup-layer':
         return (
@@ -7677,6 +7849,12 @@ export default function Home() {
         return !frame;
       case 'reselect':
         return Boolean(frame.selection) || !frame.previousSelection;
+      case 'select-all-layers':
+        return selectedIdsForFrame(frame).length === frame.layers.length;
+      case 'deselect-layers':
+        return selectedIdsForFrame(frame).length === 0;
+      case 'isolate-layers':
+        return selectedIdsForFrame(frame).length === 0;
       case 'transform-selection':
         return !frame.selection;
       case 'free-transform':
@@ -7687,7 +7865,13 @@ export default function Home() {
       case 'align-top':
       case 'align-center-vertical':
       case 'align-bottom':
-        return !layer || locked;
+        return (
+          !selectedIdsForFrame(frame).length ||
+          selectedIdsForFrame(frame).some((id) => {
+            const candidate = frame.layers.find((item) => item.id === id);
+            return !candidate || layerIsLocked(frame, candidate);
+          })
+        );
       case 'distribute-horizontal':
       case 'distribute-vertical': {
         const group = layer ? groupForLayer(frame, layer) : undefined;
@@ -8081,24 +8265,27 @@ export default function Home() {
           aria-label="Tools"
           data-testid="tool-palette"
         >
-          {TOOL_CATEGORIES.map((category) => (
+          {TOOL_CATEGORIES.map((category) => {
+            const compactTools = compactCategoryTools(category, tool, toolFamilyChoices);
+            const layout = compactTools.length === 1 ? 'one' : compactTools.length === 2 ? 'two' : 'many';
+            return (
             <section
-              className="tool-category"
+              className={`tool-category tool-category--${layout}`}
               aria-label={`${category.label} tools`}
               key={category.id}
             >
               <h3>{category.label}</h3>
-              <div className="tool-category-grid">
-                {category.tools.map((toolId) => {
+              <div className={`tool-category-grid tool-category-grid--${layout}`}>
+                {compactTools.map((toolId) => {
                   const item = TOOLS.find((candidate) => candidate.id === toolId);
                   if (!item) return null;
                   const { id, label, icon: Icon, key } = item,
                     flyout = flyoutForTool(id),
                     subtools = flyout ? flyoutTools(flyout) : [];
                   return (
-                    <div className="tool-button-wrap" key={id}>
+                    <div className="tool-button-wrap" key={flyout ? `family-${flyout}` : id}>
                       <button
-                        id={`toolbar-${id}`}
+                        id={`toolbar-${flyout ?? id}`}
                         className={tool === id ? 'active' : ''}
                         data-tool-id={id}
                         onPointerDown={(event) => {
@@ -8169,6 +8356,7 @@ export default function Home() {
                                         subtool.id,
                                         subtool.key,
                                       ),
+                                      icon: subtool.icon,
                                     },
                                   ]
                                 : [];
@@ -8188,7 +8376,8 @@ export default function Home() {
                 })}
               </div>
             </section>
-          ))}
+            );
+          })}
           <button
             className={
               quickMasking ? 'active quick-mask-tool' : 'quick-mask-tool'
@@ -8712,6 +8901,9 @@ export default function Home() {
             <LayersPanel
               frame={frame}
               select={select}
+              selectAll={selectAllLayers}
+              deselectLayers={deselectLayers}
+              isolateLayers={isolateLayers}
               edit={editLayer}
               add={addPaint}
               duplicate={duplicate}

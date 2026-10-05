@@ -41,6 +41,7 @@ import {
   type DraftBundleManifest,
   type DraftBundleChunk,
 } from './draftBundle.ts';
+import { normalizeLayerSelection } from './layerSelection.ts';
 export type Tool =
   | 'move'
   | 'hand'
@@ -359,6 +360,7 @@ export const DRAFT_MIGRATIONS: Readonly<Record<number, DraftMigration>> = {
         h: shot.h,
         imageSize: { resolution: 72, resolutionUnit: 'ppi' as const },
         active: id,
+        selectedLayerIds: [id],
         layers: [
           {
             ...commonLayer('Background'),
@@ -441,17 +443,19 @@ export function validateDraft(input: unknown): Draft {
   )
     throw new Error('Invalid project assets');
   const history = (value.history as Frame[]).map((frame) => ({
-    ...frame,
-    imageSize: effectiveImageSize(frame.imageSize),
-    layers: frame.layers.map((layer) =>
-      effectiveTextLayer(
-        {
-          ...layer,
-          adjustments: effectiveAdjustments(layer.adjustments),
-        },
-        frame.w,
+    ...normalizeLayerSelection({
+      ...frame,
+      imageSize: effectiveImageSize(frame.imageSize),
+      layers: frame.layers.map((layer) =>
+        effectiveTextLayer(
+          {
+            ...layer,
+            adjustments: effectiveAdjustments(layer.adjustments),
+          },
+          frame.w,
+        ),
       ),
-    ),
+    }),
   }));
   history.forEach((frame) => validateFrame(frame, value.assets));
   if (

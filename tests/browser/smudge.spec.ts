@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect, type Page } from '@playwright/test';
 
 type Asset = { url: string; w: number; h: number };
@@ -111,7 +112,7 @@ test.beforeEach(async ({ page }) => openEditor(page));
 
 test('Smudge is available on R and its Flow setting survives a local draft round trip', async ({ page }) => {
   await importFixture(page);
-  await page.getByRole('button', { name: 'Smudge tool', exact: true }).click();
+  await selectTool(page, 'Smudge');
   await expect(page.getByRole('button', { name: 'Smudge tool', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await page.keyboard.press('r');
   await expect(page.getByRole('button', { name: 'Smudge tool', exact: true })).toHaveAttribute('aria-pressed', 'true');
@@ -128,7 +129,7 @@ test('Smudge moves representative colour while preserving alpha, undo/redo and r
   const before = await project(page);
   const id = (value: Project) => value.history[value.index].layers.at(-1)!.asset!;
   const beforePixels = await sample(page, before.assets[id(before)]!, [{ x: 0.52 }, { x: 0.76 }]);
-  await page.getByRole('button', { name: 'Smudge tool', exact: true }).click();
+  await selectTool(page, 'Smudge');
   await page.getByLabel('Size', { exact: true }).fill('36');
   await page.getByLabel('Hardness', { exact: true }).fill('100');
   await page.getByLabel('Flow', { exact: true }).fill('100');
@@ -158,7 +159,7 @@ test('Smudge moves representative colour while preserving alpha, undo/redo and r
 
 test('Smudge selection alpha protects unselected pixels and a stationary tap is a no-op', async ({ page }) => {
   await importFixture(page);
-  await page.getByRole('button', { name: 'Select tool', exact: true }).click();
+  await selectTool(page, 'Select');
   const box = (await page.getByTestId('editor-canvas').boundingBox())!;
   await page.mouse.move(box.x + box.width * 0.25, box.y + box.height * 0.15);
   await page.mouse.down();
@@ -171,7 +172,7 @@ test('Smudge selection alpha protects unselected pixels and a stationary tap is 
   };
   const samplePoints = [{ x: 0.52 }, { x: 0.62 }, { x: 0.15 }];
   const selectedPixels = await sample(page, activeAsset(selected), samplePoints);
-  await page.getByRole('button', { name: 'Smudge tool', exact: true }).click();
+  await selectTool(page, 'Smudge');
   await page.getByLabel('Size', { exact: true }).fill('32');
   await page.getByLabel('Hardness', { exact: true }).fill('100');
   await page.getByLabel('Flow', { exact: true }).fill('100');
@@ -185,7 +186,7 @@ test('Smudge selection alpha protects unselected pixels and a stationary tap is 
   expect(changedPixels[0][3]).toBe(selectedPixels[0][3]);
   expect(changedPixels[1]).toEqual(selectedPixels[1]);
   expect(changedPixels[2]).toEqual(selectedPixels[2]);
-  await page.getByRole('button', { name: 'Smudge tool', exact: true }).click();
+  await selectTool(page, 'Smudge');
   const point = await canvasPoint(page, 0.8);
   const canvas = page.getByTestId('editor-canvas');
   await canvas.evaluate((element) => { element.setPointerCapture = () => undefined; });
@@ -197,7 +198,7 @@ test('Smudge selection alpha protects unselected pixels and a stationary tap is 
 
 test('Smudge rejects locked layers and touch cancellation without committing', async ({ page }) => {
   await importFixture(page);
-  await page.getByRole('button', { name: 'Smudge tool', exact: true }).click();
+  await selectTool(page, 'Smudge');
   await page.getByLabel('Lock layer', { exact: true }).check();
   const lockedBefore = await project(page);
   await stroke(page, 0.3, 0.7, 'touch');

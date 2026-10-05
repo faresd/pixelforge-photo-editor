@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
@@ -106,9 +107,7 @@ test.beforeEach(async ({ page }) => openEditor(page));
 test('Selection Brush creates a local alpha mask, composes Add and survives reload', async ({
   page,
 }) => {
-  await page
-    .getByRole('button', { name: 'Selection Brush tool', exact: true })
-    .click();
+  await selectTool(page, 'Selection Brush');
   await expect(page.getByText('Selection Brush tool selected', { exact: true })).toBeVisible();
   await stroke(page, [0.22, 0.3], [0.62, 0.3], 'mouse');
   await expect(page.getByText('Selection Brush selection created', { exact: true })).toBeVisible();
@@ -140,9 +139,7 @@ test('Selection Brush creates a local alpha mask, composes Add and survives relo
 test('Selection Brush accepts a touch gesture and cancellation leaves history unchanged', async ({
   page,
 }) => {
-  await page
-    .getByRole('button', { name: 'Selection Brush tool', exact: true })
-    .click();
+  await selectTool(page, 'Selection Brush');
   const before = await project(page);
   await stroke(page, [0.25, 0.7], [0.7, 0.7], 'touch');
   await expect(page.getByText('Selection Brush selection created', { exact: true })).toBeVisible();

@@ -90,6 +90,49 @@ export function categoryForTool(tool: string): string | undefined {
   return TOOL_CATEGORIES.find((category) => category.tools.includes(tool as PaletteToolId))?.id;
 }
 
+/**
+ * Return the compact toolbar representation for a category. Photoshop shows
+ * one slot for a tool family and keeps the variants in its press-and-hold
+ * flyout; the active variant replaces that representative slot.
+ */
+export function compactCategoryTools(
+  category: ToolCategory,
+  activeTool?: string,
+  rememberedChoices?: Readonly<Record<string, string>>,
+): readonly PaletteToolId[] {
+  const result: PaletteToolId[] = [];
+  const positions = new Map<string, number>();
+  for (const tool of category.tools) {
+    const family = flyoutForTool(tool);
+    const key = family ? `flyout:${family}` : `tool:${tool}`;
+    const existing = positions.get(key);
+    if (existing === undefined) {
+      positions.set(key, result.length);
+      result.push(tool);
+    } else if (tool === activeTool) {
+      result[existing] = tool;
+    }
+  }
+  // A family keeps the last selected variant when the active tool moves to a
+  // different family. This mirrors Photoshop's toolbar and avoids resetting a
+  // carefully chosen subtool every time the user returns to its slot.
+  if (rememberedChoices) {
+    for (const [family, remembered] of Object.entries(rememberedChoices)) {
+      const position = positions.get(`flyout:${family}`);
+      if (position === undefined || !category.tools.includes(remembered as PaletteToolId)) continue;
+      const flyout = TOOL_FLYOUTS[family];
+      if (flyout?.includes(remembered as PaletteToolId))
+        result[position] = remembered as PaletteToolId;
+    }
+    const activeFamily = activeTool && flyoutForTool(activeTool);
+    if (activeFamily) {
+      const position = positions.get(`flyout:${activeFamily}`);
+      if (position !== undefined) result[position] = activeTool as PaletteToolId;
+    }
+  }
+  return result;
+}
+
 export function familyTools(toolOrKey: string): readonly PaletteToolId[] {
   if (TOOL_FAMILIES[toolOrKey]) return TOOL_FAMILIES[toolOrKey];
   const family = familyForTool(toolOrKey);
