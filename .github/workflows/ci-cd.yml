@@ -38,11 +38,11 @@ jobs:
           fi
       - run: npm run lint
       - run: npm run typecheck
-      - run: npm test
       - name: Build with analytics configuration
         env:
           VITE_CHEAPLY_GA_MEASUREMENT_ID: ${{ vars.PIXELFORGE_GA_MEASUREMENT_ID }}
         run: npm run build
+      - run: npm test
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
