@@ -9,10 +9,22 @@ import {
 import { renderFrameWithWorker } from './workerRender';
 import type { Draft } from './drafts';
 import { beginPerformanceSpan } from './performanceMarks';
+import {
+  rangeLayerSelection,
+  selectedLayerIdsForFrame,
+  toggleLayerSelection,
+} from './layerSelection';
 
 export type RenderProgress = {
   completed: number;
   total: number;
+};
+
+export type LayerSelectionIntent = {
+  /** Add or remove the clicked layer while preserving the other picks. */
+  additive?: boolean;
+  /** Select the contiguous range from the current active anchor. */
+  range?: boolean;
 };
 
 export function useDocument(onError: (message: string) => void) {
@@ -185,10 +197,41 @@ export function useDocument(onError: (message: string) => void) {
     if (installSequence === renderSequence.current) setRendering(false);
   }, []);
   const select = useCallback(
-    (id: string) => {
+    (id: string, intent: LayerSelectionIntent = {}) => {
       const current = history.current[index.current];
       if (!current?.layers.some((l) => l.id === id)) return;
-      const next = { ...current, active: id };
+      const next = intent.range
+        ? rangeLayerSelection(current, id)
+        : toggleLayerSelection(current, id, Boolean(intent.additive));
+      history.current[index.current] = next;
+      publish(next);
+    },
+    [publish],
+  );
+  const setLayerSelection = useCallback(
+    (ids: readonly string[], activeId?: string) => {
+      const current = history.current[index.current];
+      if (!current) return;
+      const valid = new Set(current.layers.map((layer) => layer.id));
+      const selectedLayerIds = [...new Set(ids)].filter((id) => valid.has(id));
+      const active =
+        (activeId && valid.has(activeId) ? activeId : undefined) ||
+        selectedLayerIds.at(-1) ||
+        current.active;
+      const next = {
+        ...current,
+        active,
+        selectedLayerIds: selectedLayerIdsForFrame({
+          ...current,
+          selectedLayerIds,
+        }),
+      };
+      if (
+        next.active === current.active &&
+        JSON.stringify(next.selectedLayerIds || []) ===
+          JSON.stringify(current.selectedLayerIds || [])
+      )
+        return;
       history.current[index.current] = next;
       publish(next);
     },
@@ -216,6 +259,7 @@ export function useDocument(onError: (message: string) => void) {
     commit,
     install,
     select,
+    setLayerSelection,
     travel,
   };
 }

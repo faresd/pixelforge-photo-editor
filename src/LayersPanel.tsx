@@ -15,7 +15,13 @@ import { effectiveLayerStyles, type LayerStyles } from './layerStyles';
 
 type Props = {
   frame: Frame;
-  select: (id: string) => void;
+  select: (
+    id: string,
+    intent?: { additive?: boolean; range?: boolean },
+  ) => void;
+  selectAll: () => void;
+  deselectLayers: () => void;
+  isolateLayers: () => void;
   edit: (patch: Partial<Layer>) => void;
   add: () => void;
   duplicate: () => void;
@@ -41,6 +47,9 @@ type Props = {
 export default function LayersPanel({
   frame,
   select,
+  selectAll,
+  deselectLayers,
+  isolateLayers,
   edit,
   add,
   duplicate,
@@ -68,6 +77,12 @@ export default function LayersPanel({
   const groupById = new Map(groups.map((group) => [group.id, group]));
   const activeGroup = layer.groupId ? groupById.get(layer.groupId) : undefined;
   const layerLocked = layer.locked || Boolean(activeGroup?.locked);
+  const selectedIds = new Set(
+    (frame.selectedLayerIds === undefined
+      ? [frame.active]
+      : frame.selectedLayerIds
+    ).filter((id) => frame.layers.some((item) => item.id === id)),
+  );
   const styles = effectiveLayerStyles(layer.styles);
   const updateStyles = (patch: Partial<LayerStyles>) =>
     edit({ styles: { ...styles, ...patch } });
@@ -98,9 +113,21 @@ export default function LayersPanel({
       rows.push(
         <button
           key={item.id}
-          className={item.id === layer.id ? 'layer-row selected' : 'layer-row'}
-          onClick={() => select(item.id)}
-          aria-pressed={item.id === layer.id}
+          className={
+            item.id === layer.id
+              ? 'layer-row selected'
+              : selectedIds.has(item.id)
+                ? 'layer-row multi-selected'
+                : 'layer-row'
+          }
+          onClick={(event) =>
+            select(item.id, {
+              additive: event.metaKey || event.ctrlKey,
+              range: event.shiftKey,
+            })
+          }
+          aria-pressed={selectedIds.has(item.id)}
+          data-selected={selectedIds.has(item.id) ? 'true' : 'false'}
           aria-label={`Select layer ${item.name}`}
         >
           <span className="layer-type">
@@ -151,7 +178,14 @@ export default function LayersPanel({
         <button onClick={importImage} disabled={frame.layers.length >= 32}>
           Add image layer
         </button>
-        <button onClick={groupActive} disabled={Boolean(layer.groupId)}>
+        <button
+          onClick={groupActive}
+          disabled={
+            [...selectedIds].some((id) =>
+              frame.layers.find((item) => item.id === id)?.groupId,
+            )
+          }
+        >
           Group active layer
         </button>
         <button
@@ -160,6 +194,20 @@ export default function LayersPanel({
         >
           Ungroup active layer
         </button>
+      </div>
+      <div className="layer-selection-toolbar" aria-label="Layer selection">
+        <span aria-live="polite">
+          {selectedIds.size} layer{selectedIds.size === 1 ? '' : 's'} selected
+        </span>
+        <div className="layer-actions">
+          <button onClick={selectAll}>Select all layers</button>
+          <button onClick={deselectLayers} disabled={selectedIds.size === 0}>
+            Deselect layers
+          </button>
+          <button onClick={isolateLayers} disabled={selectedIds.size === 0}>
+            Isolate layers
+          </button>
+        </div>
       </div>
       <div className="layer-list">{rows}</div>
       <label className="layer-field">
