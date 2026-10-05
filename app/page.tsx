@@ -135,6 +135,12 @@ import CurveEditor from '../src/CurveEditor';
 import { type CurveChannel, type CurvePoints } from '../src/curves';
 import { applyAutoAdjustmentsPixels, type AutoMode } from '../src/auto';
 import { createBackgroundMask } from '../src/backgroundRemoval';
+import {
+  applyMaskRefinementPixels,
+  MASK_REFINEMENT_MAX_POINTS,
+  type MaskRefinementMode,
+  type MaskRefinementStroke,
+} from '../src/maskRefinement';
 import { type ExportFormat } from '../src/export';
 import ActionsPanel from '../src/ActionsPanel';
 import {
@@ -417,6 +423,8 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
     key: 'E',
   },
   { id: 'magic-eraser', label: 'Magic Eraser', icon: Wand2, key: 'E' },
+  { id: 'mask-brush', label: 'Mask Brush', icon: Brush, key: 'K' },
+  { id: 'mask-eraser', label: 'Mask Eraser', icon: Eraser, key: 'K' },
   { id: 'dodge', label: 'Dodge', icon: Sun, key: 'O' },
   { id: 'burn', label: 'Burn', icon: Moon, key: 'O' },
   { id: 'sponge', label: 'Sponge', icon: Sparkles, key: 'O' },
@@ -477,6 +485,19 @@ const flyoutToolLabel = (tool: Tool, label: string) =>
       : label;
 const flyoutToolKey = (tool: Tool, key: string) =>
   tool === 'selection-brush' ? 'W' : key;
+
+/** Keep transient canvas previews out of the render function's mutable path. */
+const setPreviewAsset = (
+  assets: Assets,
+  id: string,
+  canvas: HTMLCanvasElement,
+) => {
+  assets[id] = { url: canvas.toDataURL(), w: canvas.width, h: canvas.height };
+};
+const discardPreviewAsset = (assets: Assets, id: string | undefined) => {
+  if (id) delete assets[id];
+};
+
 const MARQUEE_TOOLS: Tool[] = [
   'select',
   'ellipse-select',
@@ -494,6 +515,7 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   l: ['lasso', 'polygonal-lasso', 'magnetic-lasso', 'selection-brush'],
   w: ['selection-brush', 'magic-wand'],
   e: ['eraser', 'background-eraser', 'magic-eraser'],
+  k: ['mask-brush', 'mask-eraser'],
   o: ['dodge', 'burn', 'sponge'],
   r: ['smudge'],
   s: ['clone', 'pattern-stamp'],
@@ -800,6 +822,9 @@ type Gesture = {
   layer?: Layer;
   buffer?: HTMLCanvasElement;
   source?: HTMLCanvasElement;
+  /** Canvas-sized mask buffer used while a refinement stroke is in flight. */
+  maskBuffer?: HTMLCanvasElement;
+  maskPreviewAsset?: string;
   patternId?: PatternId;
   patternTileSize?: number;
   redEyeThreshold?: number;
@@ -808,6 +833,8 @@ type Gesture = {
   spotHealingStroke?: SpotHealingStroke;
   /** Local-space nondestructive source-offset patch metadata. */
   patchStroke?: PatchStroke;
+  /** Canvas-space nondestructive mask repair metadata for one gesture. */
+  maskRefinementStroke?: MaskRefinementStroke;
   /** Selection alpha sampled once in the edited layer's local pixel space. */
   selectionMask?: Uint8ClampedArray;
   /** Existing selection alpha retained while a Selection Brush stroke is built. */
@@ -4159,6 +4186,24 @@ export default function Home() {
     e.pressure <= 1
       ? e.pressure
       : 1;
+  /** Apply a canvas-space alpha stroke to a detached mask preview. */
+  const refineMaskCanvas = (
+    target: HTMLCanvasElement,
+    stroke: MaskRefinementStroke,
+  ) => {
+    const context = target.getContext('2d');
+    if (!context) throw new Error('Mask refinement canvas is unavailable');
+    const image = context.getImageData(0, 0, target.width, target.height),
+      result = applyMaskRefinementPixels(
+        image.data,
+        target.width,
+        target.height,
+        stroke,
+      );
+    image.data.set(result.pixels);
+    context.putImageData(image, 0, 0);
+    return result.changed;
+  };
   const drawPathOverlay = (
     path: PathModel,
     matrix: Matrix = [1, 0, 0, 1, 0, 0],
@@ -4429,6 +4474,8 @@ export default function Home() {
         'eraser',
         'background-eraser',
         'magic-eraser',
+        'mask-brush',
+        'mask-eraser',
         'clone',
         'heal',
         'spot-heal',
@@ -4451,6 +4498,100 @@ export default function Home() {
     const local =
       layer.kind === 'raster' ? inversePoint(layer.matrix, p) || p : p;
     canvas.current!.setPointerCapture(e.pointerId);
+    if (tool === 'mask-brush' || tool === 'mask-eraser') {
+      if (
+        layerIsLocked(f, layer) ||
+        !layer.visible ||
+        layer.kind !== 'raster'
+      ) {
+        setNotice('Select a visible, unlocked raster layer before refining its mask');
+        return;
+      }
+      if (!layer.mask) {
+        setNotice('Create a layer mask or remove a background before refining');
+        return;
+      }
+      const mode: MaskRefinementMode =
+          tool === 'mask-brush' ? 'reveal' : 'conceal',
+        maskAsset = assets.current[layer.mask],
+        initialPoint = {
+          x: p.x,
+          y: p.y,
+          pressure: pressure(e),
+        },
+        g: Gesture = {
+          tool,
+          start: p,
+          last: p,
+          frame: f,
+          layer,
+          lastPressure: initialPoint.pressure,
+          pointerType: e.pointerType,
+          moved: false,
+          queued: [initialPoint],
+          maskRefinementStroke: {
+            version: 1,
+            points: [initialPoint],
+            size: Math.max(1, size),
+            hardness,
+            opacity: brushOpacity / 100,
+            mode,
+          },
+        };
+      gesture.current = g;
+      g.pending = (async () => {
+        try {
+          const image = await decodeAsset(maskAsset);
+          if (image.naturalWidth !== f.w || image.naturalHeight !== f.h)
+            throw new Error('Layer mask dimensions do not match the canvas');
+          const buffer = surface(f.w, f.h),
+            context = buffer.getContext('2d');
+          if (!context) throw new Error('Mask refinement canvas is unavailable');
+          context.imageSmoothingEnabled = false;
+          context.drawImage(image, 0, 0);
+          if (gesture.current !== g) return;
+          g.maskBuffer = buffer;
+          const queued = (g.queued || [initialPoint]).slice(
+            0,
+            MASK_REFINEMENT_MAX_POINTS,
+          );
+          g.maskRefinementStroke = {
+            ...g.maskRefinementStroke!,
+            points: queued.map((item) => ({
+              x: item.x,
+              y: item.y,
+              pressure: item.pressure,
+            })),
+          };
+          g.changed = refineMaskCanvas(buffer, g.maskRefinementStroke);
+          g.last = queued[queued.length - 1] || p;
+          g.queued = undefined;
+          g.maskPreviewAsset = crypto.randomUUID();
+          setPreviewAsset(assets.current, g.maskPreviewAsset, buffer);
+          const previewFrame: Frame = {
+            ...f,
+            layers: f.layers.map((item) =>
+              item.id === layer.id
+                ? {
+                    ...item,
+                    mask: g.maskPreviewAsset,
+                    maskEnabled: true,
+                    maskInverted: layer.maskInverted === true,
+                  }
+                : item,
+            ),
+          };
+          void paint(previewFrame);
+        } catch {
+          if (gesture.current === g) {
+            gesture.current = null;
+            setNotice('Could not prepare mask refinement');
+          }
+        }
+      })();
+      await g.pending;
+      return;
+    }
     if (tool === 'direct-select') {
       if (layerIsLocked(f, layer) || !layer.visible || layer.kind !== 'path') {
         setNotice(
@@ -5469,6 +5610,47 @@ export default function Home() {
     g.lastPressure = pressure(e);
     g.pointerType = e.pointerType;
     g.moved = true;
+    if (
+      (g.tool === 'mask-brush' || g.tool === 'mask-eraser') &&
+      g.maskRefinementStroke
+    ) {
+      const point = { x: p.x, y: p.y, pressure: g.lastPressure };
+      if (!g.maskBuffer) {
+        if ((g.queued?.length || 0) < MASK_REFINEMENT_MAX_POINTS)
+          (g.queued ||= []).push({ ...point, pointerType: e.pointerType });
+        g.last = p;
+        return;
+      }
+      if (g.maskRefinementStroke.points.length < MASK_REFINEMENT_MAX_POINTS) {
+        const from = g.maskRefinementStroke.points[
+          g.maskRefinementStroke.points.length - 1
+        ];
+        g.maskRefinementStroke.points.push(point);
+        g.changed = refineMaskCanvas(g.maskBuffer, {
+          ...g.maskRefinementStroke,
+          points: [from, point],
+        }) || Boolean(g.changed);
+        if (g.maskPreviewAsset) {
+          setPreviewAsset(assets.current, g.maskPreviewAsset, g.maskBuffer);
+          const previewFrame: Frame = {
+            ...g.frame,
+            layers: g.frame.layers.map((item) =>
+              item.id === g.layer!.id
+                ? {
+                    ...item,
+                    mask: g.maskPreviewAsset,
+                    maskEnabled: true,
+                    maskInverted: false,
+                  }
+                : item,
+            ),
+          };
+          void paint(previewFrame);
+        }
+      }
+      g.last = p;
+      return;
+    }
     if (g.tool === 'spot-heal' && g.layer?.kind === 'raster' && g.spotHealingStroke) {
       const asset = assets.current[g.layer.asset],
         x = Math.max(0, Math.min(asset.w - 1, local.x)),
@@ -6129,14 +6311,71 @@ export default function Home() {
         : undefined;
     if (latest !== f || (g.layer && latestLayer !== g.layer)) {
       if (g.tool === 'ruler') setMeasurementPreview(null);
+      discardPreviewAsset(assets.current, g.maskPreviewAsset);
       void paint(latest);
       setNotice('Gesture cancelled because the document changed');
       return;
     }
     if (e.type === 'pointercancel') {
       if (g.tool === 'ruler') setMeasurementPreview(null);
+      discardPreviewAsset(assets.current, g.maskPreviewAsset);
       void paint(current());
       setNotice('Gesture cancelled');
+      return;
+    }
+    if (
+      (g.tool === 'mask-brush' || g.tool === 'mask-eraser') &&
+      g.layer?.kind === 'raster' &&
+      g.maskBuffer &&
+      g.maskRefinementStroke
+    ) {
+      if (g.moved && (g.last.x !== p.x || g.last.y !== p.y)) {
+        const finalPoint = {
+          x: p.x,
+          y: p.y,
+          pressure: g.lastPressure ?? pressure(e),
+        };
+        if (
+          g.maskRefinementStroke.points.length < MASK_REFINEMENT_MAX_POINTS
+        ) {
+          const from = g.maskRefinementStroke.points[
+            g.maskRefinementStroke.points.length - 1
+          ];
+          g.maskRefinementStroke.points.push(finalPoint);
+          g.changed = refineMaskCanvas(g.maskBuffer, {
+            ...g.maskRefinementStroke,
+            points: [from, finalPoint],
+          }) || Boolean(g.changed);
+        }
+      }
+      if (!g.changed) {
+        discardPreviewAsset(assets.current, g.maskPreviewAsset);
+        void paint(f);
+        setNotice('No mask refinement change applied');
+        return;
+      }
+      const mask = addAsset(assets.current, g.maskBuffer),
+        changed = commit({
+          ...f,
+          layers: f.layers.map((item) =>
+            item.id === g.layer!.id
+              ? {
+                  ...item,
+                  mask,
+                  maskEnabled: true,
+                  maskInverted: false,
+                }
+              : item,
+          ),
+        });
+      if (g.maskPreviewAsset && g.maskPreviewAsset !== mask)
+        discardPreviewAsset(assets.current, g.maskPreviewAsset);
+      if (changed)
+        setNotice(
+          g.maskRefinementStroke.mode === 'reveal'
+            ? 'Mask Brush revealed masked pixels'
+            : 'Mask Eraser concealed pixels',
+        );
       return;
     }
     if (g.tool === 'ruler') {
@@ -6246,6 +6485,37 @@ export default function Home() {
         ),
       });
       if (changed) setNotice('Paint layer updated');
+    } else if (
+      (g.tool === 'mask-brush' || g.tool === 'mask-eraser') &&
+      g.layer?.kind === 'raster' &&
+      g.maskBuffer &&
+      g.maskRefinementStroke
+    ) {
+      if (!g.changed) {
+        void paint(f);
+        setNotice('Mask refinement made no change');
+        return;
+      }
+      const asset = addAsset(assets.current, g.maskBuffer),
+        changed = commit({
+          ...f,
+          layers: f.layers.map((item) =>
+            item.id === g.layer!.id
+              ? {
+                  ...item,
+                  mask: asset,
+                  maskEnabled: item.maskEnabled !== false,
+                  maskInverted: item.maskInverted === true,
+                }
+              : item,
+          ),
+        });
+      if (changed)
+        setNotice(
+          g.tool === 'mask-brush'
+            ? 'Mask Brush revealed masked pixels'
+            : 'Mask Eraser concealed pixels',
+        );
     } else if (
       (g.tool === 'rectangle' ||
         g.tool === 'ellipse' ||
@@ -8808,6 +9078,8 @@ export default function Home() {
             tool === 'eraser' ||
             tool === 'background-eraser' ||
             tool === 'magic-eraser' ||
+            tool === 'mask-brush' ||
+            tool === 'mask-eraser' ||
             tool === 'dodge' ||
             tool === 'burn' ||
             tool === 'sponge' ||
@@ -8841,6 +9113,8 @@ export default function Home() {
                 tool === 'eraser' ||
                 tool === 'background-eraser' ||
                 tool === 'magic-eraser' ||
+                tool === 'mask-brush' ||
+                tool === 'mask-eraser' ||
                 tool === 'dodge' ||
                 tool === 'burn' ||
                 tool === 'sponge' ||
@@ -8896,6 +9170,14 @@ export default function Home() {
                       Click a source area, then drag over a destination. Patch
                       copies a bounded local neighbourhood while keeping the
                       source asset and alpha channel unchanged.
+                    </p>
+                  )}
+                  {(tool === 'mask-brush' || tool === 'mask-eraser') && (
+                    <p className="adjust-note">
+                      Refines the existing layer mask in canvas space. Mask
+                      Brush reveals masked pixels and Mask Eraser conceals
+                      them; the source raster remains untouched and each
+                      stroke is undoable.
                     </p>
                   )}
                   {tool !== 'magic-eraser' && tool !== 'red-eye' && (
@@ -8980,7 +9262,9 @@ export default function Home() {
                     tool !== 'smudge' &&
                     tool !== 'red-eye' &&
                     tool !== 'spot-heal' &&
-                    tool !== 'patch' && (
+                    tool !== 'patch' &&
+                    tool !== 'mask-brush' &&
+                    tool !== 'mask-eraser' && (
                       <>
                         <label className="check-row">
                           <input

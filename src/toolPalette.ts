@@ -12,6 +12,7 @@ export type PaletteToolId =
   | 'fill' | 'gradient' | 'clone' | 'heal' | 'spot-heal' | 'patch' | 'red-eye' | 'pattern-stamp'
   | 'crop' | 'perspective-crop' | 'slice' | 'brush' | 'pencil' | 'color-replace' | 'eraser'
   | 'background-eraser' | 'magic-eraser' | 'dodge' | 'burn' | 'sponge' | 'smudge' | 'pen'
+  | 'mask-brush' | 'mask-eraser'
   | 'direct-select' | 'text' | 'rectangle' | 'ellipse' | 'line' | 'polygon' | 'select'
   | 'ellipse-select' | 'row-select' | 'column-select' | 'lasso' | 'polygonal-lasso'
   | 'magnetic-lasso' | 'selection-brush' | 'magic-wand';
@@ -31,6 +32,7 @@ export const TOOL_CATEGORIES: readonly ToolCategory[] = [
   { id: 'crop', label: 'Crop & Slice', tools: ['crop', 'perspective-crop', 'slice'] },
   { id: 'retouch', label: 'Retouch', tools: ['clone', 'pattern-stamp', 'heal', 'spot-heal', 'patch', 'red-eye', 'smudge', 'dodge', 'burn', 'sponge'] },
   { id: 'paint', label: 'Paint & Fill', tools: ['brush', 'pencil', 'color-replace', 'gradient', 'fill', 'eraser', 'background-eraser', 'magic-eraser'] },
+  { id: 'mask', label: 'Mask Refinement', tools: ['mask-brush', 'mask-eraser'] },
   { id: 'draw', label: 'Draw & Type', tools: ['pen', 'direct-select', 'text', 'rectangle', 'ellipse', 'line', 'polygon'] },
 ] as const;
 
@@ -45,6 +47,7 @@ export const TOOL_FAMILIES: Readonly<Record<string, readonly PaletteToolId[]>> =
   l: ['lasso', 'polygonal-lasso', 'magnetic-lasso'],
   w: ['selection-brush', 'magic-wand'],
   e: ['eraser', 'background-eraser', 'magic-eraser'],
+  k: ['mask-brush', 'mask-eraser'],
   o: ['dodge', 'burn', 'sponge'],
   s: ['clone', 'pattern-stamp'],
   j: ['heal', 'spot-heal', 'patch', 'red-eye'],
@@ -66,6 +69,7 @@ export const TOOL_FLYOUTS: Readonly<Record<string, readonly PaletteToolId[]>> = 
   tone: ['dodge', 'burn', 'sponge'],
   stamp: ['clone', 'pattern-stamp'],
   healing: ['heal', 'spot-heal', 'patch', 'red-eye'],
+  mask: ['mask-brush', 'mask-eraser'],
 };
 
 export function familyForTool(tool: string): string | undefined {

@@ -67,6 +67,8 @@ export type Tool =
   | 'eraser'
   | 'background-eraser'
   | 'magic-eraser'
+  | 'mask-brush'
+  | 'mask-eraser'
   | 'dodge'
   | 'burn'
   | 'sponge'
