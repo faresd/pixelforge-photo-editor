@@ -1014,6 +1014,115 @@ test('Edit Clear, Shift-F5 fill and Merge Visible preserve pixels and hidden lay
   ).toHaveLength(1);
 });
 
+test('Merge Layers rasterizes the adjacent pair, preserves pixels, and round-trips through history', async ({
+  page,
+}) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute(
+    'aria-busy',
+    'false',
+  );
+
+  // A single-layer document cannot merge; the menu exposes that guard.
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await expect(
+    page.getByRole('menuitem', { name: 'Merge Layers', exact: true }),
+  ).toBeDisabled();
+  await page.keyboard.press('Escape');
+
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^New white document/ }).click();
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await page
+    .getByRole('menuitem', { name: /^Duplicate Layer/ })
+    .click();
+  await expect(page.getByRole('heading', { name: /Layers/ })).toContainText(
+    '2 /',
+  );
+
+  const canvas = page.getByTestId('editor-canvas');
+  const samplePixels = () =>
+    canvas.evaluate((item: HTMLCanvasElement) => {
+      const context = item.getContext('2d');
+      if (!context) throw new Error('2d context unavailable');
+      const points = [
+        [0, 0],
+        [item.width - 1, 0],
+        [0, item.height - 1],
+        [item.width - 1, item.height - 1],
+        [Math.floor(item.width / 2), Math.floor(item.height / 2)],
+      ];
+      return points.map(([x, y]) =>
+        Array.from(context.getImageData(x, y, 1, 1).data),
+      );
+    });
+  const pixelsBefore = await samplePixels();
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await expect(
+    page.getByRole('menuitem', { name: 'Merge Layers', exact: true }),
+  ).toBeEnabled();
+  await page
+    .getByRole('menuitem', { name: 'Merge Layers', exact: true })
+    .click();
+  await expect(page.getByText('Layers merged; undo restores the individual layers')).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Layers/ })).toContainText(
+    '1 /',
+  );
+
+  const pixelsAfter = await samplePixels();
+  expect(pixelsAfter).toEqual(pixelsBefore);
+
+  const downloadProject = async () => {
+    const pending = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'File', exact: true }).click();
+    await page
+      .getByRole('menuitem', { name: 'Download project file', exact: true })
+      .click();
+    const path = await (await pending).path();
+    return JSON.parse(
+      await (await import('node:fs/promises')).readFile(path!, 'utf8'),
+    ) as {
+      history: Array<{
+        layers: Array<{ kind: string; name: string; asset?: string }>;
+      }>;
+      index: number;
+      assets: Record<string, unknown>;
+    };
+  };
+  let project = await downloadProject();
+  expect(project.history[project.index].layers).toHaveLength(1);
+  expect(project.history[project.index].layers[0]).toMatchObject({
+    kind: 'raster',
+    name: expect.stringContaining('+'),
+  });
+  const mergedAsset = project.history[project.index].layers[0].asset;
+  expect(mergedAsset).toBeTruthy();
+  expect(project.assets[mergedAsset!]).toBeDefined();
+
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  await expect(page.getByRole('heading', { name: /Layers/ })).toContainText(
+    '2 /',
+  );
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Redo/ }).click();
+  await expect(page.getByRole('heading', { name: /Layers/ })).toContainText(
+    '1 /',
+  );
+
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute(
+    'aria-busy',
+    'false',
+  );
+  await expect(page.getByRole('heading', { name: /Layers/ })).toContainText(
+    '1 /',
+  );
+  project = await downloadProject();
+  expect(project.history[project.index].layers).toHaveLength(1);
+  expect(project.history[project.index].layers[0].kind).toBe('raster');
+});
+
 test('layer menu copy, paste, hide and flatten preserve an undoable project', async ({
   page,
 }) => {

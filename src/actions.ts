@@ -157,6 +157,7 @@ export const REPLAYABLE_ACTION_COMMANDS = new Set([
   'invert-layer-mask',
   'toggle-layer-mask',
   'remove-layer-mask',
+  'merge-layers',
   'merge-visible',
   'flatten',
 ]);
