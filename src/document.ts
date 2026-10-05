@@ -128,6 +128,10 @@ export type Adjustments = {
   levelsWhite: number;
   /** Midtone gamma for a nondestructive levels correction (0.1-3). */
   levelsGamma: number;
+  /** Output black point for a nondestructive levels correction (0-254). */
+  levelsOutputBlack: number;
+  /** Output white point for a nondestructive levels correction (1-255). */
+  levelsOutputWhite: number;
   /** Tonal color-balance channels, retained as editable metadata. */
   colorBalance: ColorBalance;
   /** Nondestructive unsharp-mask and deterministic noise controls. */
@@ -151,6 +155,8 @@ export const neutral: Adjustments = {
   levelsBlack: 0,
   levelsWhite: 255,
   levelsGamma: 1,
+  levelsOutputBlack: 0,
+  levelsOutputWhite: 255,
   colorBalance: { ...neutralColorBalance },
   sharpenNoise: { ...neutralSharpenNoise },
   curves: {
@@ -648,11 +654,62 @@ export function levelsChannel(
   black: number,
   white: number,
   gamma: number,
+  outputBlack = 0,
+  outputWhite = 255,
 ): number {
   const span = Math.max(1, white - black),
     normalized = Math.max(0, Math.min(1, (value - black) / span)),
     corrected = Math.pow(normalized, 1 / Math.max(0.1, gamma));
-  return Math.max(0, Math.min(255, Math.round(corrected * 255)));
+  const outputSpan = Math.max(1, outputWhite - outputBlack);
+  return Math.max(
+    0,
+    Math.min(255, Math.round(outputBlack + corrected * outputSpan)),
+  );
+}
+
+/** Apply input/output Levels to an RGBA buffer without mutating its source. */
+export function applyLevelsPixels(
+  source: Uint8ClampedArray,
+  adjustments: Partial<Adjustments>,
+): Uint8ClampedArray {
+  if (!(source instanceof Uint8ClampedArray) || source.length < 4 || source.length % 4 !== 0)
+    throw new RangeError('Levels data must contain complete RGBA pixels');
+  const a = effectiveAdjustments(adjustments),
+    black = Math.max(0, Math.min(254, a.levelsBlack)),
+    white = Math.max(black + 1, Math.min(255, a.levelsWhite)),
+    gamma = Math.max(0.1, Math.min(3, a.levelsGamma)),
+    outputBlack = Math.max(0, Math.min(254, a.levelsOutputBlack)),
+    outputWhite = Math.max(outputBlack + 1, Math.min(255, a.levelsOutputWhite)),
+    output = new Uint8ClampedArray(source);
+  for (let offset = 0; offset < source.length; offset += 4) {
+    // Preserve hidden RGB bytes exactly. They may be revealed by a later mask.
+    if (source[offset + 3] === 0) continue;
+    output[offset] = levelsChannel(
+      source[offset],
+      black,
+      white,
+      gamma,
+      outputBlack,
+      outputWhite,
+    );
+    output[offset + 1] = levelsChannel(
+      source[offset + 1],
+      black,
+      white,
+      gamma,
+      outputBlack,
+      outputWhite,
+    );
+    output[offset + 2] = levelsChannel(
+      source[offset + 2],
+      black,
+      white,
+      gamma,
+      outputBlack,
+      outputWhite,
+    );
+  }
+  return output;
 }
 
 /** Apply input levels in-place while preserving alpha and source pixels. */
@@ -663,16 +720,20 @@ export function applyLevels(
   const a = effectiveAdjustments(adjustments),
     black = Math.max(0, Math.min(254, a.levelsBlack)),
     white = Math.max(black + 1, Math.min(255, a.levelsWhite)),
-    gamma = Math.max(0.1, Math.min(3, a.levelsGamma));
-  if (black === 0 && white === 255 && gamma === 1) return canvas;
+    gamma = Math.max(0.1, Math.min(3, a.levelsGamma)),
+    outputBlack = Math.max(0, Math.min(254, a.levelsOutputBlack)),
+    outputWhite = Math.max(outputBlack + 1, Math.min(255, a.levelsOutputWhite));
+  if (
+    black === 0 &&
+    white === 255 &&
+    gamma === 1 &&
+    outputBlack === 0 &&
+    outputWhite === 255
+  )
+    return canvas;
   const context = canvas.getContext('2d')!,
-    image = context.getImageData(0, 0, canvas.width, canvas.height),
-    data = image.data;
-  for (let i = 0; i < data.length; i += 4) {
-    data[i] = levelsChannel(data[i], black, white, gamma);
-    data[i + 1] = levelsChannel(data[i + 1], black, white, gamma);
-    data[i + 2] = levelsChannel(data[i + 2], black, white, gamma);
-  }
+    image = context.getImageData(0, 0, canvas.width, canvas.height);
+  image.data.set(applyLevelsPixels(image.data, a));
   context.putImageData(image, 0, 0);
   return canvas;
 }
@@ -837,6 +898,10 @@ export function validAdjustments(v: unknown): v is Adjustments {
     number(v.levelsGamma ?? neutral.levelsGamma, 0.1, 3) &&
     Number(v.levelsWhite ?? neutral.levelsWhite) >
       Number(v.levelsBlack ?? neutral.levelsBlack) &&
+    number(v.levelsOutputBlack ?? neutral.levelsOutputBlack, 0, 254) &&
+    number(v.levelsOutputWhite ?? neutral.levelsOutputWhite, 1, 255) &&
+    Number(v.levelsOutputWhite ?? neutral.levelsOutputWhite) >
+      Number(v.levelsOutputBlack ?? neutral.levelsOutputBlack) &&
     validColorBalance(v.colorBalance ?? neutral.colorBalance) &&
     validSharpenNoise(v.sharpenNoise ?? neutral.sharpenNoise) &&
     validCurves(v.curves ?? neutral.curves) &&
@@ -1601,6 +1666,10 @@ export async function renderFrame(
           neutral.levelsWhite ||
         effectiveAdjustments(layer.adjustments).levelsGamma !==
           neutral.levelsGamma ||
+        effectiveAdjustments(layer.adjustments).levelsOutputBlack !==
+          neutral.levelsOutputBlack ||
+        effectiveAdjustments(layer.adjustments).levelsOutputWhite !==
+          neutral.levelsOutputWhite ||
         !isNeutralColorBalance(
           effectiveAdjustments(layer.adjustments).colorBalance,
         ) ||
@@ -1637,6 +1706,8 @@ export async function renderFrame(
                 levelsBlack: neutral.levelsBlack,
                 levelsWhite: neutral.levelsWhite,
                 levelsGamma: neutral.levelsGamma,
+                levelsOutputBlack: neutral.levelsOutputBlack,
+                levelsOutputWhite: neutral.levelsOutputWhite,
                 colorBalance: { ...neutralColorBalance },
                 sharpenNoise: { ...neutralSharpenNoise },
                 curves: effectiveCurves(undefined),
@@ -1754,6 +1825,8 @@ export async function renderFrame(
         layer.adjustments.levelsBlack !== neutral.levelsBlack ||
         layer.adjustments.levelsWhite !== neutral.levelsWhite ||
         layer.adjustments.levelsGamma !== neutral.levelsGamma ||
+        layer.adjustments.levelsOutputBlack !== neutral.levelsOutputBlack ||
+        layer.adjustments.levelsOutputWhite !== neutral.levelsOutputWhite ||
         !isNeutralColorBalance(
           effectiveAdjustments(layer.adjustments).colorBalance,
         ) ||

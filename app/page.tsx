@@ -1596,6 +1596,8 @@ export default function Home() {
     levelsBlack,
     levelsWhite,
     levelsGamma,
+    levelsOutputBlack,
+    levelsOutputWhite,
     curves,
     colorBalance,
     sharpenNoise,
@@ -2961,7 +2963,11 @@ export default function Home() {
     setBlur = (blur: number) => adjust({ blur }),
     setLevelsBlack = (levelsBlack: number) => adjust({ levelsBlack }),
     setLevelsWhite = (levelsWhite: number) => adjust({ levelsWhite }),
-    setLevelsGamma = (levelsGamma: number) => adjust({ levelsGamma });
+    setLevelsGamma = (levelsGamma: number) => adjust({ levelsGamma }),
+    setLevelsOutputBlack = (levelsOutputBlack: number) =>
+      adjust({ levelsOutputBlack }),
+    setLevelsOutputWhite = (levelsOutputWhite: number) =>
+      adjust({ levelsOutputWhite });
   const setColorBalance = (patch: Partial<Adjustments['colorBalance']>) =>
     adjust({ colorBalance: { ...colorBalance, ...patch } });
   const setCurve = (channel: CurveChannel, points: CurvePoints) =>
@@ -8581,6 +8587,26 @@ export default function Home() {
               max={3}
               step={0.1}
               set={setLevelsGamma}
+              suffix=""
+            />
+            <Slider
+              label="Levels output black"
+              value={levelsOutputBlack}
+              min={0}
+              max={254}
+              set={(value) =>
+                setLevelsOutputBlack(Math.min(value, levelsOutputWhite - 1))
+              }
+              suffix=""
+            />
+            <Slider
+              label="Levels output white"
+              value={levelsOutputWhite}
+              min={1}
+              max={255}
+              set={(value) =>
+                setLevelsOutputWhite(Math.max(value, levelsOutputBlack + 1))
+              }
               suffix=""
             />
             <div className="adjustment-subtitle">Curves (nondestructive)</div>
