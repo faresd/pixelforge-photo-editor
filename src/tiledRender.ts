@@ -12,6 +12,7 @@ import {
   type TileBatch,
   type TilePlan,
   type TileSchedule,
+  TileCache,
 } from './tilePlan.ts';
 
 /**
@@ -49,12 +50,18 @@ export type TiledRenderProgress = {
   tile: Tile;
 };
 
-export type TiledRenderRunOptions = {
+export type TiledRenderRunOptions<T = unknown> = {
   tileSize?: TiledRenderTileSize;
   overlap?: number;
   maxBatchBytes?: number;
   signal?: AbortSignal;
   onProgress?: (progress: TiledRenderProgress) => void;
+  /** Optional byte-bounded cache for repeatable tile work. */
+  cache?: TileCache<T>;
+  /** Override the deterministic key when a caller has a wider cache scope. */
+  cacheKey?: (tile: Tile, context: TiledRenderTileContext) => string;
+  /** Return the retained size of a rendered tile; non-positive values skip caching. */
+  cacheBytes?: (value: T, tile: Tile, context: TiledRenderTileContext) => number;
 };
 
 export type TiledRenderTileContext = {
@@ -79,6 +86,34 @@ function abortError(): Error {
 
 function assertAbort(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw abortError();
+}
+
+function defaultTileCacheKey(request: TiledRenderRequest, tileIndex: number, tile: Tile): string {
+  return [
+    request.width,
+    request.height,
+    request.tileSize,
+    request.overlap,
+    tileIndex,
+    tile.x,
+    tile.y,
+    tile.width,
+    tile.height,
+    tile.readX,
+    tile.readY,
+    tile.readWidth,
+    tile.readHeight,
+  ].join(':');
+}
+
+function inferCacheBytes(value: unknown): number | undefined {
+  if (value instanceof ArrayBuffer) return value.byteLength;
+  if (ArrayBuffer.isView(value)) return value.byteLength;
+  if (record(value)) {
+    if (typeof value.byteLength === 'number') return value.byteLength;
+    if (typeof value.size === 'number') return value.size;
+  }
+  return undefined;
 }
 
 /** Return the only tile sizes supported by the first document-tile slice. */
@@ -174,7 +209,7 @@ export async function runTiledRender<T>(
   width: number,
   height: number,
   renderTile: (tile: Tile, context: TiledRenderTileContext) => T | Promise<T>,
-  options: TiledRenderRunOptions = {},
+  options: TiledRenderRunOptions<T> = {},
 ): Promise<{ plan: TiledRenderPlan; outputs: T[] }> {
   if (typeof renderTile !== 'function') throw new TypeError('A tile renderer callback is required');
   const tiledPlan = createTiledRenderPlan(id, width, height, options);
@@ -192,7 +227,18 @@ export async function runTiledRender<T>(
         batchTileIndex,
         tileIndex,
       };
-      outputs.push(await renderTile(tile, context));
+      const cacheKey = options.cache
+        ? options.cacheKey?.(tile, context) ??
+          defaultTileCacheKey(tiledPlan.request, tileIndex, tile)
+        : undefined;
+      const cached = cacheKey ? options.cache?.get(cacheKey) : undefined;
+      const output = cached === undefined ? await renderTile(tile, context) : cached;
+      if (cached === undefined && cacheKey && options.cache) {
+        const bytes = options.cacheBytes?.(output, tile, context) ?? inferCacheBytes(output);
+        if (bytes !== undefined && Number.isSafeInteger(bytes) && bytes > 0)
+          options.cache.set(cacheKey, output, bytes);
+      }
+      outputs.push(output);
       completed += 1;
       options.onProgress?.({
         id,

@@ -229,6 +229,7 @@ import {
   hitTestPathNode,
   movePathNode,
   validatePath,
+  type PathNode,
   type PathModel,
 } from '../src/paths';
 import { applySmudgeStroke } from '../src/smudge';
@@ -874,7 +875,7 @@ type Gesture = {
     pressure?: number;
     pointerType?: string;
   }>;
-  points?: { x: number; y: number }[];
+  points?: PathNode[];
   lastPressure?: number;
   pointerType?: string;
   moved: boolean;
@@ -4431,7 +4432,30 @@ export default function Home() {
     context.setLineDash(dashed ? [7, 5] : []);
     context.beginPath();
     context.moveTo(transformed[0].x, transformed[0].y);
-    for (const node of transformed.slice(1)) context.lineTo(node.x, node.y);
+    for (const [index, node] of transformed.slice(1).entries()) {
+      const sourcePrevious = path.nodes[index], sourceNode = path.nodes[index + 1];
+      if (sourcePrevious.outHandle || sourceNode.inHandle) {
+        const out = sourcePrevious.outHandle ?? sourcePrevious;
+        const incoming = sourceNode.inHandle ?? sourceNode;
+        const map = (point: { x: number; y: number }) => ({
+          x: matrix[0] * point.x + matrix[2] * point.y + matrix[4],
+          y: matrix[1] * point.x + matrix[3] * point.y + matrix[5],
+        });
+        const mappedOut = map(out), mappedIncoming = map(incoming);
+        context.bezierCurveTo(mappedOut.x, mappedOut.y, mappedIncoming.x, mappedIncoming.y, node.x, node.y);
+      } else context.lineTo(node.x, node.y);
+    }
+    if (path.closed && path.nodes.length > 1) {
+      const sourcePrevious = path.nodes[path.nodes.length - 1], sourceNode = path.nodes[0];
+      if (sourcePrevious.outHandle || sourceNode.inHandle) {
+        const map = (point: { x: number; y: number }) => ({
+          x: matrix[0] * point.x + matrix[2] * point.y + matrix[4],
+          y: matrix[1] * point.x + matrix[3] * point.y + matrix[5],
+        });
+        const mappedOut = map(sourcePrevious.outHandle ?? sourcePrevious), mappedIncoming = map(sourceNode.inHandle ?? sourceNode);
+        context.bezierCurveTo(mappedOut.x, mappedOut.y, mappedIncoming.x, mappedIncoming.y, transformed[0].x, transformed[0].y);
+      }
+    }
     if (path.closed) context.closePath();
     context.stroke();
     if (path.closed && path.fill) context.fill();
@@ -4542,7 +4566,12 @@ export default function Home() {
         points.length >= 3 &&
         Math.hypot(p.x - first.x, p.y - first.y) <= 14
       ) {
-        const nodes = points.map((node) => ({ x: node.x, y: node.y }));
+        const nodes = points.map((node) => ({
+          x: node.x,
+          y: node.y,
+          ...(node.inHandle ? { inHandle: { ...node.inHandle } } : {}),
+          ...(node.outHandle ? { outHandle: { ...node.outHandle } } : {}),
+        }));
         gesture.current = null;
         const path: PathModel = {
           nodes,
@@ -5913,6 +5942,20 @@ export default function Home() {
       g.moved = true;
       g.last = p;
       setMeasurementPreview({ start: g.start, end: p });
+      return;
+    }
+    // Holding Shift while dragging a Pen point creates an outgoing cubic
+    // handle. Alt mirrors the handle to the incoming side, matching the
+    // familiar Photoshop tangent workflow while keeping click-only paths
+    // perfectly backward compatible.
+    if (g.tool === 'pen' && (e.shiftKey || e.altKey) && g.points?.length) {
+      const node = g.points[g.points.length - 1];
+      node.outHandle = { x: p.x, y: p.y };
+      if (e.altKey)
+        node.inHandle = { x: node.x * 2 - p.x, y: node.y * 2 - p.y };
+      g.moved = true;
+      g.last = p;
+      previewPenPath(g);
       return;
     }
     if (

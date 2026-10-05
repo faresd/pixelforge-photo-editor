@@ -1,13 +1,18 @@
 /**
- * Bounded straight-segment Pen path model.
+ * Bounded editable Pen path model.
  *
- * Paths stay editable metadata: node coordinates are local to their layer,
- * and rendering is responsible for applying the layer affine matrix. This
- * first slice intentionally has corner nodes only; Bézier handles and
- * boolean path operations remain separate contracts.
+ * A node can carry optional cubic Bezier handles. Handles are stored in the
+ * same local coordinate system as the anchor, so transforms and direct node
+ * edits remain nondestructive and round-trip through the document format.
  */
 
-export type PathNode = { x: number; y: number };
+export type PathNode = {
+  x: number;
+  y: number;
+  /** Incoming/outgoing cubic controls, when the node is curved. */
+  inHandle?: { x: number; y: number };
+  outHandle?: { x: number; y: number };
+};
 
 export type PathModel = {
   nodes: PathNode[];
@@ -30,15 +35,31 @@ const finite = (value: unknown): value is number =>
 const validColor = (value: unknown): value is string =>
   typeof value === 'string' && /^#[0-9a-f]{6,8}$/i.test(value);
 
-const cloneNode = (node: PathNode): PathNode => ({ x: node.x, y: node.y });
+const clonePoint = (point: { x: number; y: number }) => ({ x: point.x, y: point.y });
 
-const validateNode = (node: unknown): node is PathNode =>
-  Boolean(node) &&
-  typeof node === 'object' &&
-  finite((node as PathNode).x) &&
-  finite((node as PathNode).y) &&
-  Math.abs((node as PathNode).x) <= PATH_MAX_COORDINATE &&
-  Math.abs((node as PathNode).y) <= PATH_MAX_COORDINATE;
+const validPoint = (point: unknown): point is { x: number; y: number } =>
+  Boolean(point) &&
+  typeof point === 'object' &&
+  finite((point as { x?: unknown }).x) &&
+  finite((point as { y?: unknown }).y) &&
+  Math.abs((point as { x: number }).x) <= PATH_MAX_COORDINATE &&
+  Math.abs((point as { y: number }).y) <= PATH_MAX_COORDINATE;
+
+const cloneNode = (node: PathNode): PathNode => ({
+  x: node.x,
+  y: node.y,
+  ...(node.inHandle ? { inHandle: clonePoint(node.inHandle) } : {}),
+  ...(node.outHandle ? { outHandle: clonePoint(node.outHandle) } : {}),
+});
+
+const validateNode = (node: unknown): node is PathNode => {
+  if (!validPoint(node)) return false;
+  const candidate = node as PathNode;
+  return (
+    (candidate.inHandle === undefined || validPoint(candidate.inHandle)) &&
+    (candidate.outHandle === undefined || validPoint(candidate.outHandle))
+  );
+};
 
 /** Return a cloned, validated model or throw a user-visible contract error. */
 export function validatePath(value: unknown): PathModel {
@@ -70,20 +91,88 @@ export function clonePath(path: PathModel): PathModel {
   return validatePath(path);
 }
 
+type Segment = { start: PathNode; end: PathNode; close: boolean };
+
+const segments = (path: PathModel): Segment[] => {
+  const result: Segment[] = [];
+  for (let i = 1; i < path.nodes.length; i += 1)
+    result.push({ start: path.nodes[i - 1], end: path.nodes[i], close: false });
+  if (path.closed && path.nodes.length > 1)
+    result.push({ start: path.nodes[path.nodes.length - 1], end: path.nodes[0], close: true });
+  return result;
+};
+
+const controlPoints = (segment: Segment): [PathNode, PathNode, PathNode, PathNode] => [
+  segment.start,
+  segment.start.outHandle ?? segment.start,
+  segment.end.inHandle ?? segment.end,
+  segment.end,
+];
+
+const cubic = (p0: PathNode, p1: PathNode, p2: PathNode, p3: PathNode, t: number): PathNode => {
+  const u = 1 - t;
+  return {
+    x: u * u * u * p0.x + 3 * u * u * t * p1.x + 3 * u * t * t * p2.x + t * t * t * p3.x,
+    y: u * u * u * p0.y + 3 * u * u * t * p1.y + 3 * u * t * t * p2.y + t * t * t * p3.y,
+  };
+};
+
+const extrema = (p0: number, p1: number, p2: number, p3: number): number[] => {
+  const values = [0, 1];
+  const a = -p0 + 3 * p1 - 3 * p2 + p3;
+  const b = 2 * (p0 - 2 * p1 + p2);
+  const c = p1 - p0;
+  if (Math.abs(a) < 1e-12) {
+    if (Math.abs(b) > 1e-12) {
+      const t = -c / b;
+      if (t > 0 && t < 1) values.push(t);
+    }
+  } else {
+    const discriminant = b * b - 4 * a * c;
+    if (discriminant >= 0) {
+      const root = Math.sqrt(discriminant);
+      const t1 = (-b + root) / (2 * a), t2 = (-b - root) / (2 * a);
+      if (t1 > 0 && t1 < 1) values.push(t1);
+      if (t2 > 0 && t2 < 1) values.push(t2);
+    }
+  }
+  return values;
+};
+
+/** Bounds include cubic extrema, rather than only anchors or control points. */
 export function pathBounds(path: PathModel): { left: number; top: number; right: number; bottom: number; width: number; height: number } {
   const valid = validatePath(path);
   if (!valid.nodes.length) return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
-  const xs = valid.nodes.map((node) => node.x), ys = valid.nodes.map((node) => node.y);
+  const points: PathNode[] = [];
+  for (const segment of segments(valid)) {
+    const [p0, p1, p2, p3] = controlPoints(segment);
+    const ts = [...new Set([...extrema(p0.x, p1.x, p2.x, p3.x), ...extrema(p0.y, p1.y, p2.y, p3.y)])];
+    points.push(...ts.map((t) => cubic(p0, p1, p2, p3, t)));
+  }
+  if (!points.length) points.push(...valid.nodes);
+  const xs = points.map((point) => point.x), ys = points.map((point) => point.y);
   const left = Math.min(...xs), right = Math.max(...xs), top = Math.min(...ys), bottom = Math.max(...ys);
   return { left, top, right, bottom, width: right - left, height: bottom - top };
 }
 
+/** Move an anchor and its handles together, preserving the local curve shape. */
 export function movePathNode(path: PathModel, index: number, x: number, y: number): PathModel {
   const valid = validatePath(path);
   if (!Number.isInteger(index) || index < 0 || index >= valid.nodes.length)
     throw new Error('Path node index is invalid');
-  const next = { ...valid, nodes: valid.nodes.map(cloneNode) };
-  next.nodes[index] = { x, y };
+  if (!finite(x) || !finite(y)) throw new Error('Path nodes are invalid');
+  const node = valid.nodes[index];
+  const dx = x - node.x, dy = y - node.y;
+  const moved = (point?: { x: number; y: number }) =>
+    point ? { x: point.x + dx, y: point.y + dy } : undefined;
+  const next = {
+    ...valid,
+    nodes: valid.nodes.map((item, itemIndex) =>
+      itemIndex === index
+        ? { x, y, inHandle: moved(item.inHandle), outHandle: moved(item.outHandle) }
+        : cloneNode(item),
+    ),
+  };
   return validatePath(next);
 }
 
@@ -91,10 +180,15 @@ export function transformPath(path: PathModel, matrix: PathMatrix): PathModel {
   const valid = validatePath(path);
   if (matrix.length !== 6 || !matrix.every(finite)) throw new Error('Path matrix is invalid');
   const [a, b, c, d, e, f] = matrix;
-  return validatePath({
-    ...valid,
-    nodes: valid.nodes.map(({ x, y }) => ({ x: a * x + c * y + e, y: b * x + d * y + f })),
+  const transform = (point: { x: number; y: number }) => ({
+    x: a * point.x + c * point.y + e,
+    y: b * point.x + d * point.y + f,
   });
+  return validatePath({ ...valid, nodes: valid.nodes.map((node) => ({
+    ...transform(node),
+    ...(node.inHandle ? { inHandle: transform(node.inHandle) } : {}),
+    ...(node.outHandle ? { outHandle: transform(node.outHandle) } : {}),
+  })) });
 }
 
 const segmentDistance = (point: PathNode, start: PathNode, end: PathNode): number => {
@@ -116,14 +210,21 @@ export function hitTestPathNode(path: PathModel, point: PathNode, radius: number
   return match;
 }
 
-/** Return whether a point lies on a path stroke within the supplied tolerance. */
+/** Return whether a point lies on a straight or cubic path stroke. */
 export function hitTestPathStroke(path: PathModel, point: PathNode, tolerance: number): boolean {
   const valid = validatePath(path);
   if (!finite(point.x) || !finite(point.y) || !finite(tolerance) || tolerance < 0)
     throw new Error('Path hit-test input is invalid');
-  for (let i = 1; i < valid.nodes.length; i += 1)
-    if (segmentDistance(point, valid.nodes[i - 1], valid.nodes[i]) <= tolerance) return true;
-  return Boolean(valid.closed && valid.nodes.length > 1 && segmentDistance(point, valid.nodes.at(-1)!, valid.nodes[0]) <= tolerance);
+  for (const segment of segments(valid)) {
+    const [p0, p1, p2, p3] = controlPoints(segment);
+    let previous = p0;
+    for (let step = 1; step <= 32; step += 1) {
+      const next = cubic(p0, p1, p2, p3, step / 32);
+      if (segmentDistance(point, previous, next) <= tolerance) return true;
+      previous = next;
+    }
+  }
+  return false;
 }
 
 /** Stable SVG path data used for export/tests, with no locale-sensitive formatting. */
@@ -131,9 +232,18 @@ export function serializePathData(path: PathModel): string {
   const valid = validatePath(path);
   if (!valid.nodes.length) return '';
   const number = (value: number) => Number(value.toFixed(4)).toString();
-  const first = valid.nodes[0];
-  const commands = [`M ${number(first.x)} ${number(first.y)}`];
-  for (const node of valid.nodes.slice(1)) commands.push(`L ${number(node.x)} ${number(node.y)}`);
-  if (valid.closed) commands.push('Z');
+  const point = (value: PathNode) => `${number(value.x)} ${number(value.y)}`;
+  const commands = [`M ${point(valid.nodes[0])}`];
+  for (const segment of segments(valid)) {
+    const [p0, p1, p2, p3] = controlPoints(segment);
+    if (segment.close && !segment.start.outHandle && !segment.end.inHandle) {
+      commands.push('Z');
+      continue;
+    }
+    if (p1 !== p0 || p2 !== p3 || segment.start.outHandle || segment.end.inHandle)
+      commands.push(`C ${point(p1)} ${point(p2)} ${point(p3)}`);
+    else commands.push(`L ${point(p3)}`);
+    if (segment.close) commands.push('Z');
+  }
   return commands.join(' ');
 }

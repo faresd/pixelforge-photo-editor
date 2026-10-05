@@ -1990,7 +1990,21 @@ export async function renderFrame(
       const [first, ...rest] = layer.path.nodes;
       if (first) {
         context.moveTo(first.x, first.y);
-        for (const node of rest) context.lineTo(node.x, node.y);
+        for (const [index, node] of rest.entries()) {
+          const previous = layer.path.nodes[index];
+          if (previous.outHandle || node.inHandle) {
+            const out = previous.outHandle ?? previous;
+            const incoming = node.inHandle ?? node;
+            context.bezierCurveTo(out.x, out.y, incoming.x, incoming.y, node.x, node.y);
+          } else context.lineTo(node.x, node.y);
+        }
+        if (layer.path.closed && layer.path.nodes.length > 1) {
+          const previous = layer.path.nodes[layer.path.nodes.length - 1];
+          const out = previous.outHandle ?? previous;
+          const incoming = first.inHandle ?? first;
+          if (previous.outHandle || first.inHandle)
+            context.bezierCurveTo(out.x, out.y, incoming.x, incoming.y, first.x, first.y);
+        }
         if (layer.path.closed) context.closePath();
         if (layer.path.fill && layer.path.closed) {
           context.fillStyle = layer.path.fillColor;

@@ -56,6 +56,26 @@ export type TileSchedule = {
   tileCount: number;
 };
 
+/**
+ * Observable counters for a bounded tile cache.
+ *
+ * The counters are intentionally cumulative for the lifetime of the cache;
+ * `bytes` and `size` are the current state while the other fields describe
+ * the amount of work that led to it.  This gives worker adapters enough
+ * information to compare cache policies without exposing the cached values.
+ */
+export type TileCacheStats = {
+  bytes: number;
+  size: number;
+  maxBytes: number;
+  peakBytes: number;
+  hits: number;
+  misses: number;
+  evictions: number;
+  evictedBytes: number;
+  rejected: number;
+};
+
 const integer = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value);
 
@@ -293,6 +313,12 @@ export function writeTile(
 export class TileCache<T> {
   private readonly entries = new Map<string, { value: T; bytes: number }>();
   private usedBytes = 0;
+  private peakUsedBytes = 0;
+  private hitCount = 0;
+  private missCount = 0;
+  private evictionCount = 0;
+  private evictedByteCount = 0;
+  private rejectedCount = 0;
   readonly maxBytes: number;
 
   constructor(maxBytes: number) {
@@ -309,29 +335,63 @@ export class TileCache<T> {
     return this.entries.size;
   }
 
+  /** Return a snapshot suitable for local performance diagnostics. */
+  get stats(): TileCacheStats {
+    return {
+      bytes: this.usedBytes,
+      size: this.entries.size,
+      maxBytes: this.maxBytes,
+      peakBytes: this.peakUsedBytes,
+      hits: this.hitCount,
+      misses: this.missCount,
+      evictions: this.evictionCount,
+      evictedBytes: this.evictedByteCount,
+      rejected: this.rejectedCount,
+    };
+  }
+
   get(key: string): T | undefined {
     const entry = this.entries.get(key);
-    if (!entry) return undefined;
+    if (!entry) {
+      this.missCount += 1;
+      return undefined;
+    }
+    this.hitCount += 1;
     this.entries.delete(key);
     this.entries.set(key, entry);
     return entry.value;
   }
 
   set(key: string, value: T, bytes: number): boolean {
-    if (!key || !Number.isSafeInteger(bytes) || bytes < 1) return false;
-    if (bytes > this.maxBytes) return false;
+    if (!key || !Number.isSafeInteger(bytes) || bytes < 1 || bytes > this.maxBytes) {
+      this.rejectedCount += 1;
+      return false;
+    }
     const previous = this.entries.get(key);
     if (previous) this.usedBytes -= previous.bytes;
     this.entries.delete(key);
     this.entries.set(key, { value, bytes });
     this.usedBytes += bytes;
+    this.peakUsedBytes = Math.max(this.peakUsedBytes, this.usedBytes);
     while (this.usedBytes > this.maxBytes) {
       const oldest = this.entries.keys().next().value as string | undefined;
       if (oldest === undefined) break;
-      this.usedBytes -= this.entries.get(oldest)!.bytes;
+      const evicted = this.entries.get(oldest)!;
+      this.usedBytes -= evicted.bytes;
       this.entries.delete(oldest);
+      this.evictionCount += 1;
+      this.evictedByteCount += evicted.bytes;
     }
     return this.entries.has(key);
+  }
+
+  /** Remove one cached tile and release its accounting immediately. */
+  delete(key: string): boolean {
+    const entry = this.entries.get(key);
+    if (!entry) return false;
+    this.entries.delete(key);
+    this.usedBytes -= entry.bytes;
+    return true;
   }
 
   clear(): void {

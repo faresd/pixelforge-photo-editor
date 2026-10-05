@@ -80,3 +80,68 @@ test('serializing the same path twice is byte deterministic', () => {
   const path = validatePath(triangle({ nodes: [{ x: 1.123456, y: 2.345678 }, { x: 8, y: 2 }, { x: 4, y: 7 }] }));
   assert.equal(serializePathData(path), serializePathData(clonePath(path)));
 });
+
+test('cubic handles validate, serialize and round-trip without changing legacy nodes', () => {
+  const curved = validatePath(triangle({
+    nodes: [
+      { x: 0, y: 0, outHandle: { x: 0, y: 100 } },
+      { x: 100, y: 100, inHandle: { x: 100, y: 0 } },
+    ],
+    closed: false,
+  }));
+  assert.deepEqual(clonePath(curved), curved);
+  assert.equal(serializePathData(curved), 'M 0 0 C 0 100 100 0 100 100');
+  assert.throws(() => validatePath(triangle({ nodes: [{ x: 0, y: 0, inHandle: { x: Infinity, y: 0 } }] })), /nodes/);
+  assert.throws(() => validatePath(triangle({ nodes: [{ x: 0, y: 0, outHandle: { x: 1e9, y: 0 } }] })), /nodes/);
+});
+
+test('cubic extrema and stroke hit testing follow curve geometry', () => {
+  const curved = validatePath({
+    nodes: [
+      { x: 0, y: 0, outHandle: { x: 0, y: 100 } },
+      { x: 100, y: 100, inHandle: { x: 100, y: 0 } },
+    ],
+    closed: false,
+    fill: false,
+    stroke: true,
+    strokeWidth: 2,
+    fillColor: '#ff0000',
+    strokeColor: '#000000',
+  });
+  const bounds = pathBounds(curved);
+  assert.equal(bounds.left, 0);
+  assert.equal(bounds.right, 100);
+  assert.equal(bounds.top, 0);
+  assert.equal(bounds.bottom, 100);
+  assert.equal(hitTestPathStroke(curved, { x: 50, y: 50 }, 2), true);
+  assert.equal(hitTestPathStroke(curved, { x: 50, y: 5 }, 2), false);
+});
+
+test('moving and transforming a cubic anchor carries its handles', () => {
+  const curved = validatePath({
+    nodes: [
+      { x: 10, y: 20, inHandle: { x: 5, y: 20 }, outHandle: { x: 15, y: 20 } },
+      { x: 50, y: 20 },
+    ],
+    closed: false,
+    fill: false,
+    stroke: true,
+    strokeWidth: 2,
+    fillColor: '#ff0000',
+    strokeColor: '#000000',
+  });
+  const moved = movePathNode(curved, 0, 20, 35);
+  assert.deepEqual(moved.nodes[0], {
+    x: 20,
+    y: 35,
+    inHandle: { x: 15, y: 35 },
+    outHandle: { x: 25, y: 35 },
+  });
+  const transformed = transformPath(moved, [2, 0, 0, 2, 1, -1]);
+  assert.deepEqual(transformed.nodes[0], {
+    x: 41,
+    y: 69,
+    inHandle: { x: 31, y: 69 },
+    outHandle: { x: 51, y: 69 },
+  });
+});

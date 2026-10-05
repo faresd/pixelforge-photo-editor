@@ -8,6 +8,7 @@ import {
   runTiledRender,
   validateTiledRenderRequest,
 } from '../src/tiledRender.ts';
+import { TileCache } from '../src/tilePlan.ts';
 
 test('tiled render plans use deterministic 256/512 tiles and bounded overlap', () => {
   assert.deepEqual(TILED_RENDER_TILE_SIZES, [256, 512]);
@@ -88,6 +89,35 @@ test('tiled render runner checks cancellation before scheduling the next tile', 
   );
   assert.equal(calls, 1);
   assert.deepEqual(progress, [1]);
+});
+
+test('tiled render runner can reuse a byte-bounded cache without changing progress', async () => {
+  const tileBytes = 256 * 256 * 4;
+  const cache = new TileCache(tileBytes * 2);
+  let calls = 0;
+  const options = {
+    tileSize: 256,
+    cache,
+    cacheBytes: (value) => value.byteLength,
+  };
+  const first = await runTiledRender(19, 512, 256, (tile) => {
+    calls += 1;
+    return new Uint8ClampedArray(tile.width * tile.height * 4);
+  }, options);
+  assert.equal(calls, 2);
+  assert.equal(first.outputs.length, 2);
+
+  const second = await runTiledRender(19, 512, 256, () => {
+    calls += 1;
+    return new Uint8ClampedArray(1);
+  }, options);
+  assert.equal(calls, 2);
+  assert.equal(second.outputs.length, 2);
+  assert.equal(cache.stats.hits, 2);
+  assert.equal(cache.stats.evictions, 0);
+  cache.set('overflow-a', new Uint8ClampedArray(1), tileBytes);
+  cache.set('overflow-b', new Uint8ClampedArray(1), tileBytes);
+  assert.ok(cache.stats.evictions >= 2);
 });
 
 test('tiled render runner rejects missing callbacks before allocating work', async () => {

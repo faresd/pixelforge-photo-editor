@@ -4,7 +4,12 @@ import { test, expect, type Page } from '@playwright/test';
 type PathLayer = {
   kind: 'path';
   path: {
-    nodes: Array<{ x: number; y: number }>;
+    nodes: Array<{
+      x: number;
+      y: number;
+      inHandle?: { x: number; y: number };
+      outHandle?: { x: number; y: number };
+    }>;
     closed: boolean;
     fill: boolean;
     stroke: boolean;
@@ -78,6 +83,30 @@ test('Pen P creates a filled editable path and round-trips through reload and pr
   const reloaded = activePath(await project(page));
   expect(reloaded.path).toEqual(path.path);
   expect(reloaded.matrix).toEqual(path.matrix);
+});
+
+test('Pen Shift and Alt drags persist cubic handles and render the curve', async ({ page }) => {
+  await selectTool(page, 'Pen');
+  const first = await canvasPoint(page, 0.2, 0.25);
+  await page.mouse.click(first.x, first.y);
+  const second = await canvasPoint(page, 0.78, 0.25);
+  await page.keyboard.down('Shift');
+  await page.mouse.move(second.x, second.y);
+  await page.mouse.down();
+  await page.mouse.move(second.x, (await canvasPoint(page, 0.78, 0.45)).y, { steps: 3 });
+  await page.keyboard.down('Alt');
+  await page.mouse.move((await canvasPoint(page, 0.68, 0.32)).x, (await canvasPoint(page, 0.68, 0.32)).y, { steps: 2 });
+  await page.mouse.up();
+  await page.keyboard.up('Alt');
+  await page.keyboard.up('Shift');
+  await clickCanvas(page, 0.5, 0.75);
+  await clickCanvas(page, 0.2, 0.25);
+  await expect(page.locator('footer')).toContainText('Editable path layer added', { timeout: 10000 });
+  const path = activePath(await project(page));
+  expect(path.path.nodes.some((node) => node.outHandle)).toBe(true);
+  expect(path.path.nodes.some((node) => node.inHandle)).toBe(true);
+  await page.reload();
+  expect(activePath(await project(page)).path).toEqual(path.path);
 });
 
 test('Path Closed, Fill and Stroke controls change pixels and survive undo, redo and reload', async ({ page }) => {

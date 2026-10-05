@@ -1,16 +1,20 @@
 # Pen and Path layer contract
 
-PixelForge's first Pen milestone stores straight segments as an editable `path`
-layer. A path contains local-coordinate corner nodes, a `closed` flag, and
-independent fill/stroke appearance metadata. The layer affine matrix remains
+PixelForge stores editable `path` layers. Each local-coordinate anchor can
+optionally carry incoming and outgoing cubic Bézier handles, a `closed` flag,
+and independent fill/stroke appearance metadata. Existing straight-segment
+paths omit handles and remain byte-compatible. The layer affine matrix remains
 separate from the nodes, so moving, scaling, rotating, and flipping the layer
 does not bake geometry into pixels.
 
-The Pen (`P`) places one node per click. Clicking the first node after at least
-three nodes closes and commits a path layer. Escape or a pointer cancel clears
-an in-progress path without changing document history. Closed paths render a
-filled interior and optional rounded stroke; open paths render their segments
-as a stroke.
+The Pen (`P`) places one node per click. Holding **Shift** while dragging a
+point creates an outgoing cubic handle; holding **Alt** mirrors it to the
+incoming side. Clicking the first node after at least three nodes closes and
+commits a path layer. Escape or a pointer cancel clears an in-progress path
+without changing document history. Closed paths render a filled interior and
+optional rounded stroke; open paths render their segments as a stroke. Cubic
+extrema are included in bounds, hit-testing samples curve segments, and SVG
+serialization emits deterministic `C` commands.
 
 Direct Selection (`A`) selects a node on the active visible, unlocked path and
 drags it in local coordinates through the layer matrix. A drag commits one
