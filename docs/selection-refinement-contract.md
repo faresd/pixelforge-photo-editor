@@ -23,7 +23,8 @@ The asynchronous renderer captures the history index and frame identity and
 abandons a stale result before adding an asset or committing a new frame.
 The current contract intentionally does not claim Photoshop's circular-kernel
 or edge-aware Select and Mask algorithms. Smooth, Feather, Similar, Color Range
-and semantic Subject/Sky selection remain separate roadmap items.
+and semantic Subject/Sky selection remain separate roadmap items. Similar is
+documented in [`similar-selection-contract.md`](./similar-selection-contract.md).
 
 ## Required evidence
 
