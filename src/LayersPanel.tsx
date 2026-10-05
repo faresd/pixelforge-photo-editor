@@ -12,7 +12,7 @@ import {
 import type { ParametricShapeVariant } from './vectorShapes';
 import type { AlignmentMode, DistributionAxis } from './layerAlignment';
 import { effectiveLayerStyles, type LayerStyles } from './layerStyles';
-import { filterLayersBySearch } from './layerSearch';
+import { filterLayersBySearch, groupMatchesSearch } from './layerSearch';
 
 type Props = {
   frame: Frame;
@@ -77,11 +77,16 @@ export default function LayersPanel({
   const layer = frame.layers.find((item) => item.id === frame.active)!;
   const groups = frame.groups || [];
   const groupById = new Map(groups.map((group) => [group.id, group]));
+  const hasSearchQuery = searchQuery.trim().length > 0;
   const filteredLayers = filterLayersBySearch(frame.layers, groups, searchQuery);
   const visibleLayerIds = new Set(filteredLayers.map((item) => item.id));
   const matchingGroupIds = new Set(
-    filteredLayers.flatMap((item) => (item.groupId ? [item.groupId] : [])),
+    (hasSearchQuery ? filteredLayers : frame.layers).flatMap((item) =>
+      item.groupId ? [item.groupId] : [],
+    ),
   );
+  for (const group of groups)
+    if (groupMatchesSearch(group, searchQuery)) matchingGroupIds.add(group.id);
   const activeGroup = layer.groupId ? groupById.get(layer.groupId) : undefined;
   const layerLocked = layer.locked || Boolean(activeGroup?.locked);
   const selectedIds = new Set(
@@ -117,7 +122,7 @@ export default function LayersPanel({
       );
       renderedGroups.add(group.id);
     }
-    if (!group || !group.collapsed) {
+    if (!group || !group.collapsed || hasSearchQuery) {
       rows.push(
         <button
           key={item.id}
@@ -165,7 +170,7 @@ export default function LayersPanel({
   }
   for (const group of groups) {
     if (renderedGroups.has(group.id)) continue;
-    if (!matchingGroupIds.has(group.id)) continue;
+    if (hasSearchQuery && !matchingGroupIds.has(group.id)) continue;
     rows.unshift(
       <GroupRow
         key={'group-' + group.id}

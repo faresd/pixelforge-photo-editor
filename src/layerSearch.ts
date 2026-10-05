@@ -14,6 +14,13 @@ function tokens(value: string): string[] {
   return value.split(/\s+/u).filter(Boolean);
 }
 
+const STATE_TOKENS = new Set(['visible', 'hidden', 'locked', 'unlocked']);
+
+function groupNameMatches(group: Group, query: string): boolean {
+  const haystack = group.name.toLocaleLowerCase();
+  return tokens(query).every((token) => haystack.includes(token));
+}
+
 /** Return a stable, human-readable metadata index for a layer. */
 export function layerSearchText(
   layer: Layer,
@@ -45,7 +52,21 @@ export function layerMatchesSearch(
   const normalized = normalizeLayerSearchQuery(query);
   if (!normalized) return true;
   const haystack = layerSearchText(layer, group);
-  return tokens(normalized).every((token) => haystack.includes(token));
+  const visible = layer.visible && group?.visible !== false;
+  const locked = layer.locked || group?.locked === true;
+  return tokens(normalized).every((token) => {
+    if (!STATE_TOKENS.has(token)) return haystack.includes(token);
+    if (token === 'visible') return visible;
+    if (token === 'hidden') return !visible;
+    if (token === 'locked') return locked;
+    return !locked;
+  });
+}
+
+/** Match a group row itself, including an empty group with no child metadata. */
+export function groupMatchesSearch(group: Group, query: unknown): boolean {
+  const normalized = normalizeLayerSearchQuery(query);
+  return !normalized || groupNameMatches(group, normalized);
 }
 
 /** Filter layers without mutating the frame or changing stack order. */

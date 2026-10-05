@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   filterLayersBySearch,
+  groupMatchesSearch,
   layerMatchesSearch,
   layerSearchText,
   normalizeLayerSearchQuery,
@@ -25,6 +26,9 @@ test('layer search indexes names, kinds, groups and visibility/lock state', () =
   assert.equal(layerMatchesSearch(layers[1], groups[0], 'hidden text'), true);
   assert.equal(layerMatchesSearch(layers[1], groups[0], 'visible'), false);
   assert.equal(layerMatchesSearch(layers[2], groups[0], 'brand star'), true);
+  assert.equal(layerMatchesSearch(layers[2], groups[0], 'unlocked'), true);
+  assert.equal(layerMatchesSearch(layers[2], groups[0], 'locked'), false);
+  assert.equal(groupMatchesSearch(groups[0], 'brand'), true);
 });
 
 test('filtering matches all tokens, preserves stack order and never mutates inputs', () => {

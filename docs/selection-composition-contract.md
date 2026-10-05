@@ -14,6 +14,7 @@ never mutates source pixels or the previous selection. The composed mask is
 stored as a local document asset so undo, reload and project export retain the
 exact alpha values. No inference provider or upload is involved. Pure tests
 cover each operation, detached buffers, no-op detection and malformed input;
-the protected desktop/mobile Color Range acceptance test verifies that an
-intersecting raster selection remains partial rather than replacing the active
-geometric selection.
+the protected desktop/mobile Color Range acceptance tests verify both
+geometric-to-raster intersection and raster-to-geometric subtraction with soft
+alpha. Async raster selection work captures its frame/index/asset snapshot and
+publishes only while that frame remains current.

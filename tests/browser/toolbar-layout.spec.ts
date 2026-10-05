@@ -80,6 +80,35 @@ test('wide editor palette expands to three columns without losing focus targets'
   ).toHaveAttribute('title', /press and hold/i);
 });
 
+test('family tools show Photoshop-style submenu arrows while singleton tools stay clean', async ({
+  page,
+}) => {
+  await openEditor(page);
+
+  for (const label of [
+    'Select tool',
+    'Lasso tool',
+    'Crop tool',
+    'Brush tool',
+    'Clone tool',
+  ]) {
+    const button = page.getByRole('button', { name: label, exact: true });
+    await expect(button.locator('.tool-subtool-arrow')).toHaveCount(1);
+    await expect(button.locator('.tool-subtool-arrow')).toHaveAttribute(
+      'aria-hidden',
+      'true',
+    );
+  }
+
+  for (const label of ['Move tool', 'Text tool', 'Pen tool']) {
+    await expect(
+      page.getByRole('button', { name: label, exact: true }).locator(
+        '.tool-subtool-arrow',
+      ),
+    ).toHaveCount(0);
+  }
+});
+
 test('short keyboard activation selects while directional keys and context menu open one anchored flyout', async ({
   page,
 }) => {

@@ -1540,6 +1540,9 @@ export default function Home() {
     (RectangularCropPlan & { frame: Frame }) | null
   >(null);
   const cropPreviewId = useRef(0);
+  // Invalidates overlapping asynchronous selection renders even when the
+  // document frame itself has not changed yet.
+  const selectionWorkToken = useRef(0);
   const [cropApplying, setCropApplying] = useState(false);
   /** Perspective crop is staged and applied as a reversible composite raster. */
   const [perspectiveCropPreview, setPerspectiveCropPreview] = useState<
@@ -2484,24 +2487,26 @@ export default function Home() {
     }
     return false;
   };
-  /**
-   * Merge a canvas-sized alpha selection with the active selection. Geometry
-   * already composes as editable parts; raster selections (Color Range and
-   * Magic Wand) need the same operation semantics after their pixels are
-   * resolved. The result is persisted as a new mask asset so undo and draft
-   * reloads never mutate either source mask.
-   */
-  const mergeMaskSelection = async (
+  type SelectionCandidate = {
+    selection: Selection;
+    /** A detached canvas to persist only after the starting frame is current. */
+    mask?: HTMLCanvasElement;
+  };
+  /** Resolve a raster selection candidate without mutating assets or history. */
+  const composeSelectionCandidate = async (
     frame: Frame,
     next: Selection,
     incoming: HTMLCanvasElement,
-  ): Promise<Selection> => {
-    if (!frame.selection || selectionOperation === 'replace') return next;
+    operation: SelectionOperation,
+    sourceAssets: Assets,
+  ): Promise<SelectionCandidate> => {
+    if (!frame.selection || operation === 'replace')
+      return { selection: next, mask: incoming };
     const existing = await renderSelection(
         frame.selection,
         frame.w,
         frame.h,
-        assets.current,
+        sourceAssets,
       ),
       existingPixels = existing.getContext('2d')!.getImageData(0, 0, frame.w, frame.h).data,
       incomingPixels = incoming.getContext('2d')!.getImageData(0, 0, frame.w, frame.h).data,
@@ -2511,11 +2516,7 @@ export default function Home() {
       existingAlpha[index] = existingPixels[index * 4 + 3];
       incomingAlpha[index] = incomingPixels[index * 4 + 3];
     }
-    const composed = composeSelectionAlpha(
-        existingAlpha,
-        incomingAlpha,
-        selectionOperation,
-      ),
+    const composed = composeSelectionAlpha(existingAlpha, incomingAlpha, operation),
       merged = surface(frame.w, frame.h),
       image = merged.getContext('2d')!.createImageData(frame.w, frame.h);
     for (let index = 0; index < composed.mask.length; index += 1) {
@@ -2526,7 +2527,32 @@ export default function Home() {
       image.data[offset + 3] = composed.mask[index];
     }
     merged.getContext('2d')!.putImageData(image, 0, 0);
-    return { ...next, mask: addAsset(assets.current, merged) };
+    return { selection: { ...next, mask: undefined }, mask: merged };
+  };
+  const isCurrentSelectionOperation = (
+    frame: Frame,
+    frameIndex: number,
+    workToken: number,
+  ) =>
+    selectionWorkToken.current === workToken &&
+    index.current === frameIndex &&
+    current() === frame;
+  /** Publish a raster selection only after all asynchronous work is current. */
+  const publishSelectionCandidate = (
+    frame: Frame,
+    frameIndex: number,
+    workToken: number,
+    candidate: SelectionCandidate,
+    notice: string,
+  ) => {
+    if (!isCurrentSelectionOperation(frame, frameIndex, workToken)) return false;
+    if (!candidate.mask) throw new Error('Selection mask is unavailable');
+    const maskId = addAsset(assets.current, candidate.mask),
+      selection = { ...candidate.selection, mask: maskId };
+    if (!isCurrentSelectionOperation(frame, frameIndex, workToken)) return false;
+    if (!commit({ ...frame, selection })) return false;
+    setNotice(notice);
+    return true;
   };
   const setSelection = (selection: Selection | undefined) => {
     const f = current();
@@ -2552,7 +2578,11 @@ export default function Home() {
     }
   };
   const applyColorRange = async (sample: string, fuzziness: number) => {
-    const f = current();
+    const f = current(),
+      frameIndex = index.current,
+      workToken = ++selectionWorkToken.current,
+      operation = selectionOperation,
+      sourceAssets = assets.current;
     setColorRanging(false);
     const match = /^#([a-f\d]{6})$/i.exec(sample);
     if (!match) {
@@ -2560,7 +2590,7 @@ export default function Home() {
       return;
     }
     try {
-      const rendered = await renderFrame(f, assets.current),
+      const rendered = await renderFrame(f, sourceAssets),
         pixels = rendered.getContext('2d')!.getImageData(0, 0, f.w, f.h).data,
         rgb: [number, number, number] = [
           Number.parseInt(match[1].slice(0, 2), 16),
@@ -2583,7 +2613,6 @@ export default function Home() {
         image.data[offset + 3] = alpha[index];
       }
       mask.getContext('2d')!.putImageData(image, 0, 0);
-      const maskId = addAsset(assets.current, mask);
       const next: Selection = {
         shape: 'rectangle',
         x: 0,
@@ -2592,14 +2621,24 @@ export default function Home() {
         h: f.h,
         feather: 0,
         inverted: false,
-        mask: maskId,
       };
-      const selection = await mergeMaskSelection(f, next, mask);
-      if (commit({ ...f, selection })) {
-        setNotice(`Color Range selection created (fuzziness ${fuzziness})`);
-      }
+      const candidate = await composeSelectionCandidate(
+        f,
+        next,
+        mask,
+        operation,
+        sourceAssets,
+      );
+      publishSelectionCandidate(
+        f,
+        frameIndex,
+        workToken,
+        candidate,
+        `Color Range selection created (fuzziness ${fuzziness})`,
+      );
     } catch {
-      setNotice('Could not create a Color Range selection');
+      if (isCurrentSelectionOperation(f, frameIndex, workToken))
+        setNotice('Could not create a Color Range selection');
     }
   };
   const reselect = () => {
@@ -2793,16 +2832,66 @@ export default function Home() {
     operation: 'replace',
   });
   const mergeSelection = (next: Selection) => {
-    const currentSelection = current().selection;
-    if (!currentSelection || selectionOperation === 'replace') {
+    const frame = current(),
+      frameIndex = index.current,
+      workToken = ++selectionWorkToken.current,
+      operation = selectionOperation,
+      sourceAssets = assets.current,
+      currentSelection = frame.selection;
+    if (!currentSelection || operation === 'replace') {
       setSelection({ ...next, parts: [selectionPart(next)] });
       return;
     }
-    const parts = currentSelection.parts?.slice() || [
-      selectionPart(currentSelection),
-    ];
-    parts.push({ ...selectionPart(next), operation: selectionOperation });
-    setSelection({ ...next, parts });
+    // Keep simple geometry editable. Once either side is an alpha mask or has
+    // feather/inversion/transform metadata, resolve both sides to pixels so
+    // composition cannot silently discard selected coverage.
+    const simpleGeometry =
+      !currentSelection.mask &&
+      !next.mask &&
+      !currentSelection.feather &&
+      !next.feather &&
+      !currentSelection.inverted &&
+      !next.inverted &&
+      !currentSelection.matrix &&
+      !next.matrix;
+    if (simpleGeometry) {
+      const parts = currentSelection.parts?.slice() || [
+        selectionPart(currentSelection),
+      ];
+      parts.push({ ...selectionPart(next), operation });
+      if (isCurrentSelectionOperation(frame, frameIndex, workToken))
+        setSelection({ ...next, parts });
+      return;
+    }
+    void (async () => {
+      try {
+        const incoming = await renderSelection(
+          next,
+          frame.w,
+          frame.h,
+          sourceAssets,
+        );
+        if (!isCurrentSelectionOperation(frame, frameIndex, workToken)) return;
+        const candidate = await composeSelectionCandidate(
+          frame,
+          next,
+          incoming,
+          operation,
+          sourceAssets,
+        );
+        if (!isCurrentSelectionOperation(frame, frameIndex, workToken)) return;
+        publishSelectionCandidate(
+          frame,
+          frameIndex,
+          workToken,
+          candidate,
+          `${next.shape === 'ellipse' ? 'Elliptical' : next.shape === 'polygon' ? 'Polygonal' : 'Rectangular'} selection created`,
+        );
+      } catch {
+        if (isCurrentSelectionOperation(frame, frameIndex, workToken))
+          setNotice('Could not compose the selection');
+      }
+    })();
   };
   const finishPolygonalLasso = (g: Gesture) => {
     const points = g.points || [];
@@ -5650,13 +5739,17 @@ export default function Home() {
         );
         return;
       }
+      const frameIndex = index.current,
+        workToken = ++selectionWorkToken.current,
+        operation = selectionOperation,
+        sourceAssets = assets.current;
       try {
         const source = await renderFrame(
             { ...f, layers: [layer] },
-            assets.current,
+            sourceAssets,
           ),
-          mask = colorSelectMask(source, p.x, p.y),
-          maskId = addAsset(assets.current, mask);
+          mask = colorSelectMask(source, p.x, p.y);
+        if (!isCurrentSelectionOperation(f, frameIndex, workToken)) return;
         const next: Selection = {
           shape: 'rectangle',
           x: 0,
@@ -5665,13 +5758,24 @@ export default function Home() {
           h: f.h,
           feather: 0,
           inverted: false,
-          mask: maskId,
         };
-        const selection = await mergeMaskSelection(f, next, mask);
-        setSelection(selection);
-        setNotice('Color selection created from contiguous pixels');
+        const candidate = await composeSelectionCandidate(
+          f,
+          next,
+          mask,
+          operation,
+          sourceAssets,
+        );
+        publishSelectionCandidate(
+          f,
+          frameIndex,
+          workToken,
+          candidate,
+          'Color selection created from contiguous pixels',
+        );
       } catch {
-        setNotice('Could not create a color selection');
+        if (isCurrentSelectionOperation(f, frameIndex, workToken))
+          setNotice('Could not create a color selection');
       }
       return;
     }
@@ -8426,6 +8530,12 @@ export default function Home() {
                         <Icon />
                         <span>{label}</span>
                         <kbd>{key}</kbd>
+                        {subtools.length > 1 && (
+                          <span
+                            className="tool-subtool-arrow"
+                            aria-hidden="true"
+                          />
+                        )}
                       </button>
                       {flyout &&
                         toolFlyout === flyout &&

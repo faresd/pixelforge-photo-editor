@@ -27,7 +27,7 @@ test('Find Layers searches names, metadata and visible results without changing 
   await expect(active).toHaveAttribute('data-selected', 'true');
 
   await page.getByRole('button', { name: 'Select', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Find Layers', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Find Layers/ }).click();
   const search = page.getByRole('searchbox', { name: 'Find layers', exact: true });
   await expect(search).toBeFocused();
   await search.fill('shape 2');
@@ -37,7 +37,7 @@ test('Find Layers searches names, metadata and visible results without changing 
   await expect(active).toHaveCount(0);
 
   await search.fill('visible rectangle');
-  await expect(page.getByText('4 of 4 layers match', { exact: true })).toBeVisible();
+  await expect(page.getByText('3 of 4 layers match', { exact: true })).toBeVisible();
   await expect(active).toHaveAttribute('data-selected', 'true');
   await search.fill('does-not-exist');
   await expect(page.getByText('No layers match this search.', { exact: true })).toBeVisible();

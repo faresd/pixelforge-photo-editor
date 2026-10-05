@@ -2,9 +2,11 @@
 
 `Select > Find Layers` focuses the Layers panel search field. The search runs
 entirely over bounded layer metadata: layer name, kind, group name, visibility
-and lock state. Queries are trimmed, lower-cased and capped at 160 characters;
-all whitespace-separated tokens must match as substrings, so `hidden text`
-finds a hidden text layer while `visible` excludes it.
+and lock state. Queries are trimmed, lower-cased and capped at 160 characters.
+Name, kind and group-name terms use substring matching; the reserved `visible`,
+`hidden`, `locked` and `unlocked` terms are exact state predicates. Thus
+`hidden text` finds a hidden text layer, `visible` excludes hidden layers, and
+`locked` does not match an unlocked layer.
 
 Filtering never changes the active layer, selection, stack order, history or
 saved draft. Group rows remain visible when one of their child layers matches;
