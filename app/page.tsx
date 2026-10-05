@@ -4566,7 +4566,12 @@ export default function Home() {
         points.length >= 3 &&
         Math.hypot(p.x - first.x, p.y - first.y) <= 14
       ) {
-        const nodes = points.map((node) => ({ x: node.x, y: node.y }));
+        const nodes = points.map((node) => ({
+          x: node.x,
+          y: node.y,
+          ...(node.inHandle ? { inHandle: { ...node.inHandle } } : {}),
+          ...(node.outHandle ? { outHandle: { ...node.outHandle } } : {}),
+        }));
         gesture.current = null;
         const path: PathModel = {
           nodes,
