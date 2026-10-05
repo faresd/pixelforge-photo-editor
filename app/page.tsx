@@ -77,6 +77,7 @@ import {
   rasterFrame,
   replaceColorStroke,
   renderFrame,
+  groupLayerMembers,
   transformSelection as transformSelectionModel,
   surface,
   transformFrameWithMasks,
@@ -170,6 +171,7 @@ import {
 } from '../src/selectionBrush';
 import { snapMagneticPoint } from '../src/magneticLasso';
 import { colorRangeMask } from '../src/colorRange';
+import { composeSelectionAlpha } from '../src/selectionComposition';
 import {
   createQuickMask,
   loadSelection,
@@ -336,6 +338,7 @@ type Command =
   | 'select-all'
   | 'select-all-layers'
   | 'deselect-layers'
+  | 'find-layers'
   | 'isolate-layers'
   | 'deselect'
   | 'reselect'
@@ -731,7 +734,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: '', command: 'noop', separator: true },
     { label: 'All Layers', command: 'select-all-layers' },
     { label: 'Deselect Layers', command: 'deselect-layers' },
-    { label: 'Find Layers', command: 'noop', disabled: true },
+    { label: 'Find Layers', command: 'find-layers', shortcut: 'Alt+Shift+Ctrl+F' },
     { label: 'Isolate Layers', command: 'isolate-layers' },
     { label: 'Color Range…', command: 'color-range' },
     { label: 'Focus Area…', command: 'noop', disabled: true },
@@ -2481,6 +2484,50 @@ export default function Home() {
     }
     return false;
   };
+  /**
+   * Merge a canvas-sized alpha selection with the active selection. Geometry
+   * already composes as editable parts; raster selections (Color Range and
+   * Magic Wand) need the same operation semantics after their pixels are
+   * resolved. The result is persisted as a new mask asset so undo and draft
+   * reloads never mutate either source mask.
+   */
+  const mergeMaskSelection = async (
+    frame: Frame,
+    next: Selection,
+    incoming: HTMLCanvasElement,
+  ): Promise<Selection> => {
+    if (!frame.selection || selectionOperation === 'replace') return next;
+    const existing = await renderSelection(
+        frame.selection,
+        frame.w,
+        frame.h,
+        assets.current,
+      ),
+      existingPixels = existing.getContext('2d')!.getImageData(0, 0, frame.w, frame.h).data,
+      incomingPixels = incoming.getContext('2d')!.getImageData(0, 0, frame.w, frame.h).data,
+      existingAlpha = new Uint8ClampedArray(frame.w * frame.h),
+      incomingAlpha = new Uint8ClampedArray(frame.w * frame.h);
+    for (let index = 0; index < existingAlpha.length; index += 1) {
+      existingAlpha[index] = existingPixels[index * 4 + 3];
+      incomingAlpha[index] = incomingPixels[index * 4 + 3];
+    }
+    const composed = composeSelectionAlpha(
+        existingAlpha,
+        incomingAlpha,
+        selectionOperation,
+      ),
+      merged = surface(frame.w, frame.h),
+      image = merged.getContext('2d')!.createImageData(frame.w, frame.h);
+    for (let index = 0; index < composed.mask.length; index += 1) {
+      const offset = index * 4;
+      image.data[offset] = 255;
+      image.data[offset + 1] = 255;
+      image.data[offset + 2] = 255;
+      image.data[offset + 3] = composed.mask[index];
+    }
+    merged.getContext('2d')!.putImageData(image, 0, 0);
+    return { ...next, mask: addAsset(assets.current, merged) };
+  };
   const setSelection = (selection: Selection | undefined) => {
     const f = current();
     if (JSON.stringify(f.selection) === JSON.stringify(selection)) return;
@@ -2537,21 +2584,18 @@ export default function Home() {
       }
       mask.getContext('2d')!.putImageData(image, 0, 0);
       const maskId = addAsset(assets.current, mask);
-      if (
-        commit({
-        ...f,
-        selection: {
-          shape: 'rectangle',
-          x: 0,
-          y: 0,
-          w: f.w,
-          h: f.h,
-          feather: 0,
-          inverted: false,
-          mask: maskId,
-        },
-        })
-      ) {
+      const next: Selection = {
+        shape: 'rectangle',
+        x: 0,
+        y: 0,
+        w: f.w,
+        h: f.h,
+        feather: 0,
+        inverted: false,
+        mask: maskId,
+      };
+      const selection = await mergeMaskSelection(f, next, mask);
+      if (commit({ ...f, selection })) {
         setNotice(`Color Range selection created (fuzziness ${fuzziness})`);
       }
     } catch {
@@ -3756,17 +3800,18 @@ export default function Home() {
       blend: 'source-over',
       collapsed: false,
     };
-    if (
-      commit({
-        ...f,
-        groups: [...(f.groups || []), group],
-        layers: f.layers.map((item) =>
-          layers.some((selected) => selected.id === item.id)
-            ? { ...item, groupId: group.id }
-            : item,
-        ),
-      })
-    )
+    let grouped: Frame;
+    try {
+      grouped = groupLayerMembers(
+        { ...f, groups: [...(f.groups || []), group] },
+        layers.map((layer) => layer.id),
+        group.id,
+      );
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Layers could not be grouped');
+      return;
+    }
+    if (commit(grouped))
       setNotice(
         layers.length === 1
           ? 'Layer added to a new group'
@@ -5612,11 +5657,7 @@ export default function Home() {
           ),
           mask = colorSelectMask(source, p.x, p.y),
           maskId = addAsset(assets.current, mask);
-        if (selectionOperation !== 'replace')
-          setNotice(
-            'Color selection currently replaces the active selection; geometric selections support composition',
-          );
-        setSelection({
+        const next: Selection = {
           shape: 'rectangle',
           x: 0,
           y: 0,
@@ -5625,7 +5666,9 @@ export default function Home() {
           feather: 0,
           inverted: false,
           mask: maskId,
-        });
+        };
+        const selection = await mergeMaskSelection(f, next, mask);
+        setSelection(selection);
         setNotice('Color selection created from contiguous pixels');
       } catch {
         setNotice('Could not create a color selection');
@@ -7639,6 +7682,14 @@ export default function Home() {
     else if (command === 'select-all') selectAll();
     else if (command === 'select-all-layers') selectAllLayers();
     else if (command === 'deselect-layers') deselectLayers();
+    else if (command === 'find-layers') {
+      const input = document.getElementById('find-layers');
+      if (input instanceof HTMLInputElement) {
+        input.focus();
+        input.select();
+        setNotice('Find layers focused; search by name, type, group or state');
+      }
+    }
     else if (command === 'isolate-layers') isolateLayers();
     else if (command === 'deselect') setSelection(undefined);
     else if (command === 'reselect') reselect();

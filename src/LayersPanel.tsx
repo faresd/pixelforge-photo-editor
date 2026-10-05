@@ -12,6 +12,7 @@ import {
 import type { ParametricShapeVariant } from './vectorShapes';
 import type { AlignmentMode, DistributionAxis } from './layerAlignment';
 import { effectiveLayerStyles, type LayerStyles } from './layerStyles';
+import { filterLayersBySearch } from './layerSearch';
 
 type Props = {
   frame: Frame;
@@ -72,9 +73,15 @@ export default function LayersPanel({
   setSelectionOperation,
   setSelectionFeather,
 }: Props) {
+  const [searchQuery, setSearchQuery] = useState('');
   const layer = frame.layers.find((item) => item.id === frame.active)!;
   const groups = frame.groups || [];
   const groupById = new Map(groups.map((group) => [group.id, group]));
+  const filteredLayers = filterLayersBySearch(frame.layers, groups, searchQuery);
+  const visibleLayerIds = new Set(filteredLayers.map((item) => item.id));
+  const matchingGroupIds = new Set(
+    filteredLayers.flatMap((item) => (item.groupId ? [item.groupId] : [])),
+  );
   const activeGroup = layer.groupId ? groupById.get(layer.groupId) : undefined;
   const layerLocked = layer.locked || Boolean(activeGroup?.locked);
   const selectedIds = new Set(
@@ -97,8 +104,9 @@ export default function LayersPanel({
   const renderedGroups = new Set<string>();
   const rows: ReactNode[] = [];
   for (const item of [...frame.layers].reverse()) {
+    if (!visibleLayerIds.has(item.id)) continue;
     const group = item.groupId ? groupById.get(item.groupId) : undefined;
-    if (group && !renderedGroups.has(group.id)) {
+    if (group && matchingGroupIds.has(group.id) && !renderedGroups.has(group.id)) {
       rows.push(
         <GroupRow
           key={'group-' + group.id}
@@ -157,6 +165,7 @@ export default function LayersPanel({
   }
   for (const group of groups) {
     if (renderedGroups.has(group.id)) continue;
+    if (!matchingGroupIds.has(group.id)) continue;
     rows.unshift(
       <GroupRow
         key={'group-' + group.id}
@@ -209,7 +218,27 @@ export default function LayersPanel({
           </button>
         </div>
       </div>
+      <label className="layer-field layer-search-field">
+        Find layers
+        <input
+          id="find-layers"
+          aria-label="Find layers"
+          type="search"
+          maxLength={160}
+          value={searchQuery}
+          placeholder="Name, type, group, visible…"
+          onChange={(event) => setSearchQuery(event.target.value)}
+        />
+        {searchQuery.trim() && (
+          <small aria-live="polite">
+            {filteredLayers.length} of {frame.layers.length} layers match
+          </small>
+        )}
+      </label>
       <div className="layer-list">{rows}</div>
+      {searchQuery.trim() && filteredLayers.length === 0 && (
+        <p className="layer-search-empty">No layers match this search.</p>
+      )}
       <label className="layer-field">
         Layer folder
         <select

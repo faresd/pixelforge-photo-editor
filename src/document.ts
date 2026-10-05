@@ -322,6 +322,49 @@ export type Asset = { url: string; w: number; h: number };
 export type Assets = Record<string, Asset>;
 export const identity = (): Matrix => [1, 0, 0, 1, 0, 0];
 
+/**
+ * Put a set of editable layers into one contiguous folder block.
+ *
+ * The document keeps layer order as a flat stack and stores folder membership
+ * as metadata.  Group compositing therefore treats a folder as one source at
+ * the position of its first member.  Keeping members contiguous is essential:
+ * without it, an unrelated layer between two members would be moved below the
+ * whole folder when rendering, changing the visible stacking order.  This
+ * helper is the single ordering contract used by the UI when creating a group.
+ * It preserves the selected layers' relative order and anchors the block at
+ * the first selected layer's existing stack position.
+ */
+export function groupLayerMembers(
+  frame: Frame,
+  layerIds: readonly string[],
+  groupId: string,
+): Frame {
+  if (!validId(groupId)) throw new Error('Group id is invalid');
+  const requested = [...new Set(layerIds)];
+  if (!requested.length || requested.length !== layerIds.length)
+    throw new Error('Choose one or more distinct layers to group');
+  const selected = new Set(requested),
+    indexes = frame.layers
+      .map((layer, index) => (selected.has(layer.id) ? index : -1))
+      .filter((index) => index >= 0);
+  if (indexes.length !== requested.length)
+    throw new Error('One or more layers to group are missing');
+  const firstIndex = Math.min(...indexes),
+    beforeCount = frame.layers
+      .slice(0, firstIndex)
+      .filter((layer) => !selected.has(layer.id)).length,
+    members = frame.layers
+      .filter((layer) => selected.has(layer.id))
+      .map((layer) => ({ ...layer, groupId })),
+    outside = frame.layers.filter((layer) => !selected.has(layer.id)),
+    layers = [
+      ...outside.slice(0, beforeCount),
+      ...members,
+      ...outside.slice(beforeCount),
+    ];
+  return { ...frame, layers };
+}
+
 /** Return true for a finite, non-singular affine matrix within safe bounds. */
 export function validMatrix(value: unknown): value is Matrix {
   return (
