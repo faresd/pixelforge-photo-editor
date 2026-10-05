@@ -66,3 +66,22 @@ test('compact category slots show one family representative and active variant',
   const retouch = TOOL_CATEGORIES.find((category) => category.id === 'retouch');
   assert.deepEqual(compactCategoryTools(retouch), ['clone', 'heal', 'smudge', 'dodge']);
 });
+
+test('every active variant keeps one visible slot per family', () => {
+  for (const category of TOOL_CATEGORIES) {
+    for (const active of category.tools) {
+      const slots = compactCategoryTools(category, active);
+      assert.equal(
+        new Set(slots).size,
+        slots.length,
+        `${category.id} duplicated a tool slot while ${active} was active`,
+      );
+      const families = slots.map((tool) => flyoutForTool(tool) ?? `tool:${tool}`);
+      assert.equal(
+        new Set(families).size,
+        families.length,
+        `${category.id} duplicated a family while ${active} was active`,
+      );
+    }
+  }
+});
