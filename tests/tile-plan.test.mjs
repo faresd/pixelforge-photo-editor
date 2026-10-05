@@ -112,6 +112,20 @@ test('byte-bounded LRU tile cache evicts oldest entries and can reset', () => {
   assert.equal(cache.get('a'), 'A');
   assert.equal(cache.bytes, 10);
   assert.equal(cache.set('too-large', 'x', 11), false);
+  assert.deepEqual(cache.stats, {
+    bytes: 10,
+    size: 2,
+    maxBytes: 10,
+    peakBytes: 14,
+    hits: 2,
+    misses: 1,
+    evictions: 1,
+    evictedBytes: 4,
+    rejected: 1,
+  });
+  assert.equal(cache.delete('a'), true);
+  assert.equal(cache.delete('a'), false);
+  assert.equal(cache.bytes, 4);
   cache.clear();
   assert.equal(cache.size, 0);
   assert.equal(cache.bytes, 0);

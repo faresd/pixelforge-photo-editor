@@ -127,9 +127,16 @@ This slice does not allocate pixel buffers, composite partial results, or
 change the editor's current render path. A future document adapter must use
 the expanded read rectangle for neighbourhood effects, write only the inner
 rectangle, and compare tiled output against the existing full-frame renderer
-before enabling a visible path. The existing byte-bounded `TileCache` remains
-the cache primitive; cache policy and eviction telemetry need device-level
-measurements before they become a rendering release gate.
+before enabling a visible path. The byte-bounded `TileCache` now exposes
+cumulative hit/miss, rejection, eviction and peak-byte counters, plus an
+explicit `delete` operation for releasing a tile before the whole cache is
+cleared. `runTiledRender` accepts that cache as an opt-in callback cache: its
+default key includes the canonical request and tile rectangles, and callers
+can provide a key and retained-byte estimator for processed pixels. Cache
+hits still emit the same monotonic progress event, while outputs that have no
+safe byte estimate are simply left uncached. These counters make a future
+device benchmark observable without changing the visible full-frame path;
+cache policy and measured eviction thresholds remain a release gate.
 
 ## Fallback and interactive edits
 

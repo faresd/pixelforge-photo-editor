@@ -108,8 +108,13 @@ pressure. Worker image encoding now consumes a shared row-major tile schedule
 with a 16 MiB expanded-RGBA batch budget and a 64 MiB hard ceiling; this is a
 safety and planning seed for document rendering, not evidence that document
 pixels are already tiled. The document path does not yet provide tiled
-rendering, a persistent worker pool, tile eviction or worker-aware interactive
-brush/adjustment overrides. Fonts,
+rendering, a persistent worker pool or worker-aware interactive
+brush/adjustment overrides. The shared tile planner now has an opt-in
+byte-bounded LRU cache with cumulative hit/miss, peak-byte and eviction
+counters, and the cancellable tile runner can reuse outputs when a caller
+supplies a safe retained-byte estimate. This is instrumentation and a
+reusable cache boundary; it is not evidence that document pixels are already
+tiled, and it does not select a cache size for any device. Fonts,
 CSS filters and colour management may also vary by browser, so representative
 pixel/alpha fixtures remain required for each effect family.
 
