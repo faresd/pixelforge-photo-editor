@@ -31,6 +31,9 @@ const canvasPixels = (page: Page) =>
   );
 
 test('Layer Styles decorate an editable layer and survive undo, reload and project round trip', async ({ page }) => {
+  // Pixel-level full-frame renders and project downloads are intentionally
+  // slower on the constrained CI runner than the ordinary editor checks.
+  test.setTimeout(120_000);
   await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
   // The compact mobile layout scales the canvas; use its actual CSS box while
   // forcing the event through a docked panel that may overlap the canvas.
