@@ -306,6 +306,50 @@ test('pinch uses deterministic alpha-safe bilinear sampling for subpixel maps', 
   assert.deepEqual(pixel(result, 2, 0, 0), [250, 5, 240, 0]);
 });
 
+test('wave is a deterministic directional remap with wavelength and alpha-safe edges', () => {
+  const source = rgba(13, 9, (x, y) => {
+    if (x === 0 && y === 0) return [241, 17, 233, 0];
+    return [(x * 31 + y * 7) % 256, (x * 11 + y * 23) % 256, (x * 5 + y * 17) % 256, (x + y) % 3 ? 255 : 127];
+  });
+  const original = source.slice();
+  const effect = {
+    type: 'wave',
+    amount: 100,
+    radius: 5,
+    angle: 0,
+    centerX: 0.5,
+    centerY: 0.5,
+  };
+  const first = applyFilterEffectsPixels(source, 13, 9, effect);
+  const second = applyFilterEffectsPixels(source, 13, 9, effect);
+  assert.deepEqual(first, second);
+  assert.deepEqual(source, original);
+  assert.equal(pixel(first, 13, 0, 0)[3], 0);
+  assert.deepEqual(pixel(first, 13, 0, 0).slice(0, 3), [241, 17, 233]);
+  assert.notDeepEqual(pixel(first, 13, 3, 2), pixel(source, 13, 3, 2));
+  for (let y = 0; y < 9; y += 1)
+    for (let x = 0; x < 13; x += 1)
+      assert.equal(pixel(first, 13, x, y)[3], pixel(source, 13, x, y)[3]);
+  assert.notDeepEqual(
+    first,
+    applyFilterEffectsPixels(source, 13, 9, { ...effect, angle: 90 }),
+  );
+  assert.deepEqual(
+    applyFilterEffectsPixels(source, 13, 9, { ...effect, amount: 0 }),
+    source,
+  );
+  assert.deepEqual(
+    applyFilterEffectsPixels(source, 13, 9, { ...effect, radius: 0 }),
+    source,
+  );
+  const normalized = effectiveFilterEffects({ ...effect, amount: 140, radius: 99, angle: 220 });
+  assert.deepEqual(
+    { type: normalized.type, amount: normalized.amount, radius: normalized.radius, angle: normalized.angle },
+    { type: 'wave', amount: 100, radius: 64, angle: 180 },
+  );
+  assert.equal(validFilterEffects(normalized), true);
+});
+
 test('invalid buffer dimensions fail closed', () => {
   assert.throws(() => applyFilterEffectsPixels(new Uint8ClampedArray(3), 1, 1, { type: 'mosaic', amount: 1, radius: 2 }), /length/);
 });

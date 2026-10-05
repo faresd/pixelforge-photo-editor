@@ -329,6 +329,7 @@ type Command =
   | 'transform-selection'
   | 'grow-selection'
   | 'contract-selection'
+  | 'border-selection'
   | 'color-range'
   | 'mask-selection'
   | 'remove-background'
@@ -371,6 +372,7 @@ type Command =
   | 'filter-pinch'
   | 'filter-ripple'
   | 'filter-twirl'
+  | 'filter-wave'
   | 'filter-clear-effect'
   | 'zoom-in'
   | 'zoom-out'
@@ -709,6 +711,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Modify', command: 'noop', disabled: true },
     { label: 'Grow…', command: 'grow-selection' },
     { label: 'Contract…', command: 'contract-selection' },
+    { label: 'Border…', command: 'border-selection' },
     { label: 'Similar', command: 'noop', disabled: true },
     { label: 'Transform Selection', command: 'transform-selection' },
     { label: 'Edit in Quick Mask Mode', command: 'quick-mask' },
@@ -752,7 +755,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Shear…', command: 'noop', disabled: true },
     { label: 'Spherize…', command: 'noop', disabled: true },
     { label: 'Twirl…', command: 'filter-twirl' },
-    { label: 'Wave…', command: 'noop', disabled: true },
+    { label: 'Wave…', command: 'filter-wave' },
     { label: 'Noise', command: 'noop', disabled: true },
     { label: 'Add Noise…', command: 'sharpen-noise' },
     { label: 'Pixelate', command: 'noop', disabled: true },
@@ -2581,10 +2584,15 @@ export default function Home() {
         inverted: false,
         mask: maskId,
       };
-      if (commit({ ...f, selection }))
-        setNotice(
-          `Selection ${mode === 'grow' ? 'grown' : 'contracted'} by ${radius} px`,
-        );
+      if (commit({ ...f, selection })) {
+        const label =
+          mode === 'grow'
+            ? 'grown'
+            : mode === 'contract'
+              ? 'contracted'
+              : 'bordered';
+        setNotice(`Selection ${label} by ${radius} px`);
+      }
     } catch (error) {
       setNotice(
         error instanceof Error ? error.message : 'Selection refinement failed',
@@ -2985,9 +2993,11 @@ export default function Home() {
                     ? 10
                     : type === 'pinch'
                       ? 40
-                    : type === 'radial-blur'
-                      ? 18
-                      : 6,
+                      : type === 'radial-blur'
+                        ? 18
+                        : type === 'wave'
+                          ? 12
+                        : 6,
                 angle: type === 'twirl' ? 75 : 0,
               },
       })
@@ -7112,11 +7122,16 @@ export default function Home() {
       else setNotice('Create a selection before transforming it');
     } else if (
       command === 'grow-selection' ||
-      command === 'contract-selection'
+      command === 'contract-selection' ||
+      command === 'border-selection'
     ) {
       if (current().selection)
         setSelectionRefining(
-          command === 'grow-selection' ? 'grow' : 'contract',
+          command === 'grow-selection'
+            ? 'grow'
+            : command === 'contract-selection'
+              ? 'contract'
+              : 'border',
         );
       else setNotice('Create a selection before refining it');
     } else if (command === 'color-range') setColorRanging(true);
@@ -7169,6 +7184,7 @@ export default function Home() {
     else if (command === 'filter-pinch')
       chooseFilterEffect('pinch', 'Pinch');
     else if (command === 'filter-twirl') chooseFilterEffect('twirl', 'Twirl');
+    else if (command === 'filter-wave') chooseFilterEffect('wave', 'Wave');
     else if (command === 'crop') {
       if (slicePreview) cancelSlicePreview();
       setTool('crop');
@@ -7322,6 +7338,7 @@ export default function Home() {
       case 'filter-color-halftone':
       case 'filter-ripple':
       case 'filter-twirl':
+      case 'filter-wave':
       case 'filter-clear-effect':
         return !layer || locked || !layer.visible;
       case 'quick-mask':
@@ -7357,6 +7374,7 @@ export default function Home() {
       }
       case 'grow-selection':
       case 'contract-selection':
+      case 'border-selection':
         return !frame.selection;
       case 'hide-layer':
         return !layer || Boolean(groupForLayer(frame, layer)?.locked);
@@ -9197,6 +9215,8 @@ export default function Home() {
                           ? 'Angular sweep'
                       : filterEffects.type === 'pinch'
                           ? 'Pinch radius'
+                      : filterEffects.type === 'wave'
+                          ? 'Wave length'
                       : 'Radius'
                   }
                   value={filterEffects.radius}
@@ -9208,6 +9228,16 @@ export default function Home() {
                 {filterEffects.type === 'twirl' && (
                   <Slider
                     label="Twirl angle"
+                    value={filterEffects.angle}
+                    min={-180}
+                    max={180}
+                    set={(value) => setFilterEffects({ angle: value })}
+                    suffix="°"
+                  />
+                )}
+                {filterEffects.type === 'wave' && (
+                  <Slider
+                    label="Wave angle"
                     value={filterEffects.angle}
                     min={-180}
                     max={180}

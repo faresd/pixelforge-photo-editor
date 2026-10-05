@@ -20,6 +20,7 @@ export const FILTER_EFFECT_TYPES = [
   'pinch',
   'ripple',
   'twirl',
+  'wave',
 ] as const;
 export type FilterEffectType = (typeof FILTER_EFFECT_TYPES)[number];
 
@@ -27,9 +28,9 @@ export type FilterEffects = {
   type: FilterEffectType;
   /** Strength as a percentage. */
   amount: number;
-  /** Blur radius or mosaic cell size, in source pixels. */
+  /** Blur radius, distortion wavelength, or mosaic cell size, in source pixels. */
   radius: number;
-  /** Rotation for the directional blur family, in degrees. */
+  /** Direction for directional blur/distortion families, in degrees. */
   angle: number;
   /** Normalized effect centre, in the inclusive range 0..1. */
   centerX: number;
@@ -631,6 +632,59 @@ function applyDistort(
   }
 }
 
+/**
+ * Apply a bounded directional wave displacement. The wave travels along the
+ * editable angle and displaces pixels on its perpendicular axis. Every
+ * destination samples the immutable source with premultiplied-alpha
+ * bilinear interpolation, so transparent RGB padding cannot bleed into
+ * visible edges while the destination alpha byte remains unchanged.
+ */
+function applyWave(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+): void {
+  const amount = effect.amount / 100,
+    wavelength = Math.max(1, Math.min(64, Math.round(effect.radius || 8))),
+    radians = (effect.angle * Math.PI) / 180,
+    axisX = Math.cos(radians),
+    axisY = Math.sin(radians),
+    perpendicularX = -axisY,
+    perpendicularY = axisX,
+    centerX = effect.centerX * (width - 1),
+    centerY = effect.centerY * (height - 1),
+    // Keep the displacement bounded for tiny canvases while making the
+    // wavelength control useful on larger layers.
+    maxDisplacement = Math.max(
+      0.5,
+      Math.min(Math.min(width, height) * 0.45, wavelength * 0.5),
+    ),
+    displacementScale = amount * maxDisplacement;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      if (source[destination + 3] === 0) continue;
+      const alongWave = (x - centerX) * axisX + (y - centerY) * axisY,
+        displacement =
+          Math.sin((alongWave / wavelength) * Math.PI * 2) * displacementScale,
+        sample = sourcePixelBilinear(
+          source,
+          width,
+          height,
+          x + perpendicularX * displacement,
+          y + perpendicularY * displacement,
+        );
+      if (sample[3] === 0) continue;
+      output[destination] = sample[0];
+      output[destination + 1] = sample[1];
+      output[destination + 2] = sample[2];
+      output[destination + 3] = source[destination + 3];
+    }
+  }
+}
+
 /** Apply a Filter menu effect to an RGBA buffer without mutating its input. */
 export function applyFilterEffectsPixels(
   data: Uint8ClampedArray,
@@ -671,6 +725,8 @@ export function applyFilterEffectsPixels(
     applyBoxBlur(data, width, height, effect.radius, output, strength, (_x, y) =>
       clamp((Math.abs(y - center) - band) / maxDistance, 0, 1),
     );
+  } else if (effect.type === 'wave') {
+    applyWave(data, width, height, effect, output);
   } else {
     applyDistort(data, width, height, effect, output);
   }

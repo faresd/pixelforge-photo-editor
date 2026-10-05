@@ -1,0 +1,86 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  applyLayerStylesPixels,
+  effectiveLayerStyles,
+  isNeutralLayerStyles,
+  neutralLayerStyles,
+  validLayerStyles,
+} from '../src/layerStyles.ts';
+
+const pixel = (data, width, x, y) =>
+  Array.from(data.slice((y * width + x) * 4, (y * width + x + 1) * 4));
+
+test('Layer Style metadata is bounded and legacy values normalize safely', () => {
+  const value = effectiveLayerStyles({
+    dropShadow: {
+      enabled: true,
+      color: '#223344',
+      opacity: 4,
+      offsetX: 999,
+      offsetY: -999,
+      blur: 99,
+    },
+    outline: {
+      enabled: true,
+      color: '#abcdef',
+      opacity: -1,
+      width: 99,
+    },
+  });
+  assert.deepEqual(value.dropShadow, {
+    enabled: true,
+    color: '#223344',
+    opacity: neutralLayerStyles.dropShadow.opacity,
+    offsetX: neutralLayerStyles.dropShadow.offsetX,
+    offsetY: neutralLayerStyles.dropShadow.offsetY,
+    blur: neutralLayerStyles.dropShadow.blur,
+  });
+  assert.deepEqual(value.outline, {
+    enabled: true,
+    color: '#abcdef',
+    opacity: neutralLayerStyles.outline.opacity,
+    width: neutralLayerStyles.outline.width,
+  });
+  assert.equal(validLayerStyles(value), true);
+  assert.equal(validLayerStyles({ ...value, outline: { ...value.outline, width: 0 } }), false);
+  assert.equal(validLayerStyles({ ...value, dropShadow: { ...value.dropShadow, color: 'red' } }), false);
+  assert.equal(isNeutralLayerStyles(undefined), true);
+});
+
+test('Layer Style pixels are deterministic, source-safe and alpha-preserving', () => {
+  const source = new Uint8ClampedArray(5 * 5 * 4);
+  source.set([255, 255, 255, 255], (2 * 5 + 2) * 4);
+  const original = source.slice();
+  const style = {
+    dropShadow: {
+      ...neutralLayerStyles.dropShadow,
+      enabled: true,
+      color: '#000000',
+      opacity: 1,
+      offsetX: 1,
+      offsetY: 0,
+      blur: 0,
+    },
+    outline: {
+      ...neutralLayerStyles.outline,
+      enabled: true,
+      color: '#ff0000',
+      opacity: 1,
+      width: 1,
+    },
+  };
+  const first = applyLayerStylesPixels(source, 5, 5, style);
+  const second = applyLayerStylesPixels(source, 5, 5, style);
+  assert.deepEqual(first, second);
+  assert.deepEqual(source, original);
+  assert.deepEqual(pixel(first, 5, 2, 2), [255, 255, 255, 255]);
+  assert.equal(pixel(first, 5, 3, 2)[3], 255);
+  assert.equal(pixel(first, 5, 1, 2)[0], 255);
+  assert.equal(pixel(first, 5, 1, 2)[1], 0);
+  assert.equal(pixel(first, 5, 1, 2)[2], 0);
+  assert.deepEqual(
+    applyLayerStylesPixels(source, 5, 5, undefined),
+    source,
+  );
+});
