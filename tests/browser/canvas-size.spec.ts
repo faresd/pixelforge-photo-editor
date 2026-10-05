@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect, type Page } from '@playwright/test';
 
 const startEditor = async (page: Page) => {
@@ -76,7 +77,7 @@ test('Trim supports transparency and top-left color modes with a safe cancel pat
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
   const canvas = page.getByTestId('editor-canvas');
-  await page.getByRole('button', { name: 'Shape tool', exact: true }).click();
+  await selectTool(page, 'Shape');
   const box = (await canvas.boundingBox())!;
   await page.mouse.move(box.x + box.width * .35, box.y + box.height * .35);
   await page.mouse.down();
@@ -102,7 +103,7 @@ test('Trim is undoable, persists after reload, and supports Escape dismissal', a
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
   const canvas = page.getByTestId('editor-canvas');
-  await page.getByRole('button', { name: 'Shape tool', exact: true }).click();
+  await selectTool(page, 'Shape');
   const box = (await canvas.boundingBox())!;
   await page.mouse.move(box.x + box.width * .42, box.y + box.height * .42);
   await page.mouse.down();

@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect, type Page } from '@playwright/test';
 
 type ProjectLayer = {
@@ -32,7 +33,7 @@ const waitForReady = async (page: Page) => {
 };
 
 const drawShape = async (page: Page, x: number, y: number, width: number, height: number) => {
-  await page.getByRole('button', { name: 'Shape tool', exact: true }).click();
+  await selectTool(page, 'Shape');
   const canvas = page.getByTestId('editor-canvas');
   const box = (await canvas.boundingBox())!;
   await page.mouse.move(box.x + box.width * x, box.y + box.height * y);

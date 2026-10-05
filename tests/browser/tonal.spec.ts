@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect, type Page } from '@playwright/test';
 
 type Asset = { url: string; w: number; h: number };
@@ -70,7 +71,7 @@ test.beforeEach(async ({ page }) => openEditor(page));
 
 test('O cycles Dodge, Burn and Sponge with persisted tonal options and project settings', async ({ page }) => {
   await newPaintLayer(page);
-  await page.getByRole('button', { name: 'Dodge tool', exact: true }).click();
+  await selectTool(page, 'Dodge');
   await page.keyboard.press('o');
   await expect(page.getByRole('button', { name: 'Burn tool', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await page.getByLabel('Exposure', { exact: true }).fill('63');
@@ -91,7 +92,7 @@ test('O cycles Dodge, Burn and Sponge with persisted tonal options and project s
 test('Dodge brightens and Burn darkens representative pixels with undo/redo and reload', async ({ page }) => {
   await newPaintLayer(page);
   await page.getByLabel('Drawing color', { exact: true }).fill('#808080');
-  await page.getByRole('button', { name: 'Fill tool', exact: true }).click();
+  await selectTool(page, 'Fill');
   const point = await canvasPoint(page, 0.5);
   const canvas = page.getByTestId('editor-canvas');
   await canvas.evaluate((element) => { element.setPointerCapture = () => undefined; });
@@ -100,7 +101,7 @@ test('Dodge brightens and Burn darkens representative pixels with undo/redo and 
   const before = await project(page);
   const beforeLayer = before.history[before.index].layers.at(-1)!;
   const beforePixel = (await sample(page, before.assets[beforeLayer.asset!]!, [{ x: 0.5 }]))[0];
-  await page.getByRole('button', { name: 'Dodge tool', exact: true }).click();
+  await selectTool(page, 'Dodge');
   await page.getByLabel('Size', { exact: true }).fill('80');
   await page.getByLabel('Exposure', { exact: true }).fill('40');
   await stroke(page, 0.5, 0.55);
@@ -113,7 +114,7 @@ test('Dodge brightens and Burn darkens representative pixels with undo/redo and 
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Redo/ }).click();
   await expect(page.locator('footer')).toContainText('Redo');
-  await page.getByRole('button', { name: 'Burn tool', exact: true }).click();
+  await selectTool(page, 'Burn');
   await stroke(page, 0.5, 0.55);
   const burned = await project(page);
   const burnPixel = (await sample(page, burned.assets[burned.history[burned.index].layers.at(-1)!.asset!]!, [{ x: 0.5 }]))[0];
@@ -145,7 +146,7 @@ for (const mode of ['saturate', 'desaturate'] as const) {
     expect(beforePixels[0][3]).toBeGreaterThan(0);
     expect(beforePixels[0][3]).toBeLessThan(255);
     expect(beforePixels[2][3]).toBe(0);
-    await page.getByRole('button', { name: 'Sponge tool', exact: true }).click();
+    await selectTool(page, 'Sponge');
     await page.getByLabel('Size', { exact: true }).fill('40');
     await page.getByLabel('Hardness', { exact: true }).fill('100');
     await page.getByLabel('Sponge mode', { exact: true }).selectOption(mode);
@@ -202,7 +203,7 @@ for (const mode of ['saturate', 'desaturate'] as const) {
 test('tonal strokes honor locked layers and cancel touch gestures without committing', async ({ page }) => {
   await newPaintLayer(page);
   await page.getByLabel('Drawing color', { exact: true }).fill('#b04040');
-  await page.getByRole('button', { name: 'Fill tool', exact: true }).click();
+  await selectTool(page, 'Fill');
   const point = await canvasPoint(page, 0.5);
   const canvas = page.getByTestId('editor-canvas');
   await canvas.evaluate((element) => { element.setPointerCapture = () => undefined; });
@@ -210,7 +211,7 @@ test('tonal strokes honor locked layers and cancel touch gestures without commit
   await expect(page.locator('footer')).toContainText('Area filled', { timeout: 10000 });
   await page.getByLabel('Lock layer', { exact: true }).check();
   const lockedBefore = await project(page);
-  await page.getByRole('button', { name: 'Dodge tool', exact: true }).click();
+  await selectTool(page, 'Dodge');
   await stroke(page, 0.5, 0.6, 'touch');
   await expect(page.locator('footer')).toContainText('visible, unlocked raster layer');
   const locked = await project(page);
@@ -229,13 +230,13 @@ test('tonal strokes honor locked layers and cancel touch gestures without commit
 test('active selection clips tonal pixels and preserves exact outside bytes', async ({ page }) => {
   await newPaintLayer(page);
   await page.getByLabel('Drawing color', { exact: true }).fill('#808080');
-  await page.getByRole('button', { name: 'Fill tool', exact: true }).click();
+  await selectTool(page, 'Fill');
   const center = await canvasPoint(page, 0.5);
   const canvas = page.getByTestId('editor-canvas');
   await canvas.evaluate((element) => { element.setPointerCapture = () => undefined; });
   await canvas.dispatchEvent('pointerdown', { pointerId: 186, pointerType: 'mouse', pressure: 1, clientX: center.clientX, clientY: center.clientY, buttons: 1, isPrimary: true });
   await expect(page.locator('footer')).toContainText('Area filled', { timeout: 10000 });
-  await page.getByRole('button', { name: 'Select tool', exact: true }).click();
+  await selectTool(page, 'Select');
   const box = (await canvas.boundingBox())!;
   await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.2);
   await page.mouse.down();
@@ -245,7 +246,7 @@ test('active selection clips tonal pixels and preserves exact outside bytes', as
   const before = await project(page);
   const beforeAsset = before.assets[before.history[before.index].layers.at(-1)!.asset!]!;
   const beforePixels = await sample(page, beforeAsset, [{ x: 0.35, y: 0.5 }, { x: 0.75, y: 0.5 }]);
-  await page.getByRole('button', { name: 'Dodge tool', exact: true }).click();
+  await selectTool(page, 'Dodge');
   await page.getByLabel('Size', { exact: true }).fill('80');
   await page.getByLabel('Exposure', { exact: true }).fill('100');
   await stroke(page, 0.35, 0.35);
@@ -259,7 +260,7 @@ test('active selection clips tonal pixels and preserves exact outside bytes', as
 test('a tonal stroke on a fully transparent layer is a no-op without history growth', async ({ page }) => {
   await newPaintLayer(page);
   const before = await project(page);
-  await page.getByRole('button', { name: 'Dodge tool', exact: true }).click();
+  await selectTool(page, 'Dodge');
   await stroke(page, 0.5, 0.55);
   await expect(page.locator('footer')).toContainText('No tonal change applied');
   const after = await project(page);

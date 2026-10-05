@@ -228,3 +228,22 @@ test('family variants occupy one category slot without duplicate toolbar ids', a
   expect(ids).toContain('lasso');
   expect(ids).not.toContain('polygonal-lasso');
 });
+
+test('family slots remember the last chosen subtool after switching tools', async ({ page }) => {
+  await openEditor(page);
+  const lasso = page.getByRole('button', { name: 'Lasso tool', exact: true });
+  await lasso.focus();
+  await page.keyboard.press('ArrowDown');
+  await page
+    .locator('[role="menu"]:visible')
+    .getByRole('menuitem', { name: 'Magnetic Lasso', exact: true })
+    .click();
+  await expect(page.getByRole('button', { name: 'Magnetic Lasso tool', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+
+  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Magnetic Lasso tool', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Lasso tool', exact: true })).toHaveCount(0);
+});

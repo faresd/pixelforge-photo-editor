@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect } from '@playwright/test';
 
 async function saved(page: import('@playwright/test').Page) {
@@ -64,7 +65,7 @@ test('typography alignment, tracking and line height render pixels and round-tri
 }) => {
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
-  await page.getByRole('button', { name: 'Text tool', exact: true }).click();
+  await selectTool(page, 'Text');
   await page.getByTestId('editor-canvas').click({ position: { x: 120, y: 120 } });
   await page.getByLabel('Edit layer text', { exact: true }).fill('AA\nAA');
   await page.getByLabel('Layer text color', { exact: true }).fill('#00ff00');
@@ -118,7 +119,7 @@ test('legacy text layers migrate presentation defaults without flattening', asyn
 }) => {
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
-  await page.getByRole('button', { name: 'Text tool', exact: true }).click();
+  await selectTool(page, 'Text');
   await page.getByTestId('editor-canvas').click({ position: { x: 140, y: 140 } });
   await page.getByLabel('Edit layer text', { exact: true }).fill('Legacy');
   await saved(page);

@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect } from '@playwright/test';
 
 test.beforeEach(async ({ page }) => {
@@ -35,7 +36,7 @@ test('records startup, raster stroke and PNG export timings', async ({ page }, t
 
   await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
   await expect(canvas).toHaveAttribute('data-rendering', 'false');
-  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await selectTool(page, 'Brush');
   const box = (await canvas.boundingBox())!;
   await page.evaluate(() => performance.mark('pixelforge-stroke-start'));
   await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.45);

@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect, type Page } from '@playwright/test';
 
 type Asset = { url: string; w: number; h: number };
@@ -105,7 +106,7 @@ test.beforeEach(async ({ page }) => openEditor(page));
 
 test('E cycles the three eraser tools and persists the selected tool and tolerance', async ({ page }) => {
   await newPaintLayer(page);
-  await page.getByRole('button', { name: 'Eraser tool', exact: true }).click();
+  await selectTool(page, 'Eraser');
   await page.keyboard.press('e');
   await expect(page.getByRole('button', { name: 'Background Eraser tool', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await page.getByLabel('Color tolerance', { exact: true }).fill('41');
@@ -124,14 +125,14 @@ test('E cycles the three eraser tools and persists the selected tool and toleran
 test('Magic Eraser removes only the sampled connected island and undo/redo/reload preserve pixels', async ({ page }) => {
   await newPaintLayer(page);
   await page.getByLabel('Drawing color', { exact: true }).fill('#ffffff');
-  await page.getByRole('button', { name: 'Fill tool', exact: true }).click();
+  await selectTool(page, 'Fill');
   const center = await canvasPoint(page, 0.5);
   const canvas = page.getByTestId('editor-canvas');
   await canvas.evaluate((element) => { element.setPointerCapture = () => undefined; });
   await canvas.dispatchEvent('pointerdown', { pointerId: 72, pointerType: 'mouse', pressure: 1, clientX: center.clientX, clientY: center.clientY, buttons: 1, isPrimary: true });
   await expect(page.locator('footer')).toContainText('Area filled', { timeout: 10000 });
   await page.getByLabel('Drawing color', { exact: true }).fill('#e31b23');
-  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await selectTool(page, 'Brush');
   await page.getByLabel('Size', { exact: true }).fill('90');
   await dispatchStroke(page, 0.25, 0.28);
   await dispatchStroke(page, 0.72, 0.75);
@@ -147,7 +148,7 @@ test('Magic Eraser removes only the sampled connected island and undo/redo/reloa
   expect(secondBefore[3]).toBeGreaterThan(200);
   expect(backgroundBefore.slice(0, 3)).toEqual([255, 255, 255]);
 
-  await page.getByRole('button', { name: 'Magic Eraser tool', exact: true }).click();
+  await selectTool(page, 'Magic Eraser');
   await page.getByLabel('Color tolerance', { exact: true }).fill('0');
   const target = await canvasPoint(page, 0.25);
   await canvas.dispatchEvent('pointerdown', { pointerId: 73, pointerType: 'mouse', pressure: 1, clientX: target.clientX, clientY: target.clientY, buttons: 1, isPrimary: true });
@@ -180,14 +181,14 @@ test('Magic Eraser removes only the sampled connected island and undo/redo/reloa
 test('Background Eraser samples a background color, keeps foreground pixels, and cancels without a commit', async ({ page }) => {
   await newPaintLayer(page);
   await page.getByLabel('Drawing color', { exact: true }).fill('#f5f5f5');
-  await page.getByRole('button', { name: 'Fill tool', exact: true }).click();
+  await selectTool(page, 'Fill');
   const center = await canvasPoint(page, 0.5);
   const canvas = page.getByTestId('editor-canvas');
   await canvas.evaluate((element) => { element.setPointerCapture = () => undefined; });
   await canvas.dispatchEvent('pointerdown', { pointerId: 74, pointerType: 'mouse', pressure: 1, clientX: center.clientX, clientY: center.clientY, buttons: 1, isPrimary: true });
   await expect(page.locator('footer')).toContainText('Area filled', { timeout: 10000 });
   await page.getByLabel('Drawing color', { exact: true }).fill('#1e50c8');
-  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await selectTool(page, 'Brush');
   await page.getByLabel('Size', { exact: true }).fill('90');
   await dispatchStroke(page, 0.5, 0.54);
   const before = await project(page);
@@ -201,7 +202,7 @@ test('Background Eraser samples a background color, keeps foreground pixels, and
   expect(foregroundBefore[2]).toBeGreaterThan(150);
 
   await page.getByLabel('Lock layer', { exact: true }).check();
-  await page.getByRole('button', { name: 'Background Eraser tool', exact: true }).click();
+  await selectTool(page, 'Background Eraser');
   await dispatchStroke(page, 0.15, 0.25);
   await expect(page.locator('footer')).toContainText('visible, unlocked raster layer');
   const locked = await project(page);

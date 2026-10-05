@@ -61,6 +61,8 @@ test('compact category slots show one family representative and active variant',
   const lasso = TOOL_CATEGORIES.find((category) => category.id === 'lasso');
   assert.deepEqual(compactCategoryTools(lasso), ['lasso']);
   assert.deepEqual(compactCategoryTools(lasso, 'magnetic-lasso'), ['magnetic-lasso']);
+  assert.deepEqual(compactCategoryTools(lasso, 'move', { lasso: 'magnetic-lasso' }), ['magnetic-lasso']);
+  assert.deepEqual(compactCategoryTools(lasso, 'lasso', { lasso: 'magnetic-lasso' }), ['lasso']);
   const retouch = TOOL_CATEGORIES.find((category) => category.id === 'retouch');
   assert.deepEqual(compactCategoryTools(retouch), ['clone', 'heal', 'smudge', 'dodge']);
 });

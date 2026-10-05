@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect, type Page } from '@playwright/test';
 
 type Layer = {
@@ -43,7 +44,7 @@ const drag = async (page: Page, start: [number, number], end: [number, number]) 
 };
 
 const selectCleanup = async (page: Page) => {
-  await page.getByRole('button', { name: 'Select tool', exact: true }).click();
+  await selectTool(page, 'Select');
   await drag(page, [0.38, 0.38], [0.62, 0.62]);
   await expect(page.getByText('Rectangular selection created', { exact: true })).toBeVisible();
 };
@@ -53,7 +54,7 @@ test.beforeEach(async ({ page }) => openEditor(page));
 test('Content-Aware Fill uses a local selection mask, preserves source, and survives undo/redo/reload', async ({ page }) => {
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: /^New white document/ }).click();
-  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await selectTool(page, 'Brush');
   await page.getByLabel('Drawing color', { exact: true }).fill('#e51c23');
   await page.getByLabel('Size', { exact: true }).fill('80');
   await drag(page, [0.5, 0.5], [0.5, 0.5]);

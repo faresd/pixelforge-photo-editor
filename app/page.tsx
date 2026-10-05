@@ -42,7 +42,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import {
   LOCAL_CONFLICT,
@@ -1362,7 +1362,8 @@ export default function Home() {
       travel,
       paint,
     } = doc;
-  const [tool, setTool] = useState<Tool>('move'),
+  const [tool, setActiveTool] = useState<Tool>('move'),
+    [toolFamilyChoices, setToolFamilyChoices] = useState<Record<string, Tool>>({}),
     [toolFlyout, setToolFlyout] = useState<string | null>(null),
     [toolFlyoutAnchor, setToolFlyoutAnchor] =
       useState<HTMLButtonElement | null>(null),
@@ -1398,6 +1399,14 @@ export default function Home() {
     ),
     [text, setText] = useState('Your text'),
     [fontSize, setFontSize] = useState(56);
+  const setTool = useCallback((next: Tool) => {
+    setActiveTool(next);
+    const family = flyoutForTool(next);
+    if (family)
+      setToolFamilyChoices((current) =>
+        current[family] === next ? current : { ...current, [family]: next },
+      );
+  }, []);
   const toolHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toolHoldOpened = useRef(false);
   const [cloneSource, setCloneSource] = useState<{
@@ -1684,7 +1693,7 @@ export default function Home() {
     name,
     settings: settings(),
   });
-  const restoreSettings = (s: Settings) => {
+  const restoreSettings = useCallback((s: Settings) => {
     setTool(s.tool);
     setZoom(s.zoom);
     setColor(s.color);
@@ -1714,7 +1723,37 @@ export default function Home() {
     setExportTargetBytes(s.exportTargetBytes);
     setText(s.text);
     setFontSize(s.fontSize);
-  };
+  }, [
+    setTool,
+    setZoom,
+    setColor,
+    setBackgroundColor,
+    setSize,
+    setBrushOpacity,
+    setHardness,
+    setPressureSize,
+    setPressureOpacity,
+    setBrushPreset,
+    setBrushSpacing,
+    setBrushAngle,
+    setBrushRoundness,
+    setBrushFlipX,
+    setBrushFlipY,
+    setPatternId,
+    setPatternTileSize,
+    setRedEyeThreshold,
+    setRedEyeAmount,
+    setColorTolerance,
+    setTonalExposure,
+    setTonalRange,
+    setSpongeMode,
+    setSpongeVibrance,
+    setExportFormat,
+    setExportQuality,
+    setExportTargetBytes,
+    setText,
+    setFontSize,
+  ]);
   const applyBrushPreset = (id: BrushPresetId) => {
     const preset = brushPresetById(id);
     if (!preset) return;
@@ -3207,7 +3246,7 @@ export default function Home() {
       cancelled = true;
     };
     // Settings are loaded once from the opening bookmark.
-  }, [assets, commit, install, paint]);
+  }, [assets, commit, install, paint, restoreSettings]);
   useLayoutEffect(() => {
     if (!ready || index.current < 0 || discarding.current) return;
     const sequence = ++saveSequence.current;
@@ -8226,24 +8265,27 @@ export default function Home() {
           aria-label="Tools"
           data-testid="tool-palette"
         >
-          {TOOL_CATEGORIES.map((category) => (
+          {TOOL_CATEGORIES.map((category) => {
+            const compactTools = compactCategoryTools(category, tool, toolFamilyChoices);
+            const layout = compactTools.length === 1 ? 'one' : compactTools.length === 2 ? 'two' : 'many';
+            return (
             <section
-              className="tool-category"
+              className={`tool-category tool-category--${layout}`}
               aria-label={`${category.label} tools`}
               key={category.id}
             >
               <h3>{category.label}</h3>
-              <div className="tool-category-grid">
-                {compactCategoryTools(category, tool).map((toolId) => {
+              <div className={`tool-category-grid tool-category-grid--${layout}`}>
+                {compactTools.map((toolId) => {
                   const item = TOOLS.find((candidate) => candidate.id === toolId);
                   if (!item) return null;
                   const { id, label, icon: Icon, key } = item,
                     flyout = flyoutForTool(id),
                     subtools = flyout ? flyoutTools(flyout) : [];
                   return (
-                    <div className="tool-button-wrap" key={id}>
+                    <div className="tool-button-wrap" key={flyout ? `family-${flyout}` : id}>
                       <button
-                        id={`toolbar-${id}`}
+                        id={`toolbar-${flyout ?? id}`}
                         className={tool === id ? 'active' : ''}
                         data-tool-id={id}
                         onPointerDown={(event) => {
@@ -8334,7 +8376,8 @@ export default function Home() {
                 })}
               </div>
             </section>
-          ))}
+            );
+          })}
           <button
             className={
               quickMasking ? 'active quick-mask-tool' : 'quick-mask-tool'

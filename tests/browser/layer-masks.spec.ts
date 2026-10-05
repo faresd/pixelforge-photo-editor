@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect, type Page } from '@playwright/test';
 
 const startEditor = async (page: Page) => {
@@ -49,7 +50,7 @@ const downloadProject = async (page: Page) => {
 const createSelectionMask = async (page: Page) => {
   const canvas = page.getByTestId('editor-canvas');
   const box = (await canvas.boundingBox())!;
-  await page.getByRole('button', { name: 'Select tool', exact: true }).click();
+  await selectTool(page, 'Select');
   await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.2);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.7, {
@@ -207,7 +208,7 @@ test('mask controls are guarded for locked, hidden and non-raster layers and rem
   expect(removedLayer.maskEnabled).toBeUndefined();
   expect(removedLayer.maskInverted).toBeUndefined();
 
-  await page.getByRole('button', { name: 'Text tool', exact: true }).click();
+  await selectTool(page, 'Text');
   await page.getByTestId('editor-canvas').click({ position: { x: 50, y: 50 } });
   await expect(
     page.getByRole('button', { name: 'Mask from selection', exact: true }),

@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect, type Page } from '@playwright/test';
 
 type PathLayer = {
@@ -47,7 +48,7 @@ const clickCanvas = async (page: Page, x: number, y: number) => {
 };
 
 const closeTriangle = async (page: Page) => {
-  await page.getByRole('button', { name: 'Pen tool', exact: true }).click();
+  await selectTool(page, 'Pen');
   await clickCanvas(page, 0.25, 0.25);
   await clickCanvas(page, 0.75, 0.25);
   await clickCanvas(page, 0.5, 0.75);
@@ -166,7 +167,7 @@ test('Direct Selection A moves a path node with undo/redo and rejects locked pat
 
 test('Escape and touch cancellation leave an open Pen gesture out of history on desktop and mobile', async ({ page }) => {
   const before = await project(page);
-  await page.getByRole('button', { name: 'Pen tool', exact: true }).click();
+  await selectTool(page, 'Pen');
   await clickCanvas(page, 0.2, 0.2);
   await clickCanvas(page, 0.7, 0.2);
   await page.keyboard.press('Escape');

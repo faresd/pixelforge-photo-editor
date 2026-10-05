@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect } from '@playwright/test';
 
 test.beforeEach(async ({ page }) => {
@@ -13,7 +14,7 @@ test('publishes render, paint, local-save and export operation marks', async ({ 
   await expect(page.getByLabel('Draft save status')).toHaveText('Saved on this device');
 
   const canvas = page.getByTestId('editor-canvas');
-  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await selectTool(page, 'Brush');
   const bounds = (await canvas.boundingBox())!;
   await page.mouse.move(bounds.x + bounds.width * 0.25, bounds.y + bounds.height * 0.45);
   await page.mouse.down();

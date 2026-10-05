@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect, type Page } from '@playwright/test';
 
 const openEditor = async (page: Page) => {
@@ -171,9 +172,7 @@ test('Pattern Stamp refuses locked raster layers without changing pixels', async
   await page
     .getByRole('button', { name: 'Add paint layer', exact: true })
     .click();
-  await page
-    .getByRole('button', { name: 'Pattern Stamp tool', exact: true })
-    .click();
+  await selectTool(page, 'Pattern Stamp');
   const before = await project(page);
   await page.getByLabel('Lock layer', { exact: true }).check();
   const point = await canvasPoint(page);
@@ -201,7 +200,7 @@ test('Pattern Stamp refuses locked raster layers without changing pixels', async
 
 test('Pattern Stamp pointer cancellation restores the source frame without history', async ({ page }) => {
   await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
-  await page.getByRole('button', { name: 'Pattern Stamp tool', exact: true }).click();
+  await selectTool(page, 'Pattern Stamp');
   const before = await project(page);
   const start = await canvasPoint(page, 0.45);
   const end = await canvasPoint(page, 0.6);

@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect, type Page } from '@playwright/test';
 
 type Asset = { url: string; w: number; h: number };
@@ -111,7 +112,7 @@ test('Mask Brush reveals and Mask Eraser conceals alpha nondestructively with un
   expect(edgeBefore[3]).toBe(0);
   expect(centerBefore[3]).toBe(255);
 
-  await page.getByRole('button', { name: 'Mask Brush tool', exact: true }).click();
+  await selectTool(page, 'Mask Brush');
   await page.getByLabel('Size', { exact: true }).fill('2');
   await clickCanvasPoint(page, 0, 0);
   await expect(page.locator('footer')).toContainText('Mask Brush revealed masked pixels');
@@ -122,7 +123,7 @@ test('Mask Brush reveals and Mask Eraser conceals alpha nondestructively with un
   const [edgeAfterReveal] = await sampleAsset(page, revealed.assets[revealedLayer.mask!], [[0, 0]]);
   expect(edgeAfterReveal[3]).toBeGreaterThan(0);
 
-  await page.getByRole('button', { name: 'Mask Eraser tool', exact: true }).click();
+  await selectTool(page, 'Mask Eraser');
   await clickCanvasPoint(page, 2, 2);
   await expect(page.locator('footer')).toContainText('Mask Eraser concealed pixels');
   const concealed = await project(page);
@@ -147,7 +148,7 @@ test('Mask Brush reveals and Mask Eraser conceals alpha nondestructively with un
 
 test('mask refinement refuses missing masks and locked layers without changing the draft', async ({ page }) => {
   await importFixture(page);
-  await page.getByRole('button', { name: 'Mask Brush tool', exact: true }).click();
+  await selectTool(page, 'Mask Brush');
   await clickCanvasPoint(page, 2, 2);
   await expect(page.locator('footer')).toContainText('Create a layer mask or remove a background before refining');
   const before = await project(page);
@@ -170,7 +171,7 @@ test('touch cancellation discards a mask preview without growing history', async
   const before = await project(page);
   const canvas = page.getByTestId('editor-canvas');
   const box = (await canvas.boundingBox())!;
-  await page.getByRole('button', { name: 'Mask Eraser tool', exact: true }).click();
+  await selectTool(page, 'Mask Eraser');
   await canvas.evaluate((element) => { element.setPointerCapture = () => undefined; });
   const point = { x: box.x + box.width * 0.5, y: box.y + box.height * 0.5 };
   await canvas.dispatchEvent('pointerdown', {

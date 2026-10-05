@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect, type Page } from '@playwright/test';
 
 const png =
@@ -59,7 +60,7 @@ test.beforeEach(async ({ page }) => {
 test('editable text, layer properties, history and assets survive project export and reload', async ({
   page,
 }) => {
-  await page.getByRole('button', { name: 'Text tool', exact: true }).click();
+  await selectTool(page, 'Text');
   await page.getByTestId('editor-canvas').click();
   await page
     .getByLabel('Edit layer text', { exact: true })
@@ -368,7 +369,7 @@ test('pencil paints a hard raster stroke and persists its tool state', async ({
   page,
 }) => {
   await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
-  await page.getByRole('button', { name: 'Pencil tool', exact: true }).click();
+  await selectTool(page, 'Pencil');
   await page.getByLabel('Size', { exact: true }).fill('8');
   await page.getByLabel('Opacity', { exact: true }).fill('70');
   const initial = await project(page),
@@ -436,7 +437,7 @@ test('color replacement changes sampled pixels and persists tolerance', async ({
   await page.getByLabel('Layer X', { exact: true }).fill('4');
   await page.getByLabel('Layer X', { exact: true }).press('Enter');
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
-  await page.getByRole('button', { name: 'Color Replace tool', exact: true }).click();
+  await selectTool(page, 'Color Replace');
   await page.getByLabel('Drawing color', { exact: true }).fill('#00ff4c');
   await page.getByLabel('Size', { exact: true }).fill('10');
   await page.getByLabel('Opacity', { exact: true }).fill('100');
@@ -541,7 +542,7 @@ test('layer position, blending and visibility produce exact composite pixels', a
 test('vector shapes remain editable through property edits, rotation and undo', async ({
   page,
 }) => {
-  await page.getByRole('button', { name: 'Shape tool', exact: true }).click();
+  await selectTool(page, 'Shape');
   const canvas = page.getByTestId('editor-canvas');
   await canvas.scrollIntoViewIfNeeded();
   const box = (await canvas.boundingBox())!;
@@ -575,7 +576,7 @@ test('vector shapes remain editable through property edits, rotation and undo', 
 test('ellipse layers stay vector-editable through export and reload', async ({
   page,
 }) => {
-  await page.getByRole('button', { name: 'Ellipse tool', exact: true }).click();
+  await selectTool(page, 'Ellipse');
   const canvas = page.getByTestId('editor-canvas');
   const box = (await canvas.boundingBox())!;
   await page.mouse.move(box.x + box.width * 0.25, box.y + box.height * 0.25);
@@ -605,7 +606,7 @@ test('polygon layers render filled pixels, keep editable sides, and round-trip w
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
   await page.getByLabel('Drawing color', { exact: true }).fill('#ff0000');
-  await page.getByRole('button', { name: 'Polygon tool', exact: true }).click();
+  await selectTool(page, 'Polygon');
   const canvas = page.getByTestId('editor-canvas'), box = (await canvas.boundingBox())!;
   await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.2);
   await page.mouse.down();
@@ -638,7 +639,7 @@ test('line layers preserve stroke pixels and geometry through reload', async ({
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
   await page.getByLabel('Drawing color', { exact: true }).fill('#00ff00');
-  await page.getByRole('button', { name: 'Line tool', exact: true }).click();
+  await selectTool(page, 'Line');
   const canvas = page.getByTestId('editor-canvas'), box = (await canvas.boundingBox())!;
   await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.25);
   await page.mouse.down();
@@ -666,7 +667,7 @@ test('paint bucket fills a contiguous raster region and is undoable', async ({
   const canvas = page.getByTestId('editor-canvas');
   const before = await pixels(page);
   await page.getByLabel('Drawing color', { exact: true }).fill('#00ff00');
-  await page.getByRole('button', { name: 'Fill tool', exact: true }).click();
+  await selectTool(page, 'Fill');
   const box = (await canvas.boundingBox())!;
   await canvas.click({ position: { x: box.width / 2, y: box.height / 2 } });
   await expect.poll(() => pixels(page)).not.toBe(before);
@@ -678,7 +679,7 @@ test('paint bucket fills a contiguous raster region and is undoable', async ({
 test('eyedropper samples a rendered pixel into the drawing color', async ({
   page,
 }) => {
-  await page.getByRole('button', { name: 'Eyedropper tool', exact: true }).click();
+  await selectTool(page, 'Eyedropper');
   const canvas = page.getByTestId('editor-canvas');
   const box = (await canvas.boundingBox())!;
   await canvas.click({ position: { x: box.width / 2, y: box.height / 2 } });
@@ -691,14 +692,14 @@ test('zoom tool increases the document view without changing pixels', async ({
   page,
 }) => {
   const before = await pixels(page);
-  await page.getByRole('button', { name: 'Zoom tool', exact: true }).click();
+  await selectTool(page, 'Zoom');
   await page.getByTestId('editor-canvas').click();
   await expect(page.getByLabel('Zoom', { exact: true })).toHaveValue('82');
   expect(await pixels(page)).toBe(before);
 });
 
 test('hand tool provides a pannable canvas gesture', async ({ page }) => {
-  await page.getByRole('button', { name: 'Hand tool', exact: true }).click();
+  await selectTool(page, 'Hand');
   const canvas = page.getByTestId('editor-canvas');
   const box = (await canvas.boundingBox())!;
   await page.mouse.move(box.x + 120, box.y + 120);
@@ -715,7 +716,7 @@ test('gradient tool applies an undoable color fade to a raster layer', async ({
 }) => {
   const canvas = page.getByTestId('editor-canvas'), before = await pixels(page),
     box = (await canvas.boundingBox())!;
-  await page.getByRole('button', { name: 'Gradient tool', exact: true }).click();
+  await selectTool(page, 'Gradient');
   await page.mouse.move(box.x + 100, box.y + 100);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width - 100, box.y + box.height - 100, { steps: 5 });
@@ -727,7 +728,7 @@ test('clone and healing tools use an explicit source point and commit raster edi
   page,
 }) => {
   const canvas = page.getByTestId('editor-canvas'), box = (await canvas.boundingBox())!;
-  await page.getByRole('button', { name: 'Clone tool', exact: true }).click();
+  await selectTool(page, 'Clone');
   await canvas.click({ position: { x: box.width * 0.25, y: box.height * 0.25 } });
   await expect(page.getByText('Clone source set; drag on the image to paint it', { exact: true })).toBeVisible();
   await page.mouse.move(box.x + box.width * 0.55, box.y + box.height * 0.55);
@@ -735,7 +736,7 @@ test('clone and healing tools use an explicit source point and commit raster edi
   await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.7, { steps: 4 });
   await page.mouse.up();
   await expect(page.getByText('Clone stroke applied', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Healing tool', exact: true }).click();
+  await selectTool(page, 'Healing');
   await canvas.click({ position: { x: box.width * 0.2, y: box.height * 0.2 } });
   await expect(page.getByText('Clone source set; drag on the image to paint it', { exact: true })).toBeVisible();
 });
@@ -743,7 +744,7 @@ test('clone and healing tools use an explicit source point and commit raster edi
 test('rectangular selection creates a nondestructive raster mask and survives reload', async ({
   page,
 }) => {
-  await page.getByRole('button', { name: 'Select tool', exact: true }).click();
+  await selectTool(page, 'Select');
   const canvas = page.getByTestId('editor-canvas');
   const box = (await canvas.boundingBox())!;
   await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.2);
@@ -786,7 +787,7 @@ test('rectangular selection creates a nondestructive raster mask and survives re
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Undo/ }).click();
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '720');
-  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await selectTool(page, 'Brush');
   await page.getByLabel('Size', { exact: true }).fill('12');
   const resizedCanvas = page.getByTestId('editor-canvas');
   await resizedCanvas.scrollIntoViewIfNeeded();
@@ -813,7 +814,7 @@ test('rectangular selection creates a nondestructive raster mask and survives re
 test('elliptical marquee persists its geometry and can be inverted', async ({
   page,
 }) => {
-  await page.getByRole('button', { name: 'Elliptical marquee tool', exact: true }).click();
+  await selectTool(page, 'Elliptical marquee');
   const canvas = page.getByTestId('editor-canvas');
   const box = (await canvas.boundingBox())!;
   await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.25);
@@ -921,7 +922,7 @@ test('single row and column marquees select one pixel across the frame and persi
 test('lasso selection stores polygon points and survives project round-trip', async ({
   page,
 }) => {
-  await page.getByRole('button', { name: 'Lasso tool', exact: true }).click();
+  await selectTool(page, 'Lasso');
   const canvas = page.getByTestId('editor-canvas');
   const box = (await canvas.boundingBox())!;
   const points = [
@@ -950,7 +951,7 @@ test('Magnetic Lasso snaps an edge-following path and survives reload', async ({
 }) => {
   const canvas = page.getByTestId('editor-canvas');
   const box = (await canvas.boundingBox())!;
-  await page.getByRole('button', { name: 'Magnetic Lasso tool', exact: true }).click();
+  await selectTool(page, 'Magnetic Lasso');
   await expect(page.getByText(/Magnetic Lasso:/)).toBeVisible();
   const points = [
     [0.16, 0.18],
@@ -979,7 +980,7 @@ test('Magnetic Lasso touch cancellation leaves the draft unchanged', async ({
   testInfo.skip(testInfo.project.name !== 'mobile', 'Touch cancellation runs in the mobile profile');
   const canvas = page.getByTestId('editor-canvas');
   const box = (await canvas.boundingBox())!;
-  await page.getByRole('button', { name: 'Magnetic Lasso tool', exact: true }).click();
+  await selectTool(page, 'Magnetic Lasso');
   await page.touchscreen.tap(box.x + box.width * 0.25, box.y + box.height * 0.25);
   await page.keyboard.press('Escape');
   await expect(page.getByText('Magnetic Lasso cancelled', { exact: true })).toBeVisible();
@@ -992,7 +993,7 @@ test('polygonal lasso closes by vertex, masks representative pixels and survives
 }) => {
   const canvas = page.getByTestId('editor-canvas');
   const box = (await canvas.boundingBox())!;
-  await page.getByRole('button', { name: 'Polygonal Lasso tool', exact: true }).click();
+  await selectTool(page, 'Polygonal Lasso');
   const points = [
     [0.2, 0.2],
     [0.8, 0.2],
@@ -1055,7 +1056,7 @@ test('polygonal lasso closes by vertex, masks representative pixels and survives
 test('polygonal lasso double-click finalizes a desktop path', async ({ page }, testInfo) => {
   testInfo.skip(testInfo.project.name !== 'desktop', 'Double-click coverage runs in the desktop profile');
   const canvas = page.getByTestId('editor-canvas'), box = (await canvas.boundingBox())!;
-  await page.getByRole('button', { name: 'Polygonal Lasso tool', exact: true }).click();
+  await selectTool(page, 'Polygonal Lasso');
   const points = [
     [0.2, 0.2],
     [0.8, 0.2],
@@ -1074,7 +1075,7 @@ test('polygonal lasso double-click finalizes a desktop path', async ({ page }, t
 test('polygonal lasso touch taps close on mobile and persist the same geometry', async ({ page }, testInfo) => {
   testInfo.skip(testInfo.project.name !== 'mobile', 'Touch coverage runs in the mobile profile');
   const canvas = page.getByTestId('editor-canvas'), box = (await canvas.boundingBox())!;
-  await page.getByRole('button', { name: 'Polygonal Lasso tool', exact: true }).click();
+  await selectTool(page, 'Polygonal Lasso');
   const points = [
     [0.2, 0.2],
     [0.8, 0.2],
@@ -1093,7 +1094,7 @@ test('polygonal lasso touch taps close on mobile and persist the same geometry',
 
 test('Escape cancels an unfinished polygonal lasso without saving a selection', async ({ page }) => {
   const canvas = page.getByTestId('editor-canvas'), box = (await canvas.boundingBox())!;
-  await page.getByRole('button', { name: 'Polygonal Lasso tool', exact: true }).click();
+  await selectTool(page, 'Polygonal Lasso');
   await page.mouse.click(box.x + box.width * 0.2, box.y + box.height * 0.2);
   await page.mouse.click(box.x + box.width * 0.8, box.y + box.height * 0.2);
   await page.keyboard.press('Escape');
@@ -1111,13 +1112,13 @@ test('selection add mode composes geometry and masks pixels nondestructively', a
 }) => {
   const canvas = page.getByTestId('editor-canvas');
   const box = (await canvas.boundingBox())!;
-  await page.getByRole('button', { name: 'Select tool', exact: true }).click();
+  await selectTool(page, 'Select');
   await page.mouse.move(box.x + box.width * 0.1, box.y + box.height * 0.2);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width * 0.35, box.y + box.height * 0.8, { steps: 3 });
   await page.mouse.up();
   await page.getByLabel('Selection mode', { exact: true }).selectOption('add');
-  await page.getByRole('button', { name: 'Elliptical marquee tool', exact: true }).click();
+  await selectTool(page, 'Elliptical marquee');
   await page.mouse.move(box.x + box.width * 0.65, box.y + box.height * 0.2);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width * 0.9, box.y + box.height * 0.8, { steps: 3 });
@@ -1138,7 +1139,7 @@ test('magic wand persists a color-based alpha selection and converts it to a lay
   page,
 }) => {
   const canvas = page.getByTestId('editor-canvas');
-  await page.getByRole('button', { name: 'Magic Wand tool', exact: true }).click();
+  await selectTool(page, 'Magic Wand');
   await canvas.click({ position: { x: 20, y: 20 } });
   const exported = await project(page),
     frame = exported.value.history[exported.value.index],

@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect, type Page } from '@playwright/test';
 
 type ProjectLayer = {
@@ -92,7 +93,7 @@ const dispatchPointer = async (
 };
 
 const beginPatch = async (page: Page) => {
-  await page.getByRole('button', { name: 'Patch tool', exact: true }).click();
+  await selectTool(page, 'Patch');
   await expect(
     page.getByRole('button', { name: 'Patch tool', exact: true }),
   ).toHaveAttribute('aria-pressed', 'true');

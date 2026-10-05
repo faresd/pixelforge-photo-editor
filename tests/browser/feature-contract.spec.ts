@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
@@ -102,7 +103,7 @@ test('eraser removes raster alpha, supports undo/redo, and persists through relo
     .click();
   await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
   await page.getByLabel('Drawing color', { exact: true }).fill('#e11a2b');
-  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await selectTool(page, 'Brush');
   await page.getByLabel('Size', { exact: true }).fill('80');
   await page.getByLabel('Hardness', { exact: true }).fill('100');
   await page.getByLabel('Opacity', { exact: true }).fill('100');
@@ -115,7 +116,7 @@ test('eraser removes raster alpha, supports undo/redo, and persists through relo
   expect(painted.kind).toBe('raster');
   expect((await assetPixel(page, paintedAsset))[3]).toBeGreaterThan(200);
 
-  await page.getByRole('button', { name: 'Eraser tool', exact: true }).click();
+  await selectTool(page, 'Eraser');
   await dragCanvas(page, [0.35, 0.5], [0.65, 0.5]);
   await saved(page);
   exported = await project(page);
@@ -147,7 +148,7 @@ test('selection subtract and intersect compose deterministic alpha masks', async
     await page
       .getByRole('menuitem', { name: /^New white document/ })
       .click();
-    await page.getByRole('button', { name: 'Select tool', exact: true }).click();
+    await selectTool(page, 'Select');
     await dragCanvas(page, [0.1, 0.15], [0.6, 0.85]);
     await page.getByLabel('Selection mode', { exact: true }).selectOption(operation);
     await dragCanvas(page, [0.4, 0.15], [0.9, 0.85]);
@@ -191,7 +192,7 @@ test('feathered selections preserve intermediate edge alpha and survive reload',
   await page
     .getByRole('menuitem', { name: /^New white document/ })
       .click();
-  await page.getByRole('button', { name: 'Select tool', exact: true }).click();
+  await selectTool(page, 'Select');
   await dragCanvas(page, [0.25, 0.2], [0.75, 0.8]);
   await page.getByLabel('Selection feather', { exact: true }).fill('40');
   await expect(page.getByText('Selection feather set to 40 px', { exact: true })).toBeVisible();

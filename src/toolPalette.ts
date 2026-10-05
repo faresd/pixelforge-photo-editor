@@ -98,6 +98,7 @@ export function categoryForTool(tool: string): string | undefined {
 export function compactCategoryTools(
   category: ToolCategory,
   activeTool?: string,
+  rememberedChoices?: Readonly<Record<string, string>>,
 ): readonly PaletteToolId[] {
   const result: PaletteToolId[] = [];
   const positions = new Map<string, number>();
@@ -110,6 +111,23 @@ export function compactCategoryTools(
       result.push(tool);
     } else if (tool === activeTool) {
       result[existing] = tool;
+    }
+  }
+  // A family keeps the last selected variant when the active tool moves to a
+  // different family. This mirrors Photoshop's toolbar and avoids resetting a
+  // carefully chosen subtool every time the user returns to its slot.
+  if (rememberedChoices) {
+    for (const [family, remembered] of Object.entries(rememberedChoices)) {
+      const position = positions.get(`flyout:${family}`);
+      if (position === undefined || !category.tools.includes(remembered as PaletteToolId)) continue;
+      const flyout = TOOL_FLYOUTS[family];
+      if (flyout?.includes(remembered as PaletteToolId))
+        result[position] = remembered as PaletteToolId;
+    }
+    const activeFamily = activeTool && flyoutForTool(activeTool);
+    if (activeFamily) {
+      const position = positions.get(`flyout:${activeFamily}`);
+      if (position !== undefined) result[position] = activeTool as PaletteToolId;
     }
   }
   return result;

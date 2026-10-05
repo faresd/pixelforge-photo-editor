@@ -46,6 +46,8 @@ const drawShape = async (page: Page, x: number, y: number, w: number, h: number)
 
 test.beforeEach(async ({ page }) => editor(page));
 
+const additiveModifier: 'Meta' | 'Control' = process.platform === 'darwin' ? 'Meta' : 'Control';
+
 test('multi-select supports shift ranges, modifier toggles, persistence and menu commands', async ({
   page,
 }) => {
@@ -60,7 +62,7 @@ test('multi-select supports shift ranges, modifier toggles, persistence and menu
   await expect(shape1).toHaveAttribute('data-selected', 'true');
   await expect(shape2).toHaveAttribute('data-selected', 'true');
   await expect(shape3).toHaveAttribute('data-selected', 'true');
-  await shape2.click({ modifiers: ['Control'] });
+  await shape2.click({ modifiers: [additiveModifier] });
   await expect(shape2).toHaveAttribute('data-selected', 'false');
   let out = await project(page);
   let frame = out.history[out.index];
