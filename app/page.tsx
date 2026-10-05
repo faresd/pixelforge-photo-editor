@@ -78,6 +78,7 @@ import {
   replaceColorStroke,
   renderFrame,
   groupLayerMembers,
+  assignLayerToGroup,
   transformSelection as transformSelectionModel,
   surface,
   transformFrameWithMasks,
@@ -388,6 +389,7 @@ type Command =
   | 'filter-color-halftone'
   | 'filter-pinch'
   | 'filter-ripple'
+  | 'filter-spherize'
   | 'filter-twirl'
   | 'filter-wave'
   | 'filter-clear-effect'
@@ -786,7 +788,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Pinch…', command: 'filter-pinch' },
     { label: 'Ripple…', command: 'filter-ripple' },
     { label: 'Shear…', command: 'noop', disabled: true },
-    { label: 'Spherize…', command: 'noop', disabled: true },
+    { label: 'Spherize…', command: 'filter-spherize' },
     { label: 'Twirl…', command: 'filter-twirl' },
     { label: 'Wave…', command: 'filter-wave' },
     { label: 'Noise', command: 'noop', disabled: true },
@@ -2423,6 +2425,21 @@ export default function Home() {
       setNotice('Unlock this layer before editing');
       return false;
     }
+    if ('groupId' in patch) {
+      let grouped: Frame;
+      try {
+        grouped = assignLayerToGroup(f, layer.id, patch.groupId);
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : 'Layer folder could not be updated');
+        return false;
+      }
+      if (JSON.stringify(grouped) === JSON.stringify(f)) return true;
+      if (commit(grouped)) {
+        setNotice(patch.groupId ? 'Layer added to folder' : 'Layer removed from folder');
+        return true;
+      }
+      return false;
+    }
     const next =
       patch.kind && patch.kind !== layer.kind
         ? (patch as Layer)
@@ -3245,6 +3262,8 @@ export default function Home() {
                     ? 10
                     : type === 'pinch'
                       ? 40
+                      : type === 'spherize'
+                        ? 40
                       : type === 'radial-blur'
                         ? 18
                         : type === 'wave'
@@ -3848,14 +3867,21 @@ export default function Home() {
       void paint(f);
       return false;
     }
-    if (
-      commit({
-        ...f,
-        layers: [...f.layers, layer],
-        active: layer.id,
-        selectedLayerIds: [layer.id],
-      })
-    ) {
+    let next: Frame = {
+      ...f,
+      layers: [...f.layers, layer],
+      active: layer.id,
+      selectedLayerIds: [layer.id],
+    };
+    if (layer.groupId) {
+      try {
+        next = assignLayerToGroup(next, layer.id, layer.groupId);
+      } catch {
+        setNotice('Layer folder could not be restored');
+        return false;
+      }
+    }
+    if (commit(next)) {
       setNotice('Layer added');
       return true;
     }
@@ -4068,13 +4094,28 @@ export default function Home() {
       name: (layer.name + ' copy').slice(0, 160),
       locked: false,
     }));
+    let next: Frame = {
+      ...f,
+      layers: [...f.layers, ...copies],
+      active: copies.at(-1)!.id,
+      selectedLayerIds: copies.map((layer) => layer.id),
+    };
+    // Copies of grouped layers inherit their folder, so normalize every
+    // affected folder after appending the copies instead of leaving a second
+    // block at the end of the flat stack.
+    for (const groupId of new Set(
+      copies.flatMap((layer) => (layer.groupId ? [layer.groupId] : [])),
+    )) {
+      const memberIds = next.layers
+        .filter((layer) => layer.groupId === groupId)
+        .map((layer) => layer.id);
+      next = {
+        ...next,
+        layers: groupLayerMembers(next, memberIds, groupId).layers,
+      };
+    }
     if (
-      commit({
-        ...f,
-        layers: [...f.layers, ...copies],
-        active: copies.at(-1)!.id,
-        selectedLayerIds: copies.map((layer) => layer.id),
-      })
+      commit(next)
     )
       setNotice(
         copies.length === 1
@@ -4387,7 +4428,19 @@ export default function Home() {
     const layers = f.layers.filter((layer) => !ids.has(layer.id)),
       active = layers.find((layer) => layer.id === f.active)?.id || layers.at(-1)!.id,
       selectedLayerIds = selectedIdsForFrame(f).filter((id) => !ids.has(id));
-    if (!commit({ ...f, layers, active, selectedLayerIds })) return false;
+    const usedGroups = new Set(
+      layers.flatMap((layer) => (layer.groupId ? [layer.groupId] : [])),
+    );
+    if (
+      !commit({
+        ...f,
+        layers,
+        groups: (f.groups || []).filter((group) => usedGroups.has(group.id)),
+        active,
+        selectedLayerIds,
+      })
+    )
+      return false;
     setNotice(
       selected.length === 1
         ? 'Layer deleted. Undo restores it.'
@@ -7869,6 +7922,8 @@ export default function Home() {
       chooseFilterEffect('ripple', 'Ripple');
     else if (command === 'filter-pinch')
       chooseFilterEffect('pinch', 'Pinch');
+    else if (command === 'filter-spherize')
+      chooseFilterEffect('spherize', 'Spherize');
     else if (command === 'filter-twirl') chooseFilterEffect('twirl', 'Twirl');
     else if (command === 'filter-wave') chooseFilterEffect('wave', 'Wave');
     else if (command === 'crop') {
@@ -8035,6 +8090,7 @@ export default function Home() {
       case 'filter-mosaic':
       case 'filter-color-halftone':
       case 'filter-ripple':
+      case 'filter-spherize':
       case 'filter-twirl':
       case 'filter-wave':
       case 'filter-clear-effect':
@@ -9977,6 +10033,8 @@ export default function Home() {
                           ? 'Angular sweep'
                       : filterEffects.type === 'pinch'
                           ? 'Pinch radius'
+                      : filterEffects.type === 'spherize'
+                          ? 'Spherize radius'
                       : filterEffects.type === 'wave'
                           ? 'Wave length'
                       : 'Radius'
@@ -10019,6 +10077,26 @@ export default function Home() {
                     />
                     <Slider
                       label="Pinch center Y"
+                      value={Math.round(filterEffects.centerY * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      suffix="%"
+                    />
+                  </>
+                )}
+                {filterEffects.type === 'spherize' && (
+                  <>
+                    <Slider
+                      label="Spherize center X"
+                      value={Math.round(filterEffects.centerX * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      suffix="%"
+                    />
+                    <Slider
+                      label="Spherize center Y"
                       value={Math.round(filterEffects.centerY * 100)}
                       min={0}
                       max={100}

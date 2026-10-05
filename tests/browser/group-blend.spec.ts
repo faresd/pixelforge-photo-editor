@@ -236,3 +236,26 @@ test('keeps non-contiguous folder members deterministic at the first member stac
   );
   await expect.poll(() => overlapPixel(page)).toEqual([0, 255, 0, 255]);
 });
+
+test('moving a layer between folders keeps members contiguous and removes empty folders', async ({
+  page,
+}) => {
+  await drawShape(page, 0.2, 0.2, 0.18, 0.16, '#ff0000');
+  await drawShape(page, 0.45, 0.3, 0.18, 0.16, '#0000ff');
+
+  await page.getByRole('button', { name: 'Select layer Shape 1', exact: true }).click();
+  await page.getByRole('button', { name: 'Group active layer', exact: true }).click();
+  await page.getByRole('button', { name: 'Select layer Shape 2', exact: true }).click();
+  await page.getByRole('button', { name: 'Group active layer', exact: true }).click();
+
+  await page.getByRole('button', { name: 'Select layer Shape 1', exact: true }).click();
+  await page.getByLabel('Layer folder', { exact: true }).selectOption({ label: 'Group 2' });
+  const exported = await project(page);
+  const frame = exported.value.history[exported.value.index];
+
+  expect(frame.groups).toHaveLength(1);
+  expect(frame.groups![0].name).toBe('Group 2');
+  const shapes = frame.layers.filter((layer) => layer.name.startsWith('Shape'));
+  expect(shapes.map((layer) => layer.name)).toEqual(['Shape 1', 'Shape 2']);
+  expect(shapes.every((layer) => layer.groupId === frame.groups![0].id)).toBe(true);
+});

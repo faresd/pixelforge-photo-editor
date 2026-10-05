@@ -255,6 +255,38 @@ test('ripple and twirl are stable remaps and retain transparent pixels', () => {
   }
 });
 
+test('spherize is a bounded radial remap with editable centre and alpha-safe edges', () => {
+  const source = rgba(13, 9, (x, y) => {
+    if (x === 0 && y === 0) return [241, 17, 233, 0];
+    return [(x * 31 + y * 7) % 256, (x * 11 + y * 23) % 256, (x * 5 + y * 17) % 256, 255];
+  });
+  const original = source.slice();
+  const effect = {
+    type: 'spherize',
+    amount: 100,
+    radius: 48,
+    centerX: 0.5,
+    centerY: 0.5,
+  };
+  const first = applyFilterEffectsPixels(source, 13, 9, effect);
+  assert.deepEqual(first, applyFilterEffectsPixels(source, 13, 9, effect));
+  assert.deepEqual(source, original);
+  assert.equal(pixel(first, 13, 0, 0)[3], 0);
+  assert.deepEqual(pixel(first, 13, 0, 0).slice(0, 3), [241, 17, 233]);
+  assert.deepEqual(pixel(first, 13, 6, 4), pixel(source, 13, 6, 4));
+  assert.notDeepEqual(pixel(first, 13, 4, 4), pixel(source, 13, 4, 4));
+  const normalized = effectiveFilterEffects({ ...effect, amount: 140, radius: 99, centerX: -2, centerY: 9 });
+  assert.deepEqual(
+    { type: normalized.type, amount: normalized.amount, radius: normalized.radius, centerX: normalized.centerX, centerY: normalized.centerY },
+    { type: 'spherize', amount: 100, radius: 64, centerX: 0, centerY: 1 },
+  );
+  assert.equal(validFilterEffects(normalized), true);
+  assert.deepEqual(
+    applyFilterEffectsPixels(source, 13, 9, { ...effect, amount: 0 }),
+    source,
+  );
+});
+
 test('pinch is a bounded radial remap with editable centre and alpha-safe edges', () => {
   const source = rgba(13, 9, (x, y) => {
     if (x === 0 && y === 0) return [19, 29, 39, 0];

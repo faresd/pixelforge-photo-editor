@@ -19,6 +19,7 @@ export const FILTER_EFFECT_TYPES = [
   'color-halftone',
   'pinch',
   'ripple',
+  'spherize',
   'twirl',
   'wave',
 ] as const;
@@ -614,13 +615,20 @@ function applyDistort(
         const scale = 1 - amount * falloff * falloff;
         sampleX = centerX + dx * scale;
         sampleY = centerY + dy * scale;
+      } else if (effect.type === 'spherize' && distance < radius) {
+        // Inverse-map a bounded spherical bulge with a smooth edge falloff.
+        // The exact centre and influence boundary remain stable.
+        const falloff = 1 - normalized * normalized;
+        const scale = 1 - amount * 0.5 * falloff;
+        sampleX = centerX + dx * scale;
+        sampleY = centerY + dy * scale;
       } else if (effect.type === 'ripple') {
         const wave = Math.sin(distance / Math.max(1, effect.radius || 8) * Math.PI * 2) * amount * Math.max(1, effect.radius || 8);
         sampleX = x + (dx / Math.max(1, distance)) * wave;
         sampleY = y + (dy / Math.max(1, distance)) * wave;
       }
       const sample =
-        effect.type === 'pinch'
+        (effect.type === 'pinch' || effect.type === 'spherize')
           ? sourcePixelBilinear(source, width, height, sampleX, sampleY)
           : sourcePixel(source, width, height, sampleX, sampleY);
       if (sample[3] === 0) continue;
