@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { groupLayerMembers } from '../src/document.ts';
+import { assignLayerToGroup, groupLayerMembers } from '../src/document.ts';
 
 const id = (value) => `00000000-0000-4000-8000-00000000000${value}`;
 
@@ -34,6 +34,17 @@ const frame = () => ({
   active: 'top',
   selectedLayerIds: ['middle', 'front'],
 });
+
+const groups = (ids = ['one', 'two']) =>
+  ids.map((name, index) => ({
+    id: id(index + 1),
+    name,
+    visible: true,
+    locked: false,
+    opacity: 1,
+    blend: 'source-over',
+    collapsed: false,
+  }));
 
 test('grouping moves non-adjacent selected layers into one ordered block', () => {
   const original = frame();
@@ -98,4 +109,81 @@ test('grouping rejects duplicate or missing layer ids without mutating the frame
     'top',
     'front',
   ]);
+});
+
+test('assigning a layer to a folder creates one contiguous destination block', () => {
+  const [one, two] = groups();
+  const original = {
+    ...frame(),
+    groups: [one, two],
+    layers: [
+      layer('bottom'),
+      layer('middle', { groupId: one.id }),
+      layer('top'),
+      layer('front', { groupId: one.id }),
+    ],
+  };
+  const assigned = assignLayerToGroup(original, 'top', one.id);
+  assert.deepEqual(assigned.layers.map((item) => item.id), [
+    'bottom',
+    'middle',
+    'top',
+    'front',
+  ]);
+  assert.deepEqual(
+    assigned.layers.map((item) => item.groupId),
+    [undefined, one.id, one.id, one.id],
+  );
+  assert.deepEqual(assigned.groups, [one]);
+  assert.equal(original.layers[2].groupId, undefined);
+  assert.deepEqual(original.groups, [one, two]);
+});
+
+test('removing a layer from its folder prunes the empty folder', () => {
+  const [one, two] = groups();
+  const original = {
+    ...frame(),
+    groups: [one, two],
+    layers: [
+      layer('bottom'),
+      layer('middle', { groupId: one.id }),
+      layer('top', { groupId: two.id }),
+      layer('front'),
+    ],
+  };
+  const detached = assignLayerToGroup(original, 'middle');
+  assert.equal(detached.layers.find((item) => item.id === 'middle')?.groupId, undefined);
+  assert.deepEqual(detached.groups, [two]);
+  assert.deepEqual(original.groups, [one, two]);
+});
+
+test('reselecting a folder repairs a legacy non-contiguous membership block', () => {
+  const [one] = groups(['one']);
+  const original = {
+    ...frame(),
+    groups: [one],
+    layers: [
+      layer('bottom'),
+      layer('middle', { groupId: one.id }),
+      layer('top'),
+      layer('front', { groupId: one.id }),
+    ],
+  };
+  const repaired = assignLayerToGroup(original, 'middle', one.id);
+  assert.deepEqual(repaired.layers.map((item) => item.id), [
+    'bottom',
+    'middle',
+    'front',
+    'top',
+  ]);
+  assert.deepEqual(repaired.groups, [one]);
+});
+
+test('folder assignment rejects a missing destination without mutating the frame', () => {
+  const original = { ...frame(), groups: groups(['one']) };
+  assert.throws(
+    () => assignLayerToGroup(original, 'top', id(9)),
+    /Group is missing/,
+  );
+  assert.equal(original.layers.find((item) => item.id === 'top')?.groupId, undefined);
 });

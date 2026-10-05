@@ -365,6 +365,67 @@ export function groupLayerMembers(
   return { ...frame, layers };
 }
 
+/**
+ * Move one layer into or out of a folder while preserving the flat stack's
+ * ordering contract.
+ *
+ * Assigning a layer to an existing folder must move it beside that folder's
+ * other members.  A plain `layer.groupId = ...` leaves a non-contiguous
+ * folder, which changes the folder's compositing slot and can put unrelated
+ * layers below the isolated folder surface.  Removing the last member also
+ * removes the now-empty folder so stale rows cannot accumulate in the panel.
+ * The input frame is never mutated.
+ */
+export function assignLayerToGroup(
+  frame: Frame,
+  layerId: string,
+  groupId?: string,
+): Frame {
+  if (typeof layerId !== 'string' || !layerId)
+    throw new Error('Layer id is invalid');
+  const layer = frame.layers.find((item) => item.id === layerId);
+  if (!layer) throw new Error('Layer is missing');
+  const groups = frame.groups || [];
+  if (groupId !== undefined) {
+    if (!validId(groupId)) throw new Error('Group id is invalid');
+    if (!groups.some((group) => group.id === groupId))
+      throw new Error('Group is missing');
+  }
+  if (layer.groupId === groupId) {
+    if (groupId === undefined) return frame;
+    const memberIds = frame.layers
+      .filter((item) => item.groupId === groupId)
+      .map((item) => item.id);
+    // Re-selecting the current folder is also a safe repair path for legacy
+    // drafts whose members were left non-contiguous by an older editor.
+    return groupLayerMembers(frame, memberIds, groupId);
+  }
+
+  // First detach the moved layer.  The destination members are then gathered
+  // from this detached stack and normalized into one contiguous block.
+  const detachedLayers = frame.layers.map((item) =>
+    item.id === layerId ? ({ ...item, groupId: undefined } as Layer) : item,
+  );
+  const layers =
+    groupId === undefined
+      ? detachedLayers
+      : groupLayerMembers(
+          { ...frame, layers: detachedLayers },
+          detachedLayers
+            .filter((item) => item.groupId === groupId || item.id === layerId)
+            .map((item) => item.id),
+          groupId,
+        ).layers;
+  const usedGroups = new Set(
+    layers.flatMap((item) => (item.groupId ? [item.groupId] : [])),
+  );
+  return {
+    ...frame,
+    layers,
+    groups: groups.filter((group) => usedGroups.has(group.id)),
+  };
+}
+
 /** Return true for a finite, non-singular affine matrix within safe bounds. */
 export function validMatrix(value: unknown): value is Matrix {
   return (

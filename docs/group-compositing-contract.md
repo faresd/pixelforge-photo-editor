@@ -21,6 +21,12 @@ edits. Folder changes are ordinary document revisions, so undo/redo, local
 reload, portable project export and project import preserve the folder and its
 children.
 
+The Layers panel's **Layer folder** control uses the same ordering contract as
+folder creation: assigning a layer to an existing folder moves that layer next
+to the folder's other members before committing the revision. Removing a layer
+from a folder leaves its stack position in place and removes the folder when
+the layer was its last member, so empty folder metadata cannot accumulate.
+
 The isolated surface is bounded by the same 16-megapixel frame limit as the
 document. The renderer uses one additional frame-sized surface per folder and
 does not upload pixels or mutate source buffers. Worker cancellation is checked
