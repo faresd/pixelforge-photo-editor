@@ -131,6 +131,7 @@ import {
   type AlignmentMode,
   type DistributionAxis,
 } from '../src/layerAlignment';
+import { layerMergeReason, planLayerMerge } from '../src/layerMerge';
 import CurveEditor from '../src/CurveEditor';
 import { type CurveChannel, type CurvePoints } from '../src/curves';
 import { applyAutoAdjustmentsPixels, type AutoMode } from '../src/auto';
@@ -320,6 +321,7 @@ type Command =
   | 'distribute-horizontal'
   | 'distribute-vertical'
   | 'hide-layer'
+  | 'merge-layers'
   | 'merge-visible'
   | 'flatten'
   | 'text-tool'
@@ -676,7 +678,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
       command: 'ungroup-layer',
     },
     { label: 'Hide Layers', shortcut: 'Ctrl+,', command: 'hide-layer' },
-    { label: 'Merge Layers', command: 'noop', disabled: true },
+    { label: 'Merge Layers', command: 'merge-layers' },
     { label: 'Merge Visible', command: 'merge-visible' },
     { label: 'Flatten Image', command: 'flatten' },
     { label: 'Arrange', command: 'noop', disabled: true },
@@ -4031,6 +4033,55 @@ export default function Home() {
       setNotice('Could not merge visible layers');
     }
   };
+  const mergeLayers = async () => {
+    const f = current();
+    const plan = planLayerMerge(f);
+    if (!plan.ok) {
+      setNotice(layerMergeReason(plan.reason));
+      return;
+    }
+    const beforeIndex = index.current;
+    const beforeFrame = f;
+    const lower = f.layers[plan.lowerIndex];
+    const active = f.layers[plan.activeIndex];
+    try {
+      // Render only the adjacent pair in stack order.  Group members are
+      // guarded by planLayerMerge until isolated folder compositing exists, so
+      // opacity and blend metadata cannot be accidentally applied twice.
+      const image = await renderFrame(
+        {
+          ...f,
+          layers: [lower, active],
+          groups: [],
+          active: active.id,
+        },
+        assets.current,
+      );
+      if (index.current !== beforeIndex || current() !== beforeFrame) return;
+      const mergedFrame = rasterFrame(
+        image,
+        assets.current,
+        `${lower.name || 'Lower layer'} + ${active.name || 'Active layer'}`,
+      );
+      const merged = {
+        ...mergedFrame.layers[0],
+        visible: true,
+        locked: false,
+      };
+      const layers = f.layers.slice();
+      layers.splice(plan.lowerIndex, 2, merged);
+      if (
+        commit({
+          ...f,
+          layers,
+          active: merged.id,
+        })
+      )
+        setNotice('Layers merged; undo restores the individual layers');
+    } catch {
+      setNotice('Could not merge the selected layers');
+    }
+  };
   const flattenImage = async () => {
     try {
       const f = current(),
@@ -7366,6 +7417,7 @@ export default function Home() {
     else if (command === 'distribute-vertical')
       distributeGroupLayers('vertical');
     else if (command === 'hide-layer') hideActiveLayer();
+    else if (command === 'merge-layers') return mergeLayers();
     else if (command === 'merge-visible') return mergeVisible();
     else if (command === 'flatten') return flattenImage();
     else if (command === 'patch-tool') {
@@ -7654,6 +7706,10 @@ export default function Home() {
         return !frame.selection;
       case 'hide-layer':
         return !layer || Boolean(groupForLayer(frame, layer)?.locked);
+      case 'merge-layers': {
+        const plan = planLayerMerge(frame);
+        return !plan.ok;
+      }
       case 'text-align-left':
       case 'text-align-center':
       case 'text-align-right':

@@ -25,6 +25,8 @@ test('action recipes append only allow-listed deterministic commands and remain 
     () => appendActionStep(next, 'open', 'Open image', undefined, 'step-2', now),
     /cannot be recorded/,
   );
+  const merge = appendActionStep(next, 'merge-layers', 'Merge Layers', undefined, 'step-3', now);
+  assert.equal(merge.steps.at(-1).command, 'merge-layers');
 });
 
 test('action recipes serialize and validate bounded round trips', () => {
