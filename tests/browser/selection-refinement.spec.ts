@@ -78,12 +78,35 @@ test('Grow and Contract refine alpha nondestructively and survive project reload
   saved = await project(page);
   frame = saved.history[saved.index];
   const contractedCoverage = await alphaCoverage(page, saved.assets[frame.selection!.mask!]);
+  const contractedMask = frame.selection!.mask;
   expect(contractedCoverage).toBeLessThan(grownCoverage);
+
+  await page.getByRole('button', { name: 'Select', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Border…', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Border Selection' })).toBeVisible();
+  await page.getByLabel('Selection refinement radius (px)', { exact: true }).fill('3');
+  await page.getByRole('button', { name: 'Apply selection refinement', exact: true }).click();
+  await expect(page.getByText('Selection bordered by 3 px', { exact: true })).toBeVisible();
+  saved = await project(page);
+  frame = saved.history[saved.index];
+  const borderMask = frame.selection!.mask;
+  const borderCoverage = await alphaCoverage(page, saved.assets[frame.selection!.mask!]);
+  expect(borderCoverage).toBeGreaterThan(0);
+  expect(borderCoverage).toBeLessThan(grownCoverage);
+
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  saved = await project(page);
+  expect(saved.history[saved.index].selection?.mask).toBe(contractedMask);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Redo/ }).click();
+  saved = await project(page);
+  expect(saved.history[saved.index].selection?.mask).toBe(borderMask);
   await page.reload();
   saved = await project(page);
   frame = saved.history[saved.index];
   expect(frame.selection?.mask).toBeTruthy();
-  expect(await alphaCoverage(page, saved.assets[frame.selection!.mask!])).toBe(contractedCoverage);
+  expect(await alphaCoverage(page, saved.assets[frame.selection!.mask!])).toBe(borderCoverage);
 });
 
 test('Grow rejects invalid radius without mutating the active selection', async ({ page }) => {
@@ -99,3 +122,16 @@ test('Grow rejects invalid radius without mutating the active selection', async 
   expect(after.history[after.index].selection).toEqual(before.history[before.index].selection);
 });
 
+test('Border rejects an over-limit radius without mutating the active selection', async ({ page }) => {
+  await page.getByRole('button', { name: 'Select tool', exact: true }).click();
+  await drag(page, [0.25, 0.25], [0.55, 0.55]);
+  const before = await project(page);
+  await page.getByRole('button', { name: 'Select', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Border…', exact: true }).click();
+  await page.getByLabel('Selection refinement radius (px)', { exact: true }).fill('1001');
+  await expect(page.getByRole('dialog', { name: 'Border Selection' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Apply selection refinement', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  const after = await project(page);
+  expect(after.history[after.index].selection).toEqual(before.history[before.index].selection);
+});

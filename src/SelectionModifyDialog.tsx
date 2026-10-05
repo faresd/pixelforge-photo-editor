@@ -24,11 +24,19 @@ export default function SelectionModifyDialog({
       onCancel={close}
     >
       <form onSubmit={(event) => { event.preventDefault(); if (valid) apply(parsed); }}>
-        <h2 id="selection-modify-title">{mode === 'grow' ? 'Grow Selection' : 'Contract Selection'}</h2>
+        <h2 id="selection-modify-title">
+          {mode === 'grow'
+            ? 'Grow Selection'
+            : mode === 'contract'
+              ? 'Contract Selection'
+              : 'Border Selection'}
+        </h2>
         <p>
           {mode === 'grow'
             ? 'Expand the selected alpha by a bounded local radius. Image pixels stay unchanged.'
-            : 'Shrink the selected alpha by a bounded local radius. Image pixels stay unchanged.'}
+            : mode === 'contract'
+              ? 'Shrink the selected alpha by a bounded local radius. Image pixels stay unchanged.'
+              : 'Create a bounded alpha border by subtracting the contracted inner selection from the expanded outer selection. Image pixels stay unchanged.'}
         </p>
         <label>
           Radius (px)
@@ -50,4 +58,3 @@ export default function SelectionModifyDialog({
     </dialog>
   );
 }
-

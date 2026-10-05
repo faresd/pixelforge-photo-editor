@@ -3,11 +3,12 @@
  *
  * Selections are represented as canvas-sized alpha masks when a geometric
  * operation cannot be preserved as a simple rectangle/ellipse/path. Grow and
- * contract use a separable max/min filter, keeping the work bounded and
+ * contract use a separable max/min filter; Border subtracts the contracted
+ * inner result from the expanded outer result, keeping the work bounded and
  * predictable for large documents while preserving partial edge coverage.
  */
 
-export type SelectionRefineMode = 'grow' | 'contract';
+export type SelectionRefineMode = 'grow' | 'contract' | 'border';
 
 const MAX_PIXELS = 16_000_000;
 const MAX_RADIUS = 1_000;
@@ -35,7 +36,7 @@ function validate(
   if (alpha.length !== width * height) {
     throw new Error('Selection mask alpha data has the wrong size.');
   }
-  if (mode !== 'grow' && mode !== 'contract') {
+  if (mode !== 'grow' && mode !== 'contract' && mode !== 'border') {
     throw new Error('Selection refinement mode is invalid.');
   }
   if (!Number.isInteger(radius) || radius < 0 || radius > MAX_RADIUS) {
@@ -63,6 +64,17 @@ export function refineSelectionAlpha(
     if (!Number.isFinite(value)) return 0;
     return Math.max(0, Math.min(255, Math.round(value)));
   });
+  // A border is the bounded difference between the expanded outer selection
+  // and the contracted inner selection. Keeping this subtraction in alpha
+  // space preserves fractional edge coverage instead of thresholding it.
+  if (mode === 'border') {
+    if (radius === 0) return new Uint8ClampedArray(source.length);
+    const outer = refineSelectionAlpha(source, width, height, 'grow', radius);
+    const inner = refineSelectionAlpha(source, width, height, 'contract', radius);
+    return Uint8ClampedArray.from(outer, (value, index) =>
+      Math.max(0, value - inner[index]),
+    );
+  }
   if (radius === 0) return source;
 
   const horizontal = new Uint8ClampedArray(source.length);

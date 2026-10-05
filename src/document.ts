@@ -89,6 +89,13 @@ import {
   applyContentAwareFills,
   type ContentAwareFill,
 } from './contentAwareCleanup.ts';
+import {
+  applyLayerStylesPixels,
+  isNeutralLayerStyles,
+  validLayerStyles,
+  neutralLayerStyles,
+  type LayerStyles,
+} from './layerStyles.ts';
 
 /** Version 2 stores immutable raster assets once; history contains editable layer metadata. */
 export const BLENDS = [
@@ -172,6 +179,8 @@ type Common = {
   blend: (typeof BLENDS)[number];
   matrix: Matrix;
   adjustments: Adjustments;
+  /** Optional nondestructive Photoshop-style layer decorations. */
+  styles?: LayerStyles;
   /** Optional canvas-space alpha mask asset. Source pixels remain untouched. */
   mask?: string;
   /** Persisted non-destructive mask controls; omitted in legacy drafts. */
@@ -470,6 +479,10 @@ export const commonLayer = (name: string): Common => ({
   blend: 'source-over',
   matrix: identity(),
   adjustments: { ...neutral },
+  styles: {
+    dropShadow: { ...neutralLayerStyles.dropShadow },
+    outline: { ...neutralLayerStyles.outline },
+  },
 });
 export function multiply(a: Matrix, b: Matrix): Matrix {
   return [
@@ -951,6 +964,7 @@ export function validateFrame(
       layer.matrix.length !== 6 ||
       !layer.matrix.every((v) => number(v, -1000000, 1000000)) ||
       !validAdjustments(layer.adjustments) ||
+      (layer.styles !== undefined && !validLayerStyles(layer.styles)) ||
       (layer.groupId !== undefined &&
         (!validId(layer.groupId) || !groupIds.has(layer.groupId)))
     )
@@ -1427,6 +1441,22 @@ export type RenderOptions = {
   onProgress?: (completed: number, total: number) => void;
 };
 
+/** Render a raster layer's bounded style stack in local coordinates. */
+function applyRasterLayerStyles(
+  source: CanvasImageSource,
+  width: number,
+  height: number,
+  styles: Partial<LayerStyles> | undefined,
+): HTMLCanvasElement | CanvasImageSource {
+  if (isNeutralLayerStyles(styles)) return source;
+  const styled = surface(width, height), context = styled.getContext('2d')!;
+  context.drawImage(source, 0, 0, width, height);
+  const image = context.getImageData(0, 0, width, height);
+  image.data.set(applyLayerStylesPixels(image.data, width, height, styles));
+  context.putImageData(image, 0, 0);
+  return styled;
+}
+
 export async function renderFrame(
   frame: Frame,
   assets: Assets,
@@ -1534,6 +1564,15 @@ export async function renderFrame(
       cleanedContext.putImageData(imageData, 0, 0);
       rasterSource = cleaned;
     }
+    if (layer.kind === 'raster' && rasterSource && !isNeutralLayerStyles(layer.styles)) {
+      const asset = assets[layer.asset];
+      rasterSource = applyRasterLayerStyles(
+        rasterSource,
+        override?.width ?? asset.w,
+        override?.height ?? asset.h,
+        layer.styles,
+      );
+    }
     const filterEffect = effectiveFilterEffects(
       layer.adjustments.filterEffects,
     );
@@ -1575,7 +1614,7 @@ export async function renderFrame(
         ) ||
         !isNeutralPhotoAdjustments(
           effectiveAdjustments(layer.adjustments).photoAdjustments,
-        ))
+        ) || !isNeutralLayerStyles(layer.styles))
     ) {
       // Keep text and shape layers editable: render their existing transform
       // and CSS corrections into an isolated surface, then rotate HSL colour.
@@ -1588,6 +1627,10 @@ export async function renderFrame(
               groupId: undefined,
               opacity: 1,
               blend: 'source-over',
+              styles: {
+                dropShadow: { ...neutralLayerStyles.dropShadow },
+                outline: { ...neutralLayerStyles.outline },
+              },
               adjustments: {
                 ...effectiveAdjustments(layer.adjustments),
                 hue: 0,
@@ -1612,18 +1655,24 @@ export async function renderFrame(
         // monotonic bounded sequence rather than duplicate totals.
         options?.onProgress ? { ...options, onProgress: undefined } : options,
       );
-      applyHue(coloured, layer.adjustments);
-      applyLevels(coloured, layer.adjustments);
-      applyColorBalance(coloured, layer.adjustments);
-      applySharpenNoise(coloured, layer.adjustments);
-      applyCurves(coloured, layer.adjustments);
-      applyAutoAdjustments(coloured, layer.adjustments);
-      applyFilterEffects(coloured, layer.adjustments.filterEffects);
-      applyPhotoAdjustments(coloured, layer.adjustments.photoAdjustments);
+      const styled = applyRasterLayerStyles(
+        coloured,
+        frame.w,
+        frame.h,
+        layer.styles,
+      ) as HTMLCanvasElement;
+      applyHue(styled, layer.adjustments);
+      applyLevels(styled, layer.adjustments);
+      applyColorBalance(styled, layer.adjustments);
+      applySharpenNoise(styled, layer.adjustments);
+      applyCurves(styled, layer.adjustments);
+      applyAutoAdjustments(styled, layer.adjustments);
+      applyFilterEffects(styled, layer.adjustments.filterEffects);
+      applyPhotoAdjustments(styled, layer.adjustments.photoAdjustments);
       context.save();
       context.globalAlpha = layer.opacity * groupOpacity;
       context.globalCompositeOperation = layer.blend;
-      context.drawImage(coloured, 0, 0);
+      context.drawImage(styled, 0, 0);
       context.restore();
       reportProgress(layerIndex);
       continue;

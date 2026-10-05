@@ -11,6 +11,7 @@ import {
 } from './document';
 import type { ParametricShapeVariant } from './vectorShapes';
 import type { AlignmentMode, DistributionAxis } from './layerAlignment';
+import { effectiveLayerStyles, type LayerStyles } from './layerStyles';
 
 type Props = {
   frame: Frame;
@@ -67,6 +68,14 @@ export default function LayersPanel({
   const groupById = new Map(groups.map((group) => [group.id, group]));
   const activeGroup = layer.groupId ? groupById.get(layer.groupId) : undefined;
   const layerLocked = layer.locked || Boolean(activeGroup?.locked);
+  const styles = effectiveLayerStyles(layer.styles);
+  const updateStyles = (patch: Partial<LayerStyles>) =>
+    edit({ styles: { ...styles, ...patch } });
+  const updateDropShadow = (
+    patch: Partial<LayerStyles['dropShadow']>,
+  ) => updateStyles({ dropShadow: { ...styles.dropShadow, ...patch } });
+  const updateOutline = (patch: Partial<LayerStyles['outline']>) =>
+    updateStyles({ outline: { ...styles.outline, ...patch } });
   const distributableCount = activeGroup
     ? frame.layers.filter((item) => item.groupId === activeGroup.id && item.visible && !item.locked).length
     : 0;
@@ -333,6 +342,119 @@ export default function LayersPanel({
           ))}
         </select>
       </label>
+      <fieldset className="layer-alignment" disabled={layerLocked}>
+        <legend>Layer styles</legend>
+        <label>
+          <input
+            type="checkbox"
+            aria-label="Enable drop shadow"
+            checked={styles.dropShadow.enabled}
+            onChange={(event) =>
+              updateDropShadow({ enabled: event.target.checked })
+            }
+          />
+          Drop shadow
+        </label>
+        <label className="layer-field">
+          Shadow color
+          <input
+            aria-label="Drop shadow color"
+            type="color"
+            value={styles.dropShadow.color}
+            onChange={(event) => updateDropShadow({ color: event.target.value })}
+          />
+        </label>
+        <label className="layer-field">
+          Shadow opacity {Math.round(styles.dropShadow.opacity * 100)}%
+          <input
+            aria-label="Drop shadow opacity"
+            type="range"
+            min="0"
+            max="100"
+            value={Math.round(styles.dropShadow.opacity * 100)}
+            onChange={(event) =>
+              updateDropShadow({ opacity: Number(event.target.value) / 100 })
+            }
+          />
+        </label>
+        <div className="layer-position">
+          <NumberField
+            label="Shadow X"
+            value={styles.dropShadow.offsetX}
+            min={-256}
+            max={256}
+            disabled={layerLocked}
+            apply={(value) => updateDropShadow({ offsetX: value })}
+          />
+          <NumberField
+            label="Shadow Y"
+            value={styles.dropShadow.offsetY}
+            min={-256}
+            max={256}
+            disabled={layerLocked}
+            apply={(value) => updateDropShadow({ offsetY: value })}
+          />
+        </div>
+        <label className="layer-field">
+          Shadow blur {Math.round(styles.dropShadow.blur)} px
+          <input
+            aria-label="Drop shadow blur"
+            type="range"
+            min="0"
+            max="64"
+            value={Math.round(styles.dropShadow.blur)}
+            onChange={(event) =>
+              updateDropShadow({ blur: Number(event.target.value) })
+            }
+          />
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            aria-label="Enable outline"
+            checked={styles.outline.enabled}
+            onChange={(event) =>
+              updateOutline({ enabled: event.target.checked })
+            }
+          />
+          Outline
+        </label>
+        <label className="layer-field">
+          Outline color
+          <input
+            aria-label="Outline color"
+            type="color"
+            value={styles.outline.color}
+            onChange={(event) => updateOutline({ color: event.target.value })}
+          />
+        </label>
+        <label className="layer-field">
+          Outline opacity {Math.round(styles.outline.opacity * 100)}%
+          <input
+            aria-label="Outline opacity"
+            type="range"
+            min="0"
+            max="100"
+            value={Math.round(styles.outline.opacity * 100)}
+            onChange={(event) =>
+              updateOutline({ opacity: Number(event.target.value) / 100 })
+            }
+          />
+        </label>
+        <label className="layer-field">
+          Outline width {Math.round(styles.outline.width)} px
+          <input
+            aria-label="Outline width"
+            type="range"
+            min="1"
+            max="32"
+            value={Math.round(styles.outline.width)}
+            onChange={(event) =>
+              updateOutline({ width: Number(event.target.value) })
+            }
+          />
+        </label>
+      </fieldset>
       <div className="layer-position">
         <NumberField
           key={layer.id + 'x' + layer.matrix[4]}
