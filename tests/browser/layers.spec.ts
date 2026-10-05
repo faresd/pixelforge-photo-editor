@@ -835,11 +835,11 @@ test('single row and column marquees select one pixel across the frame and persi
 }) => {
   const canvas = page.getByTestId('editor-canvas'),
     box = (await canvas.boundingBox())!;
+  await selectTool(page, 'Single Row marquee');
   const rowTool = page.getByRole('button', {
     name: 'Single Row marquee tool',
     exact: true,
   });
-  await rowTool.click();
   await canvas.click({ position: { x: box.width * 0.37, y: box.height * 0.45 } });
   await expect(page.getByText('Single row selection created', { exact: true })).toBeVisible();
   let exported = await project(page),
@@ -878,11 +878,7 @@ test('single row and column marquees select one pixel across the frame and persi
 
   await page.reload();
   await expect(rowTool).toHaveClass(/active/);
-  const columnTool = page.getByRole('button', {
-    name: 'Single Column marquee tool',
-    exact: true,
-  });
-  await columnTool.click();
+  await selectTool(page, 'Single Column marquee');
   await canvas.click({ position: { x: box.width * 0.62, y: box.height * 0.2 } });
   await expect(page.getByText('Single column selection created', { exact: true })).toBeVisible();
   exported = await project(page);

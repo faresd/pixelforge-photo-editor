@@ -47,8 +47,10 @@ export async function selectTool(page: Page, label: string): Promise<void> {
       });
       if (!(await button.count())) continue;
       await button.scrollIntoViewIfNeeded();
-      await button.focus();
-      await button.press('ArrowDown');
+      // The context-menu path is deterministic across desktop and touch
+      // projects while still exercising the same anchored ToolFlyout used by
+      // press-and-hold and keyboard navigation.
+      await button.click({ button: 'right' });
       opened = true;
       break;
     }
