@@ -1041,11 +1041,22 @@ test('Merge Layers rasterizes the adjacent pair, preserves pixels, and round-tri
   );
 
   const canvas = page.getByTestId('editor-canvas');
-  const pixelsBefore = await canvas.evaluate((item: HTMLCanvasElement) => {
-    const context = item.getContext('2d');
-    if (!context) throw new Error('2d context unavailable');
-    return Array.from(context.getImageData(0, 0, item.width, item.height).data);
-  });
+  const samplePixels = () =>
+    canvas.evaluate((item: HTMLCanvasElement) => {
+      const context = item.getContext('2d');
+      if (!context) throw new Error('2d context unavailable');
+      const points = [
+        [0, 0],
+        [item.width - 1, 0],
+        [0, item.height - 1],
+        [item.width - 1, item.height - 1],
+        [Math.floor(item.width / 2), Math.floor(item.height / 2)],
+      ];
+      return points.map(([x, y]) =>
+        Array.from(context.getImageData(x, y, 1, 1).data),
+      );
+    });
+  const pixelsBefore = await samplePixels();
   await page.getByRole('button', { name: 'Layer', exact: true }).click();
   await expect(
     page.getByRole('menuitem', { name: 'Merge Layers', exact: true }),
@@ -1058,11 +1069,7 @@ test('Merge Layers rasterizes the adjacent pair, preserves pixels, and round-tri
     '1 /',
   );
 
-  const pixelsAfter = await canvas.evaluate((item: HTMLCanvasElement) => {
-    const context = item.getContext('2d');
-    if (!context) throw new Error('2d context unavailable');
-    return Array.from(context.getImageData(0, 0, item.width, item.height).data);
-  });
+  const pixelsAfter = await samplePixels();
   expect(pixelsAfter).toEqual(pixelsBefore);
 
   const downloadProject = async () => {

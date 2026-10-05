@@ -24,7 +24,7 @@ metadata remain unchanged.
 
 Pure coverage in `tests/layer-merge.test.mjs` validates stack planning and all
 guard reasons. Browser coverage exercises the Layer menu on desktop and
-mobile, compares full-canvas RGBA pixels with the pre-merge pair, verifies the
+mobile, compares deterministic corner/centre RGBA samples with the pre-merge pair, verifies the
 merged source asset and history round trip, and covers undo/redo, reload and
 project export. Browser-level locked/hidden/folder interaction cases remain
 the next test increment; their policy is already fail-closed in the pure
