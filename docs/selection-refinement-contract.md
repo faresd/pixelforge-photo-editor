@@ -19,6 +19,8 @@ linear in the number of pixels rather than radius squared.
 The source selection remains available to Undo and history. The generated mask
 is included in local drafts and `.pixelforge` project files, and reopens with
 the same alpha. Refinement is local and offline; no image or mask is uploaded.
+The asynchronous renderer captures the history index and frame identity and
+abandons a stale result before adding an asset or committing a new frame.
 The current contract intentionally does not claim Photoshop's circular-kernel
 or edge-aware Select and Mask algorithms. Smooth, Feather, Similar, Color Range
 and semantic Subject/Sky selection remain separate roadmap items.

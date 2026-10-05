@@ -166,6 +166,22 @@ function blurAlpha(source: Uint8ClampedArray, width: number, height: number, rad
   return output;
 }
 
+type AlphaBounds = { minX: number; minY: number; maxX: number; maxY: number };
+
+/** Find the painted extent so sparse layers do not pay for a full-frame blur. */
+function alphaBounds(source: Uint8ClampedArray, width: number, height: number): AlphaBounds | undefined {
+  let minX = width, minY = height, maxX = -1, maxY = -1;
+  for (let y = 0; y < height; y += 1)
+    for (let x = 0; x < width; x += 1)
+      if (source[(y * width + x) * 4 + 3] > 0) {
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+      }
+  return maxX >= 0 ? { minX, minY, maxX, maxY } : undefined;
+}
+
 /**
  * Apply the editable style stack to RGBA pixels without mutating the source.
  * This pure function is shared by the main thread and the render worker.
@@ -180,20 +196,35 @@ export function applyLayerStylesPixels(
   if (isNeutralLayerStyles(styles) || width <= 0 || height <= 0) return source.slice();
   const output = new Uint8ClampedArray(source.length), alpha = new Uint8ClampedArray(width * height);
   for (let i = 0; i < alpha.length; i += 1) alpha[i] = source[i * 4 + 3];
+  const bounds = alphaBounds(source, width, height);
+  if (!bounds) return source.slice();
   if (styles.dropShadow.enabled) {
-    const shadowAlpha = blurAlpha(alpha, width, height, Math.round(styles.dropShadow.blur));
+    const radius = Math.round(styles.dropShadow.blur);
+    // Blur only the source extent plus the kernel radius. The previous full
+    // frame pass made a single painted dab cost tens of millions of samples.
+    const sourceX = Math.max(0, bounds.minX - radius), sourceY = Math.max(0, bounds.minY - radius);
+    const sourceRight = Math.min(width - 1, bounds.maxX + radius), sourceBottom = Math.min(height - 1, bounds.maxY + radius);
+    const sourceWidth = sourceRight - sourceX + 1, sourceHeight = sourceBottom - sourceY + 1;
+    const crop = new Uint8ClampedArray(sourceWidth * sourceHeight);
+    for (let y = 0; y < sourceHeight; y += 1)
+      for (let x = 0; x < sourceWidth; x += 1)
+        crop[y * sourceWidth + x] = alpha[(sourceY + y) * width + sourceX + x];
+    const shadowAlpha = blurAlpha(crop, sourceWidth, sourceHeight, radius);
     const [r, g, b] = color(styles.dropShadow.color);
-    for (let y = 0; y < height; y += 1)
-      for (let x = 0; x < width; x += 1) {
-        const sx = x - Math.round(styles.dropShadow.offsetX), sy = y - Math.round(styles.dropShadow.offsetY);
-        if (sx >= 0 && sx < width && sy >= 0 && sy < height)
-          over(output, (y * width + x) * 4, r, g, b, shadowAlpha[sy * width + sx] * styles.dropShadow.opacity);
+    const offsetX = Math.round(styles.dropShadow.offsetX), offsetY = Math.round(styles.dropShadow.offsetY);
+    for (let y = 0; y < sourceHeight; y += 1)
+      for (let x = 0; x < sourceWidth; x += 1) {
+        const dx = sourceX + x + offsetX, dy = sourceY + y + offsetY;
+        if (dx >= 0 && dx < width && dy >= 0 && dy < height)
+          over(output, (dy * width + dx) * 4, r, g, b, shadowAlpha[y * sourceWidth + x] * styles.dropShadow.opacity);
       }
   }
   if (styles.outline.enabled) {
     const [r, g, b] = color(styles.outline.color), radius = Math.round(styles.outline.width);
-    for (let y = 0; y < height; y += 1)
-      for (let x = 0; x < width; x += 1) {
+    const minX = Math.max(0, bounds.minX - radius), maxX = Math.min(width - 1, bounds.maxX + radius);
+    const minY = Math.max(0, bounds.minY - radius), maxY = Math.min(height - 1, bounds.maxY + radius);
+    for (let y = minY; y <= maxY; y += 1)
+      for (let x = minX; x <= maxX; x += 1) {
         let max = 0;
         for (let oy = -radius; oy <= radius && max < 255; oy += 1)
           for (let ox = -radius; ox <= radius; ox += 1) {
@@ -204,6 +235,10 @@ export function applyLayerStylesPixels(
         if (max > own) over(output, (y * width + x) * 4, r, g, b, (max - own) * styles.outline.opacity);
       }
   }
-  for (let i = 0; i < alpha.length; i += 1) over(output, i * 4, source[i * 4], source[i * 4 + 1], source[i * 4 + 2], source[i * 4 + 3]);
+  for (let y = bounds.minY; y <= bounds.maxY; y += 1)
+    for (let x = bounds.minX; x <= bounds.maxX; x += 1) {
+      const i = (y * width + x) * 4;
+      over(output, i, source[i], source[i + 1], source[i + 2], source[i + 3]);
+    }
   return output;
 }
