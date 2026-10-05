@@ -212,6 +212,7 @@ import {
 } from '../src/patternStamp';
 import {
   TOOL_CATEGORIES,
+  compactCategoryTools,
   flyoutForTool,
   flyoutTools,
 } from '../src/toolPalette';
@@ -8233,7 +8234,7 @@ export default function Home() {
             >
               <h3>{category.label}</h3>
               <div className="tool-category-grid">
-                {category.tools.map((toolId) => {
+                {compactCategoryTools(category, tool).map((toolId) => {
                   const item = TOOLS.find((candidate) => candidate.id === toolId);
                   if (!item) return null;
                   const { id, label, icon: Icon, key } = item,
@@ -8313,6 +8314,7 @@ export default function Home() {
                                         subtool.id,
                                         subtool.key,
                                       ),
+                                      icon: subtool.icon,
                                     },
                                   ]
                                 : [];

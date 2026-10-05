@@ -90,6 +90,31 @@ export function categoryForTool(tool: string): string | undefined {
   return TOOL_CATEGORIES.find((category) => category.tools.includes(tool as PaletteToolId))?.id;
 }
 
+/**
+ * Return the compact toolbar representation for a category. Photoshop shows
+ * one slot for a tool family and keeps the variants in its press-and-hold
+ * flyout; the active variant replaces that representative slot.
+ */
+export function compactCategoryTools(
+  category: ToolCategory,
+  activeTool?: string,
+): readonly PaletteToolId[] {
+  const result: PaletteToolId[] = [];
+  const positions = new Map<string, number>();
+  for (const tool of category.tools) {
+    const family = flyoutForTool(tool);
+    const key = family ? `flyout:${family}` : `tool:${tool}`;
+    const existing = positions.get(key);
+    if (existing === undefined) {
+      positions.set(key, result.length);
+      result.push(tool);
+    } else if (tool === activeTool) {
+      result[existing] = tool;
+    }
+  }
+  return result;
+}
+
 export function familyTools(toolOrKey: string): readonly PaletteToolId[] {
   if (TOOL_FAMILIES[toolOrKey]) return TOOL_FAMILIES[toolOrKey];
   const family = familyForTool(toolOrKey);

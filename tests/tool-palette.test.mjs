@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   TOOL_CATEGORIES,
+  compactCategoryTools,
   TOOL_FAMILIES,
   categoryForTool,
   cycleFamilyTool,
@@ -54,4 +55,12 @@ test('selection flyouts preserve Photoshop M/L/W group membership', () => {
   assert.deepEqual(flyoutTools('marquee'), ['select', 'ellipse-select', 'row-select', 'column-select']);
   assert.deepEqual(flyoutTools('lasso'), ['lasso', 'polygonal-lasso', 'magnetic-lasso']);
   assert.deepEqual(flyoutTools('selection'), ['selection-brush', 'magic-wand']);
+});
+
+test('compact category slots show one family representative and active variant', () => {
+  const lasso = TOOL_CATEGORIES.find((category) => category.id === 'lasso');
+  assert.deepEqual(compactCategoryTools(lasso), ['lasso']);
+  assert.deepEqual(compactCategoryTools(lasso, 'magnetic-lasso'), ['magnetic-lasso']);
+  const retouch = TOOL_CATEGORIES.find((category) => category.id === 'retouch');
+  assert.deepEqual(compactCategoryTools(retouch), ['clone', 'heal', 'smudge', 'dodge']);
 });

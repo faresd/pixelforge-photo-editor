@@ -1,7 +1,8 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import type { LucideIcon } from 'lucide-react';
 
-type Item = { id: string; label: string; key: string };
+type Item = { id: string; label: string; key: string; icon: LucideIcon };
 
 /** A single viewport-contained menu, outside the scrolling toolbar. */
 export function ToolFlyout({
@@ -83,7 +84,11 @@ export function ToolFlyout({
             trigger.focus();
           }}
         >
-          <span>{item.label}</span><kbd aria-hidden="true">{item.key}</kbd>
+          <span className="tool-flyout-label">
+            <item.icon aria-hidden="true" />
+            <span>{item.label}</span>
+          </span>
+          <kbd aria-hidden="true">{item.key}</kbd>
         </button>
       ))}
     </div>, document.body,
