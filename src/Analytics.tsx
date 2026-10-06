@@ -90,7 +90,9 @@ export default function Analytics() {
     } else if (!value) {
       const banner = document.createElement('aside');
       banner.id = 'cheaply-analytics-consent';
-      banner.setAttribute('role', 'dialog');
+      // This is a non-modal informational region. A generic dialog role would
+      // collide with the editor's real dialogs and confuse assistive technology.
+      banner.setAttribute('role', 'region');
       banner.setAttribute('aria-label', 'Analytics consent');
       banner.innerHTML =
         '<strong>Help improve Cheaply Photo Editor</strong><p>Allow anonymous usage statistics to improve PixelForge. Your photos, projects, and file names never leave this device.</p><div><button type="button" data-choice="deny">No thanks</button><button type="button" data-choice="accept">Allow</button></div>';
