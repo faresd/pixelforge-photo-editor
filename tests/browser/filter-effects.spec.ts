@@ -64,6 +64,32 @@ const pixel = (page: Page, x: number, y: number) =>
     { x, y },
   );
 
+test('Average Blur is a global nondestructive menu effect with alpha-safe pixels', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset;
+  const sourcePixel = await pixel(page, 1, 0);
+
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const average = page.getByRole('menuitem', { name: 'Average', exact: true });
+  await expect(average).toBeEnabled();
+  await average.click();
+  await expect(page.getByText('Average Blur applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('average-blur');
+  await expect.poll(() => pixel(page, 1, 0)).not.toEqual(sourcePixel);
+  expect((await pixel(page, 0, 0))[3]).toBe(0);
+
+  const adjusted = await downloadProject(page);
+  const adjustedLayer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(adjustedLayer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
+  expect(adjustedLayer.adjustments.filterEffects).toMatchObject({ type: 'average-blur', amount: 85 });
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  await expect.poll(() => pixel(page, 1, 0)).toEqual(sourcePixel);
+});
+
 test('Field Blur is a nondestructive menu effect with source-safe persistence', async ({ page }) => {
   await importPixels(page);
   const before = await downloadProject(page);

@@ -1,20 +1,22 @@
 # Local blur effects contract
 
-PixelForge's Filter → Blur family includes six local, nondestructive effects:
-**Box Blur…**, **Gaussian Blur…**, **Motion Blur…**, **Radial Blur…**, **Field
+PixelForge's Filter → Blur family includes seven local, nondestructive effects:
+**Average**, **Box Blur…**, **Gaussian Blur…**, **Motion Blur…**, **Radial Blur…**, **Field
 Blur…** and **Tilt-Shift…**. Each effect is stored on the selected
 layer as `adjustments.filterEffects`, so changing or clearing the effect never
 rewrites the immutable raster asset.
 
 The metadata record uses the existing validated effect shape:
 
-- `type` is `box-blur`, `gaussian-blur`, `motion-blur` or `radial-blur`.
+- `type` is `average-blur`, `box-blur`, `gaussian-blur`, `motion-blur` or `radial-blur`.
 - `amount` is a 0–100 blend percentage. Zero is an identity operation.
 - `radius` is an integer source-pixel radius from 0–64. Zero is an identity
   operation and the inspector exposes the value as **Blur radius**. Radial
   Blur uses the same bounded field as degrees of **Angular sweep**.
 - `angle`, `centerX`, `centerY` and `seed` remain serialized for the shared
   filter schema and are normalized at every document boundary.
+
+Average Blur computes one alpha-weighted global RGB mean from covered source pixels and blends each covered destination toward it. It preserves source alpha, leaves transparent RGB padding untouched, and uses the same bounded amount field as the other local effects. The source is copied before rendering, so the operation is deterministic and remains editable in layer metadata.
 
 Box Blur uses a separable running-sum kernel. Gaussian Blur uses a separable,
 normalized Gaussian kernel with `sigma = max(0.5, radius / 3)`. Both kernels
@@ -44,7 +46,7 @@ Blur and Blur Gallery multi-pin controls remain separate planned capabilities.
 
 The pure filter suite covers normalization and strict validation, identity and
 one-pixel bounds, deterministic repeatability, source immutability, opaque and
-transparent alpha edges, hidden RGB padding, and representative Box/Gaussian/
+transparent alpha edges, hidden RGB padding, and representative Average/Box/Gaussian/
 Motion/Radial kernel output. Radial fixtures also cover centre changes, corner
 centres, constant colour, partial-alpha neighbours, one-pixel/one-column bounds,
 zero amount/sweep and fixed-buffer source preservation. The desktop/mobile browser suite covers enabled menu

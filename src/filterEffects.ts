@@ -9,6 +9,7 @@
 
 export const FILTER_EFFECT_TYPES = [
   'none',
+  'average-blur',
   'box-blur',
   'gaussian-blur',
   'motion-blur',
@@ -229,6 +230,38 @@ function blendPixel(
   output[offset] = clampByte(output[offset] * (1 - strength) + source[0] * strength);
   output[offset + 1] = clampByte(output[offset + 1] * (1 - strength) + source[1] * strength);
   output[offset + 2] = clampByte(output[offset + 2] * (1 - strength) + source[2] * strength);
+}
+
+function applyAverageBlur(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  let red = 0,
+    green = 0,
+    blue = 0,
+    weight = 0;
+  for (let index = 0; index < width * height; index += 1) {
+    const offset = index * 4,
+      alpha = source[offset + 3] / 255;
+    if (!alpha) continue;
+    red += source[offset] * alpha;
+    green += source[offset + 1] * alpha;
+    blue += source[offset + 2] * alpha;
+    weight += alpha;
+  }
+  if (!weight) return;
+  const average: [number, number, number] = [red / weight, green / weight, blue / weight],
+    mix = clamp(strength, 0, 1);
+  for (let index = 0; index < width * height; index += 1) {
+    const offset = index * 4;
+    if (source[offset + 3] === 0) continue;
+    output[offset] = clampByte(source[offset] * (1 - mix) + average[0] * mix);
+    output[offset + 1] = clampByte(source[offset + 1] * (1 - mix) + average[1] * mix);
+    output[offset + 2] = clampByte(source[offset + 2] * (1 - mix) + average[2] * mix);
+  }
 }
 
 function applyBoxBlur(
@@ -705,7 +738,9 @@ export function applyFilterEffectsPixels(
   if (isNeutralFilterEffects(effect)) return new Uint8ClampedArray(data);
   const output = new Uint8ClampedArray(data);
   const strength = effect.amount / 100;
-  if (effect.type === 'box-blur' || effect.type === 'field-blur') {
+  if (effect.type === 'average-blur') {
+    applyAverageBlur(data, width, height, output, strength);
+  } else if (effect.type === 'box-blur' || effect.type === 'field-blur') {
     applyBoxBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'gaussian-blur') {
     applyGaussianBlur(data, width, height, effect.radius, output, strength);
