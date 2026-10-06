@@ -47,6 +47,10 @@ test('creates an editable solid fill layer and round-trips its color metadata', 
   expect(pixel[0]).toBeGreaterThan(0);
   expect(pixel[1]).toBeGreaterThan(80);
   expect(pixel[2]).toBeGreaterThan(180);
+  await page.getByLabel('Fill layer colour', { exact: true }).fill('#efab12');
+  await expect(page.getByText('Layer updated', { exact: true })).toBeVisible();
+  const recolored = await project(page);
+  expect(recolored.history[recolored.index].layers.at(-1)!.fillColor).toBe('#efab12');
 
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Undo/ }).click();
