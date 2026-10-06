@@ -1,14 +1,14 @@
 # Local blur effects contract
 
-PixelForge's Filter → Blur family includes seven local, nondestructive effects:
-**Average**, **Box Blur…**, **Gaussian Blur…**, **Motion Blur…**, **Radial Blur…**, **Field
+PixelForge's Filter → Blur family includes eight local, nondestructive effects:
+**Average**, **Blur More**, **Box Blur…**, **Gaussian Blur…**, **Motion Blur…**, **Radial Blur…**, **Field
 Blur…** and **Tilt-Shift…**. Each effect is stored on the selected
 layer as `adjustments.filterEffects`, so changing or clearing the effect never
 rewrites the immutable raster asset.
 
 The metadata record uses the existing validated effect shape:
 
-- `type` is `average-blur`, `box-blur`, `gaussian-blur`, `motion-blur` or `radial-blur`.
+- `type` is `average-blur`, `blur-more`, `box-blur`, `gaussian-blur`, `motion-blur` or `radial-blur`.
 - `amount` is a 0–100 blend percentage. Zero is an identity operation.
 - `radius` is an integer source-pixel radius from 0–64. Zero is an identity
   operation and the inspector exposes the value as **Blur radius**. Radial
@@ -17,6 +17,8 @@ The metadata record uses the existing validated effect shape:
   filter schema and are normalized at every document boundary.
 
 Average Blur computes one alpha-weighted global RGB mean from covered source pixels and blends each covered destination toward it. It preserves source alpha, leaves transparent RGB padding untouched, and uses the same bounded amount field as the other local effects. The source is copied before rendering, so the operation is deterministic and remains editable in layer metadata.
+
+Blur More is a one-click stronger box blur. It doubles the bounded source-pixel radius before using the same alpha-aware box kernel and amount blend as Box Blur, while preserving source alpha, transparent RGB padding, immutable assets and editable metadata.
 
 Box Blur uses a separable running-sum kernel. Gaussian Blur uses a separable,
 normalized Gaussian kernel with `sigma = max(0.5, radius / 3)`. Both kernels

@@ -398,3 +398,23 @@ test('Average Blur blends visible pixels toward one alpha-weighted global colour
   assert.deepEqual(pixel(result, 3, 2, 0), [0, 0, 0, 0]);
   assert.equal(validFilterEffects(effectiveFilterEffects({ type: 'average-blur', amount: 85, radius: 6 })), true);
 });
+
+test('Blur More is a stronger deterministic box blur with safe metadata', () => {
+  const source = rgba(9, 1, (x) => {
+    if (x === 0) return [41, 52, 63, 0];
+    return [x === 4 ? 255 : 0, 0, 0, 255];
+  });
+  const original = source.slice();
+  const result = applyFilterEffectsPixels(source, 9, 1, {
+    type: 'blur-more',
+    amount: 100,
+    radius: 2,
+  });
+  assert.deepEqual(source, original);
+  assert.equal(pixel(result, 9, 0, 0)[3], 0);
+  assert.deepEqual(pixel(result, 9, 0, 0).slice(0, 3), [41, 52, 63]);
+  assert.ok(pixel(result, 9, 2, 0)[0] > 0);
+  assert.ok(pixel(result, 9, 4, 0)[0] < 255);
+  assert.equal(validFilterEffects(effectiveFilterEffects({ type: 'blur-more', amount: 85, radius: 6 })), true);
+  assert.deepEqual(result, applyFilterEffectsPixels(source, 9, 1, { type: 'blur-more', amount: 100, radius: 2 }));
+});

@@ -10,6 +10,7 @@
 export const FILTER_EFFECT_TYPES = [
   'none',
   'average-blur',
+  'blur-more',
   'box-blur',
   'gaussian-blur',
   'motion-blur',
@@ -740,6 +741,10 @@ export function applyFilterEffectsPixels(
   const strength = effect.amount / 100;
   if (effect.type === 'average-blur') {
     applyAverageBlur(data, width, height, output, strength);
+  } else if (effect.type === 'blur-more') {
+    // Photoshop's one-click Blur More is a stronger, bounded box blur. Keep
+    // the source-safe renderer and metadata contract while doubling radius.
+    applyBoxBlur(data, width, height, Math.min(64, effect.radius * 2), output, strength);
   } else if (effect.type === 'box-blur' || effect.type === 'field-blur') {
     applyBoxBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'gaussian-blur') {
