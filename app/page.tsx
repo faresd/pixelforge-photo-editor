@@ -113,6 +113,7 @@ import LayerTransformDialog, {
 } from '../src/LayerTransformDialog';
 import SelectionModifyDialog from '../src/SelectionModifyDialog';
 import ColorRangeDialog from '../src/ColorRangeDialog';
+import FocusAreaDialog from '../src/FocusAreaDialog';
 import CanvasSizeDialog from '../src/CanvasSizeDialog';
 import TrimDialog from '../src/TrimDialog';
 import {
@@ -172,6 +173,7 @@ import {
 } from '../src/selectionBrush';
 import { snapMagneticPoint } from '../src/magneticLasso';
 import { colorRangeMask } from '../src/colorRange';
+import { focusAreaMask } from '../src/focusArea';
 import { similarColorMask } from '../src/similarSelection';
 import { composeSelectionAlpha } from '../src/selectionComposition';
 import {
@@ -351,6 +353,7 @@ type Command =
   | 'border-selection'
   | 'similar-selection'
   | 'color-range'
+  | 'focus-area'
   | 'mask-selection'
   | 'remove-background'
   | 'invert-layer-mask'
@@ -741,7 +744,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Find Layers', command: 'find-layers', shortcut: 'Alt+Shift+Ctrl+F' },
     { label: 'Isolate Layers', command: 'isolate-layers' },
     { label: 'Color Range…', command: 'color-range' },
-    { label: 'Focus Area…', command: 'noop', disabled: true },
+    { label: 'Focus Area…', command: 'focus-area' },
     { label: 'Subject', command: 'noop', disabled: true },
     { label: 'Sky', command: 'noop', disabled: true },
     { label: 'Select and Mask…', command: 'noop', disabled: true },
@@ -1563,6 +1566,9 @@ export default function Home() {
   const [selectionRefining, setSelectionRefining] =
     useState<SelectionRefineMode | null>(null);
   const [colorRanging, setColorRanging] = useState(false);
+  const [focusAreaValue, setFocusAreaValue] = useState(false);
+  const [focusAreaThreshold, setFocusAreaThreshold] = useState(32);
+  const [focusAreaSoftness, setFocusAreaSoftness] = useState(24);
   const [quickMasking, setQuickMasking] = useState(false),
     [quickMask, setQuickMask] = useState<QuickMask | null>(null),
     [quickMaskReveal, setQuickMaskReveal] = useState(false),
@@ -2658,6 +2664,30 @@ export default function Home() {
     } catch {
       if (isCurrentSelectionOperation(f, frameIndex, workToken))
         setNotice('Could not create a Color Range selection');
+    }
+  };
+  const applyFocusArea = async (threshold: number, softness: number) => {
+    const f = current(), frameIndex = index.current,
+      workToken = ++selectionWorkToken.current,
+      operation = selectionOperation, sourceAssets = assets.current;
+    setFocusAreaThreshold(threshold);
+    setFocusAreaSoftness(softness);
+    setFocusAreaValue(false);
+    try {
+      const rendered = await renderFrame(f, sourceAssets),
+        pixels = rendered.getContext('2d')!.getImageData(0, 0, f.w, f.h).data,
+        alpha = focusAreaMask(pixels, { width: f.w, height: f.h, threshold, softness }),
+        mask = surface(f.w, f.h), image = mask.getContext('2d')!.createImageData(f.w, f.h);
+      for (let pixel = 0; pixel < alpha.length; pixel += 1) {
+        const offset = pixel * 4;
+        image.data[offset] = 255; image.data[offset + 1] = 255; image.data[offset + 2] = 255; image.data[offset + 3] = alpha[pixel];
+      }
+      mask.getContext('2d')!.putImageData(image, 0, 0);
+      const selection: Selection = { shape: 'rectangle', x: 0, y: 0, w: f.w, h: f.h, feather: 0, inverted: false };
+      const candidate = await composeSelectionCandidate(f, selection, mask, operation, sourceAssets);
+      publishSelectionCandidate(f, frameIndex, workToken, candidate, `Focus Area selection created (threshold ${threshold}, softness ${softness})`);
+    } catch {
+      if (isCurrentSelectionOperation(f, frameIndex, workToken)) setNotice('Could not create a Focus Area selection');
     }
   };
   const applySimilarSelection = async () => {
@@ -7952,6 +7982,7 @@ export default function Home() {
         );
       else setNotice('Create a selection before refining it');
     } else if (command === 'color-range') setColorRanging(true);
+    else if (command === 'focus-area') setFocusAreaValue(true);
     else if (command === 'mask-selection') return createMaskFromSelection();
     else if (command === 'remove-background') return removeBackground();
     else if (command === 'free-transform') beginLayerTransform();
@@ -8401,6 +8432,14 @@ export default function Home() {
           initialFuzziness={colorTolerance}
           close={() => setColorRanging(false)}
           apply={(sample, fuzziness) => void applyColorRange(sample, fuzziness)}
+        />
+      )}
+      {focusAreaValue && (
+        <FocusAreaDialog
+          initialThreshold={focusAreaThreshold}
+          initialSoftness={focusAreaSoftness}
+          close={() => setFocusAreaValue(false)}
+          apply={(threshold, softness) => void applyFocusArea(threshold, softness)}
         />
       )}
       {exporting && (

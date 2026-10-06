@@ -1,0 +1,8 @@
+import { useEffect, useRef, useState } from 'react';
+import { selectionDecimal } from './document';
+export default function FocusAreaDialog({ initialThreshold, initialSoftness, close, apply }: { initialThreshold: number; initialSoftness: number; close: () => void; apply: (threshold: number, softness: number) => void }) {
+  const dialog = useRef<HTMLDialogElement>(null); const [threshold, setThreshold] = useState(String(initialThreshold)); const [softness, setSoftness] = useState(String(initialSoftness));
+  useEffect(() => { dialog.current?.showModal(); }, []);
+  const t = selectionDecimal(threshold), s = selectionDecimal(softness), valid = Number.isInteger(t) && t >= 0 && t <= 255 && Number.isInteger(s) && s >= 0 && s <= 255;
+  return <dialog ref={dialog} className="editor-dialog color-range-dialog" aria-labelledby="focus-area-title" onCancel={close}><form onSubmit={(event) => { event.preventDefault(); if (valid) apply(t, s); }}><h2 id="focus-area-title">Focus Area</h2><p>Build a local focus selection from luminance edges. Processing stays on this device; this is a contrast proxy, not semantic subject recognition.</p><label>Threshold (0–255)<input aria-label="Focus Area threshold" inputMode="numeric" value={threshold} onChange={(event) => setThreshold(event.target.value)} /></label><label>Softness (0–255)<input aria-label="Focus Area softness" inputMode="numeric" value={softness} onChange={(event) => setSoftness(event.target.value)} /></label>{!valid && <p role="alert" className="resize-error">Enter whole values from 0 to 255.</p>}<div className="dialog-actions"><button type="button" onClick={close}>Cancel</button><button type="submit" disabled={!valid}>Apply Focus Area</button></div></form></dialog>;
+}
