@@ -197,7 +197,7 @@ type Common = {
 };
 export type Layer = Common &
   (
-    | { kind: 'raster'; asset: string }
+    | { kind: 'raster'; asset: string; /** Optional editable solid-fill source color. */ fillColor?: string }
     | {
         kind: 'text';
         text: string;
@@ -1150,6 +1150,8 @@ export function validateFrame(
     if (layer.kind === 'raster') {
       if (!validId(layer.asset) || !Object.hasOwn(assets, layer.asset))
         return fail();
+      if (layer.fillColor !== undefined && (typeof layer.fillColor !== 'string' || !/^#[a-f\d]{6}$/i.test(layer.fillColor)))
+        return fail();
       if (
         (layer.maskEnabled !== undefined &&
           typeof layer.maskEnabled !== 'boolean') ||
@@ -1703,7 +1705,15 @@ export async function renderFrame(
     const override = overrides?.[layer.id];
     const image =
       layer.kind === 'raster' && !override
-        ? await decodeAsset(assets[layer.asset])
+        ? layer.fillColor
+          ? (() => {
+              const fill = surface(assets[layer.asset].w, assets[layer.asset].h),
+                fillContext = fill.getContext('2d')!;
+              fillContext.fillStyle = layer.fillColor!;
+              fillContext.fillRect(0, 0, fill.width, fill.height);
+              return fill;
+            })()
+          : await decodeAsset(assets[layer.asset])
         : undefined;
     // Overrides are raw, layer-local buffers. They must travel through the
     // exact same matrix, opacity, blend, adjustment and mask pipeline as the

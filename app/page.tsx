@@ -113,6 +113,7 @@ import LayerTransformDialog, {
 } from '../src/LayerTransformDialog';
 import SelectionModifyDialog from '../src/SelectionModifyDialog';
 import ColorRangeDialog from '../src/ColorRangeDialog';
+import FillLayerDialog from '../src/FillLayerDialog';
 import FocusAreaDialog from '../src/FocusAreaDialog';
 import CanvasSizeDialog from '../src/CanvasSizeDialog';
 import TrimDialog from '../src/TrimDialog';
@@ -317,6 +318,7 @@ type Command =
   | 'clear-layer'
   | 'fill-layer'
   | 'new-layer'
+  | 'new-fill-layer'
   | 'duplicate-layer'
   | 'delete-layer'
   | 'group-layer'
@@ -676,7 +678,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Rename Layer…', command: 'noop', disabled: true },
     { label: 'Layer Style', command: 'noop', disabled: true },
     { label: 'Smart Filter', command: 'noop', disabled: true },
-    { label: 'New Fill Layer', command: 'noop', disabled: true },
+    { label: 'New Fill Layer…', command: 'new-fill-layer' },
     { label: 'New Adjustment Layer', command: 'noop', disabled: true },
     { label: 'Layer Mask', command: 'mask-selection' },
     { label: 'Invert Layer Mask', command: 'invert-layer-mask' },
@@ -1566,6 +1568,7 @@ export default function Home() {
   const [selectionRefining, setSelectionRefining] =
     useState<SelectionRefineMode | null>(null);
   const [colorRanging, setColorRanging] = useState(false);
+  const [fillLayerDialog, setFillLayerDialog] = useState(false);
   const [focusAreaValue, setFocusAreaValue] = useState(false);
   const [focusAreaThreshold, setFocusAreaThreshold] = useState(32);
   const [focusAreaSoftness, setFocusAreaSoftness] = useState(24);
@@ -4170,6 +4173,16 @@ export default function Home() {
           : 'Could not distribute group layers',
       );
     }
+  };
+  const addSolidFillLayer = (fillColor: string) => {
+    const f = current();
+    setFillLayerDialog(false);
+    if (addLayer({
+      ...commonLayer(`Fill ${fillColor}`),
+      kind: 'raster',
+      asset: addAsset(assets.current, surface(f.w, f.h)),
+      fillColor,
+    })) setNotice(`Solid fill layer added (${fillColor})`);
   };
   const addPaint = () => {
     const f = current();
@@ -7907,6 +7920,7 @@ export default function Home() {
     else if (command === 'clear-layer') return clearActiveLayer();
     else if (command === 'fill-layer') return fillActiveLayer();
     else if (command === 'new-layer') addPaint();
+    else if (command === 'new-fill-layer') setFillLayerDialog(true);
     else if (command === 'duplicate-layer') duplicate();
     else if (command === 'delete-layer') remove();
     else if (command === 'group-layer') groupActiveLayer();
@@ -8432,6 +8446,13 @@ export default function Home() {
           initialFuzziness={colorTolerance}
           close={() => setColorRanging(false)}
           apply={(sample, fuzziness) => void applyColorRange(sample, fuzziness)}
+        />
+      )}
+      {fillLayerDialog && (
+        <FillLayerDialog
+          initialColor={color}
+          close={() => setFillLayerDialog(false)}
+          apply={addSolidFillLayer}
         />
       )}
       {focusAreaValue && (
