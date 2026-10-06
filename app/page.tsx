@@ -172,6 +172,7 @@ import {
 } from '../src/selectionBrush';
 import { snapMagneticPoint } from '../src/magneticLasso';
 import { colorRangeMask } from '../src/colorRange';
+import { similarColorMask } from '../src/similarSelection';
 import { composeSelectionAlpha } from '../src/selectionComposition';
 import {
   createQuickMask,
@@ -348,6 +349,7 @@ type Command =
   | 'grow-selection'
   | 'contract-selection'
   | 'border-selection'
+  | 'similar-selection'
   | 'color-range'
   | 'mask-selection'
   | 'remove-background'
@@ -747,7 +749,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Grow…', command: 'grow-selection' },
     { label: 'Contract…', command: 'contract-selection' },
     { label: 'Border…', command: 'border-selection' },
-    { label: 'Similar', command: 'noop', disabled: true },
+    { label: 'Similar', command: 'similar-selection' },
     { label: 'Transform Selection', command: 'transform-selection' },
     { label: 'Edit in Quick Mask Mode', command: 'quick-mask' },
     { label: 'Load Selection…', command: 'load-selection' },
@@ -2656,6 +2658,81 @@ export default function Home() {
     } catch {
       if (isCurrentSelectionOperation(f, frameIndex, workToken))
         setNotice('Could not create a Color Range selection');
+    }
+  };
+  const applySimilarSelection = async () => {
+    const f = current();
+    if (!f.selection) {
+      setNotice('Create a selection before selecting similar colours');
+      return;
+    }
+    const frameIndex = index.current,
+      workToken = ++selectionWorkToken.current,
+      operation = selectionOperation,
+      sourceAssets = assets.current;
+    try {
+      const rendered = await renderFrame(f, sourceAssets);
+      const source = rendered
+        .getContext('2d')!
+        .getImageData(0, 0, f.w, f.h).data;
+      const seedCanvas = await renderSelection(
+        f.selection,
+        f.w,
+        f.h,
+        sourceAssets,
+      );
+      const seedAlpha = seedCanvas
+        .getContext('2d')!
+        .getImageData(0, 0, f.w, f.h).data;
+      const seed = new Uint8ClampedArray(f.w * f.h);
+      for (let pixel = 0; pixel < seed.length; pixel += 1)
+        seed[pixel] = seedAlpha[pixel * 4 + 3];
+      const result = similarColorMask(source, seed, {
+        width: f.w,
+        height: f.h,
+        fuzziness: colorTolerance,
+      });
+      const mask = surface(f.w, f.h),
+        image = mask.getContext('2d')!.createImageData(f.w, f.h);
+      for (let pixel = 0; pixel < result.mask.length; pixel += 1) {
+        const offset = pixel * 4;
+        image.data[offset] = 255;
+        image.data[offset + 1] = 255;
+        image.data[offset + 2] = 255;
+        image.data[offset + 3] = result.mask[pixel];
+      }
+      mask.getContext('2d')!.putImageData(image, 0, 0);
+      const next: Selection = {
+        shape: 'rectangle',
+        x: 0,
+        y: 0,
+        w: f.w,
+        h: f.h,
+        feather: 0,
+        inverted: false,
+      };
+      const candidate = await composeSelectionCandidate(
+        f,
+        next,
+        mask,
+        operation,
+        sourceAssets,
+      );
+      if (!isCurrentSelectionOperation(f, frameIndex, workToken)) return;
+      publishSelectionCandidate(
+        f,
+        frameIndex,
+        workToken,
+        candidate,
+        `Similar selection created (fuzziness ${colorTolerance})`,
+      );
+    } catch (error) {
+      if (isCurrentSelectionOperation(f, frameIndex, workToken))
+        setNotice(
+          error instanceof Error
+            ? error.message
+            : 'Could not create a Similar selection',
+        );
     }
   };
   const reselect = () => {
@@ -7851,6 +7928,7 @@ export default function Home() {
     else if (command === 'deselect') setSelection(undefined);
     else if (command === 'reselect') reselect();
     else if (command === 'invert-selection') invertSelection();
+    else if (command === 'similar-selection') await applySimilarSelection();
     else if (command === 'quick-mask') toggleQuickMask();
     else if (command === 'save-selection') {
       saveCurrentSelection();
@@ -8141,6 +8219,7 @@ export default function Home() {
       case 'grow-selection':
       case 'contract-selection':
       case 'border-selection':
+      case 'similar-selection':
         return !frame.selection;
       case 'hide-layer':
         return !layer || Boolean(groupForLayer(frame, layer)?.locked);

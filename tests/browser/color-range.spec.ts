@@ -69,6 +69,34 @@ test('Color Range creates a local soft alpha selection and persists through relo
   expect(await alphaStats(page, exported.assets[frame.selection!.mask!])).toEqual(stats);
 });
 
+test('Similar derives from the active selection, composes locally, and round-trips', async ({ page }) => {
+  await page.getByRole('button', { name: 'Select', exact: true }).click();
+  const similar = page.getByRole('menuitem', { name: 'Similar', exact: true });
+  await expect(similar).toBeDisabled();
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^New white document/ }).click();
+  const canvas = page.getByTestId('editor-canvas');
+  const box = (await canvas.boundingBox())!;
+  await selectTool(page, 'Select');
+  await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.5, { steps: 3 });
+  await page.mouse.up();
+  await page.getByRole('button', { name: 'Select', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Similar', exact: true })).toBeEnabled();
+  await page.getByRole('menuitem', { name: 'Similar', exact: true }).click();
+  await expect(page.getByText(/Similar selection created \(fuzziness /)).toBeVisible();
+  const saved = await project(page);
+  const frame = saved.history[saved.index];
+  expect(frame.selection?.mask).toBeTruthy();
+  const stats = await alphaStats(page, saved.assets[frame.selection!.mask!]);
+  expect(stats.selected).toBeGreaterThan(0);
+  await page.reload();
+  const restored = await project(page);
+  expect(restored.history[restored.index].selection?.mask).toBeTruthy();
+  expect(await alphaStats(page, restored.assets[restored.history[restored.index].selection!.mask!])).toEqual(stats);
+});
+
 test('Color Range validates fuzziness and cancellation without mutating selection', async ({ page }) => {
   await page.getByRole('button', { name: 'Select', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Color Range…', exact: true }).click();

@@ -55,7 +55,7 @@ function load(id: string) {
   });
   const script = document.createElement('script');
   script.async = true;
-  script.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(id)}`;
+  script.src = 'https://www.googletagmanager.com/gtag/js?id=' + encodeURIComponent(id);
   document.head.append(script);
   gtag('event', 'page_view', {
     app_name: APP_NAME,
@@ -90,12 +90,17 @@ export default function Analytics() {
     } else if (!value) {
       const banner = document.createElement('aside');
       banner.id = 'cheaply-analytics-consent';
-      banner.setAttribute('role', 'dialog');
+      // This is a non-modal informational region. A generic dialog role would
+      // collide with the editor's real dialogs and confuse assistive technology.
+      banner.setAttribute('role', 'region');
       banner.setAttribute('aria-label', 'Analytics consent');
       banner.innerHTML =
         '<strong>Help improve Cheaply Photo Editor</strong><p>Allow anonymous usage statistics to improve PixelForge. Your photos, projects, and file names never leave this device.</p><div><button type="button" data-choice="deny">No thanks</button><button type="button" data-choice="accept">Allow</button></div>';
       banner.style.cssText =
-        'position:fixed;left:1rem;right:1rem;bottom:1rem;z-index:1000;max-width:34rem;padding:1rem;border:1px solid #d8dee8;border-radius:12px;background:#fff;color:#172033;box-shadow:0 10px 30px #17203322;font:14px system-ui,sans-serif';
+        'position:fixed;left:1rem;right:1rem;bottom:1rem;z-index:1000;max-width:34rem;padding:1rem;border:1px solid #d8dee8;border-radius:12px;background:#fff;color:#172033;box-shadow:0 10px 30px #17203322;font:14px system-ui,sans-serif;pointer-events:none';
+      banner.querySelectorAll('button').forEach((button) => {
+        button.style.pointerEvents = 'auto';
+      });
       banner.querySelector('[data-choice="deny"]')?.addEventListener('click', () => setConsent('denied'));
       banner.querySelector('[data-choice="accept"]')?.addEventListener('click', () => setConsent('granted'));
       document.body.append(banner);
