@@ -124,3 +124,7 @@ The Patch Tool increment adds bounded, nondestructive source-offset retouching o
 ## Reference extraction notes
 
 The first reference groups tools into Move and Selection, Crop and Slice, Measurement, Retouching and Painting, Drawing and Type, Navigation, toolbar editing, colors, Quick Mask, screen modes and image generation. The second reference names the individual tools and shortcuts listed above. Tool names are recorded for planning and compatibility vocabulary; Pixel's UI remains free, anonymous by default and locally private.
+
+
+### Solid fill layer
+Editable local solid-color layers are active. The source color is stored as validated metadata, so rendering remains nondestructive and project files preserve the fill across reloads.

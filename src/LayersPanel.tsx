@@ -407,6 +407,18 @@ export default function LayersPanel({
           onChange={(e) => edit({ opacity: Number(e.target.value) / 100 })}
         />
       </label>
+      {layer.kind === 'raster' && layer.fillColor && (
+        <label className="layer-field">
+          Fill colour
+          <input
+            aria-label="Fill layer colour"
+            type="color"
+            value={layer.fillColor}
+            disabled={layerLocked}
+            onChange={(e) => edit({ fillColor: e.target.value })}
+          />
+        </label>
+      )}
       <label className="layer-field">
         Blend mode
         <select
