@@ -385,3 +385,16 @@ test('wave is a deterministic directional remap with wavelength and alpha-safe e
 test('invalid buffer dimensions fail closed', () => {
   assert.throws(() => applyFilterEffectsPixels(new Uint8ClampedArray(3), 1, 1, { type: 'mosaic', amount: 1, radius: 2 }), /length/);
 });
+
+test('Average Blur blends visible pixels toward one alpha-weighted global colour', () => {
+  const source = rgba(3, 1, (x) => x === 0 ? [200, 10, 20, 255] : x === 1 ? [20, 100, 40, 255] : [0, 0, 0, 0]);
+  const original = source.slice();
+  const result = applyFilterEffectsPixels(source, 3, 1, {
+    type: 'average-blur', amount: 100, radius: 6,
+  });
+  assert.deepEqual(source, original);
+  assert.deepEqual(pixel(result, 3, 0, 0), [110, 55, 30, 255]);
+  assert.deepEqual(pixel(result, 3, 1, 0), [110, 55, 30, 255]);
+  assert.deepEqual(pixel(result, 3, 2, 0), [0, 0, 0, 0]);
+  assert.equal(validFilterEffects(effectiveFilterEffects({ type: 'average-blur', amount: 85, radius: 6 })), true);
+});
