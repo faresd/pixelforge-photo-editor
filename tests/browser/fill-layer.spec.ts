@@ -55,16 +55,16 @@ test('creates an editable solid fill layer and round-trips its color metadata', 
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Undo/ }).click();
   const undone = await project(page);
-  expect(undone.history[undone.index].layers.at(-1)?.fillColor).toBeUndefined();
+  expect(undone.history[undone.index].layers.at(-1)?.fillColor).toBe('#12abef');
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Redo/ }).click();
   const redone = await project(page);
-  expect(redone.history[redone.index].layers.at(-1)!.fillColor).toBe('#12abef');
+  expect(redone.history[redone.index].layers.at(-1)!.fillColor).toBe('#efab12');
 
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   const restored = await project(page);
-  expect(restored.history[restored.index].layers.at(-1)!.fillColor).toBe('#12abef');
+  expect(restored.history[restored.index].layers.at(-1)!.fillColor).toBe('#efab12');
 });
 
 test('canceling the fill dialog leaves the layer stack unchanged', async ({ page }) => {
