@@ -39,6 +39,23 @@ test('creates an editable solid fill layer and round-trips its color metadata', 
   expect(layer.fillColor).toBe('#12abef');
   expect(layer.asset).toBeTruthy();
   expect(saved.assets[layer.asset!]).toBeTruthy();
+  const pixel = await page.getByTestId('editor-canvas').evaluate((canvas) => {
+    const context = (canvas as HTMLCanvasElement).getContext('2d')!;
+    const sample = context.getImageData(Math.floor((canvas as HTMLCanvasElement).width / 2), Math.floor((canvas as HTMLCanvasElement).height / 2), 1, 1).data;
+    return Array.from(sample);
+  });
+  expect(pixel[0]).toBeGreaterThan(0);
+  expect(pixel[1]).toBeGreaterThan(80);
+  expect(pixel[2]).toBeGreaterThan(180);
+
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  const undone = await project(page);
+  expect(undone.history[undone.index].layers.at(-1)?.fillColor).toBeUndefined();
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Redo/ }).click();
+  const redone = await project(page);
+  expect(redone.history[redone.index].layers.at(-1)!.fillColor).toBe('#12abef');
 
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
