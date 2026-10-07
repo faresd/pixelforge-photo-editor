@@ -178,3 +178,15 @@ The tiled document compositor and neighborhood-effect parity rules remain a
 separate Phase 6 scale milestone. Until those gates pass, large-image work
 remains opt-in and the 16 MP, 16,000-pixel-edge and layer/history limits stay
 in force.
+
+## Cancellation and decoded bitmap ownership
+
+Abort signals and callback cancellation now share the same guard on worker,
+unsupported-browser fallback and live-override paths. An already cancelled
+request fails before any canvas/worker allocation. A fallback checks cancellation
+again before returning its completed surface. PNG worker results validate the
+actual decoded bitmap dimensions, rather than trusting response metadata alone.
+An image decoded after cancellation/timeout is closed immediately and never
+returned; malformed decoded dimensions also close the bitmap before rejection.
+Unit regressions cover pre-aborted fallback/overrides, late decode cleanup,
+forged decoded dimensions and callback cancellation during decode.

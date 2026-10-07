@@ -59,6 +59,17 @@ export async function renderFrameWithWorker(
   overrides?: Record<string, HTMLCanvasElement>,
   options: WorkerRenderOptions = {},
 ): Promise<CanvasImageSource> {
+  const isCancelled = () => Boolean(options.signal?.aborted || options.isCancelled?.());
+  if (isCancelled()) throw abortError();
+  const fallback = async () => {
+    const image = await renderFrame(frame, assets, overrides, {
+      isCancelled,
+      onProgress: options.onProgress,
+      yieldEveryLayers: 1,
+    });
+    if (isCancelled()) throw abortError();
+    return image;
+  };
   const globalScope = globalThis as typeof globalThis & {
     __PIXELFORGE_FORCE_WORKER__?: boolean;
   };
@@ -66,14 +77,7 @@ export async function renderFrameWithWorker(
     options.forceWorker === true ||
     globalScope.__PIXELFORGE_FORCE_WORKER__ === true ||
     frame.w * frame.h >= WORKER_MIN_PIXELS;
-  if (overrides || !useWorker || !canRenderInWorker())
-    return renderFrame(frame, assets, overrides, {
-      isCancelled: options.isCancelled,
-      onProgress: options.onProgress,
-      // Yield on the fallback path too so cancellation and progress can reach
-      // the UI when OffscreenCanvas is unavailable.
-      yieldEveryLayers: 1,
-    });
+  if (overrides || !useWorker || !canRenderInWorker()) return fallback();
   validateFrame(frame, assets);
   if (options.signal?.aborted) throw abortError();
 
@@ -84,11 +88,7 @@ export async function renderFrameWithWorker(
       { type: 'module' },
     );
   } catch {
-    return renderFrame(frame, assets, undefined, {
-      isCancelled: options.isCancelled,
-      onProgress: options.onProgress,
-      yieldEveryLayers: 1,
-    });
+    return fallback();
   }
   const id = ++requestId;
   return new Promise<CanvasImageSource>((resolve, reject) => {
@@ -137,6 +137,13 @@ export async function renderFrameWithWorker(
       )
         return;
       const value = message as Record<string, unknown>;
+      if (isCancelled()) {
+        if (value.kind === 'result' && value.image &&
+            typeof (value.image as ImageBitmap).close === 'function')
+          (value.image as ImageBitmap).close();
+        cancel();
+        return;
+      }
       if (value.kind === 'error' && typeof value.message === 'string') {
         const error = new Error(value.message);
         error.name = typeof value.name === 'string' ? value.name : 'Error';
@@ -182,7 +189,19 @@ export async function renderFrameWithWorker(
         void createImageBitmap(
           new Blob([value.bytes], { type: 'image/png' }),
         ).then(
-          (image) => finish(() => resolve(image)),
+          (image) => {
+            if (settled || isCancelled()) {
+              image.close();
+              if (!settled) cancel();
+              return;
+            }
+            if (image.width !== frame.w || image.height !== frame.h) {
+              image.close();
+              finish(() => reject(new Error('Worker decoded an invalid render size.')));
+              return;
+            }
+            finish(() => resolve(image));
+          },
           (error) => finish(() => reject(error)),
         );
       } else if (value.kind === 'result' || value.kind === 'result-bytes') {

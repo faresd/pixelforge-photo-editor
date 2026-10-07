@@ -153,3 +153,27 @@ test('render status exposes bounded layer progress after a worker render', async
   await expect(status).toHaveAttribute('data-render-total', '1');
   await expect(status).toHaveText('Render ready');
 });
+
+test('fallback renders the latest adjustment and preserves it through reload after rapid changes', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'Worker', { configurable: true, value: undefined });
+    Object.defineProperty(window, 'OffscreenCanvas', { configurable: true, value: undefined });
+  });
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  const brightness = page.getByLabel('Brightness', { exact: true });
+  await brightness.press('Home');
+  await brightness.press('End');
+  await brightness.press('Home');
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
+  const finalValue = await brightness.inputValue();
+  const pixels = await page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) =>
+    Array.from(canvas.getContext('2d')!.getImageData(10, 10, 1, 1).data));
+  await expect(page.getByLabel('Draft save status')).toHaveText('Saved on this device');
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(brightness).toHaveValue(finalValue);
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
+  expect(await page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) =>
+    Array.from(canvas.getContext('2d')!.getImageData(10, 10, 1, 1).data))).toEqual(pixels);
+});
