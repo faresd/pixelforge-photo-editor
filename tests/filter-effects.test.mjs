@@ -234,6 +234,29 @@ test('tilt shift keeps the focus band sharper than distant pixels', () => {
   assert.ok(edgeDifference > centreDifference);
 });
 
+test('ripple uses bounded bilinear sampling with editable centre and alpha-safe edges', () => {
+  const source = rgba(11, 7, (x, y) => {
+    if (x === 0 && y === 0) return [19, 29, 39, 0];
+    return [(x * 31 + y * 7) % 256, (y * 43 + x * 5) % 256, (x + y) * 11, 255];
+  });
+  const original = source.slice();
+  const effect = { type: 'ripple', amount: 100, radius: 5, centerX: 0.35, centerY: 0.65 };
+  const result = applyFilterEffectsPixels(source, 11, 7, effect);
+  assert.deepEqual(source, original);
+  assert.equal(pixel(result, 11, 0, 0)[3], 0);
+  for (let y = 0; y < 7; y += 1) {
+    for (let x = 0; x < 11; x += 1) {
+      assert.equal(pixel(result, 11, x, y)[3], pixel(source, 11, x, y)[3]);
+    }
+  }
+  assert.notDeepEqual(result, source);
+  assert.notDeepEqual(
+    result,
+    applyFilterEffectsPixels(source, 11, 7, { ...effect, centerX: 0.8, centerY: 0.2 }),
+  );
+  assert.equal(validFilterEffects(effectiveFilterEffects(effect)), true);
+});
+
 test('mosaic and halftone operate by bounded cells without touching alpha', () => {
   const source = rgba(8, 4, (x, y) => [x < 4 ? 250 : 10, y * 50, x * 20, 120 + x * 10]);
   const mosaic = applyFilterEffectsPixels(source, 8, 4, { type: 'mosaic', amount: 100, radius: 4 });
