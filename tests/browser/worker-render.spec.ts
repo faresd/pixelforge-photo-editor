@@ -177,3 +177,63 @@ test('fallback renders the latest adjustment and preserves it through reload aft
   expect(await page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) =>
     Array.from(canvas.getContext('2d')!.getImageData(10, 10, 1, 1).data))).toEqual(pixels);
 });
+
+test('a superseded project import cannot replace the newer document or its pixels', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', {name: 'File', exact: true}).click();
+  const downloading = page.waitForEvent('download');
+  await page.getByRole('menuitem', {name: 'Download project file', exact: true}).click();
+  const file = await (await downloading).path();
+  const original = JSON.parse(await (await import('node:fs/promises')).readFile(file!, 'utf8'));
+  const urls = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1440; canvas.height = 960;
+    const context = canvas.getContext('2d')!;
+    context.fillStyle = '#ff0000'; context.fillRect(0, 0, 1440, 960);
+    const slow = canvas.toDataURL('image/png');
+    context.fillStyle = '#0000ff'; context.fillRect(0, 0, 1440, 960);
+    return {slow, fast: canvas.toDataURL('image/png')};
+  });
+  await page.evaluate((slow) => {
+    // Preserve the prototype method and explicitly bind its receiver below.
+    // oxlint-disable-next-line typescript/unbound-method
+    const nativeDecode = HTMLImageElement.prototype.decode;
+    const state = window as Window & {__releaseImport?: () => void; __importPaused?: boolean};
+    HTMLImageElement.prototype.decode = async function () {
+      if (this.src === slow) {
+        state.__importPaused = true;
+        await new Promise<void>(resolve => {state.__releaseImport = resolve;});
+      }
+      return nativeDecode.call(this);
+    };
+  }, urls.slow);
+  const older = structuredClone(original);
+  const newer = structuredClone(original);
+  older.name = 'older-import'; newer.name = 'newer-import';
+  for (const asset of Object.values(older.assets) as Array<{url: string}>) asset.url = urls.slow;
+  for (const asset of Object.values(newer.assets) as Array<{url: string}>) asset.url = urls.fast;
+  await page.getByTestId('project-input').setInputFiles({
+    name: 'older.pixelforge', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(older)),
+  });
+  await expect.poll(() => page.evaluate(() =>
+    Boolean((window as Window & {__importPaused?: boolean}).__importPaused))).toBe(true);
+  await page.getByTestId('project-input').setInputFiles({
+    name: 'newer.pixelforge', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(newer)),
+  });
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
+  const pixel = () => page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) =>
+    Array.from(canvas.getContext('2d')!.getImageData(10, 10, 1, 1).data));
+  expect(await pixel()).toEqual([0, 0, 255, 255]);
+  const newestUrl = page.url();
+  await page.evaluate(() => (window as Window & {__releaseImport?: () => void}).__releaseImport?.());
+  await expect(page.getByText('Document import cancelled', {exact: true})).toBeVisible();
+  expect(await pixel()).toEqual([0, 0, 255, 255]);
+  expect(page.url()).toBe(newestUrl);
+  await expect(page.getByLabel('Draft save status')).toHaveText('Saved on this device');
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
+  expect(await pixel()).toEqual([0, 0, 255, 255]);
+});

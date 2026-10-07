@@ -194,3 +194,11 @@ Transferred bitmap results also validate their actual dimensions. Rejected,
 unrelated and already-settled bitmap responses are closed; an accepted bitmap
 remains owned by its caller until the caller finishes drawing and closes it.
 Focused regressions verify rejected/unrelated cleanup and accepted ownership.
+
+Project installation also checks its abort signal and render generation before
+and after each retained asset decode and immediately before replacing document
+history, assets or canvas pixels. A superseded import preserves the winning
+draft. The desktop/mobile acceptance fixture pauses an older image decode,
+installs a newer blue-pixel project, resumes the older import, and checks that
+the newer pixels, bookmark and reload remain intact. This acceptance coverage
+must pass the protected browser gate before release.

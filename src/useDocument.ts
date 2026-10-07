@@ -151,6 +151,10 @@ export function useDocument(onError: (message: string) => void) {
     const installController = new AbortController();
     renderAbort.current = installController;
     const installSequence = ++renderSequence.current;
+    const assertCurrentInstall = () => {
+      if (installController.signal.aborted || installSequence !== renderSequence.current)
+        throw new DOMException('Document import cancelled', 'AbortError');
+    };
     setRendering(true);
     setRenderProgress({
       completed: 0,
@@ -158,7 +162,11 @@ export function useDocument(onError: (message: string) => void) {
     });
     try {
       // Validate every history asset before switching, so undo never discovers a corrupt import.
-      for (const asset of Object.values(draft.assets)) await decodeAsset(asset);
+      for (const asset of Object.values(draft.assets)) {
+        assertCurrentInstall();
+        await decodeAsset(asset);
+        assertCurrentInstall();
+      }
       // Decode and render before switching documents, preserving the current work on import failure.
       const image = await renderFrameWithWorker(
         draft.history[draft.index],
@@ -174,6 +182,7 @@ export function useDocument(onError: (message: string) => void) {
         },
       );
       try {
+        assertCurrentInstall();
         if (history.current[index.current] !== expected)
           throw new Error('Document changed during import. Please try again.');
         assets.current = draft.assets;
