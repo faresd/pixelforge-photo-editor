@@ -190,3 +190,7 @@ An image decoded after cancellation/timeout is closed immediately and never
 returned; malformed decoded dimensions also close the bitmap before rejection.
 Unit regressions cover pre-aborted fallback/overrides, late decode cleanup,
 forged decoded dimensions and callback cancellation during decode.
+Transferred bitmap results also validate their actual dimensions. Rejected,
+unrelated and already-settled bitmap responses are closed; an accepted bitmap
+remains owned by its caller until the caller finishes drawing and closes it.
+Focused regressions verify rejected/unrelated cleanup and accepted ownership.

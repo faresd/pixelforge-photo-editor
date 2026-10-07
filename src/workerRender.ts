@@ -130,17 +130,19 @@ export async function renderFrameWithWorker(
     };
     worker.onmessage = (event: MessageEvent<unknown>) => {
       const message = event.data;
-      if (
-        !message ||
-        typeof message !== 'object' ||
-        (message as { id?: unknown }).id !== id
-      )
-        return;
+      if (!message || typeof message !== 'object') return;
       const value = message as Record<string, unknown>;
-      if (isCancelled()) {
+      const closeResult = () => {
         if (value.kind === 'result' && value.image &&
             typeof (value.image as ImageBitmap).close === 'function')
           (value.image as ImageBitmap).close();
+      };
+      if (value.id !== id || settled) {
+        closeResult();
+        return;
+      }
+      if (isCancelled()) {
+        closeResult();
         cancel();
         return;
       }
@@ -175,7 +177,9 @@ export async function renderFrameWithWorker(
         value.width === frame.w &&
         value.height === frame.h &&
         value.image &&
-        typeof (value.image as ImageBitmap).close === 'function'
+        typeof (value.image as ImageBitmap).close === 'function' &&
+        (value.image as ImageBitmap).width === frame.w &&
+        (value.image as ImageBitmap).height === frame.h
       ) {
         finish(() => resolve(value.image as ImageBitmap));
       } else if (
@@ -205,6 +209,7 @@ export async function renderFrameWithWorker(
           (error) => finish(() => reject(error)),
         );
       } else if (value.kind === 'result' || value.kind === 'result-bytes') {
+        closeResult();
         const dimensionsMatch =
           value.width === frame.w && value.height === frame.h;
         finish(() =>
