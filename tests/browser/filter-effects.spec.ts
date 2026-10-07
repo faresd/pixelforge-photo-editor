@@ -90,6 +90,29 @@ test('Average Blur is a global nondestructive menu effect with alpha-safe pixels
   await expect.poll(() => pixel(page, 1, 0)).toEqual(sourcePixel);
 });
 
+test('Blur More is an enabled stronger nondestructive blur preset', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset;
+
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const blurMore = page.getByRole('menuitem', { name: 'Blur More', exact: true });
+  await expect(blurMore).toBeEnabled();
+  await blurMore.click();
+  await expect(page.getByText('Blur More applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('blur-more');
+
+  const adjusted = await downloadProject(page);
+  const adjustedLayer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(adjustedLayer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
+  expect(adjustedLayer.adjustments.filterEffects).toMatchObject({ type: 'blur-more', amount: 85, radius: 6 });
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
+});
+
 test('Field Blur is a nondestructive menu effect with source-safe persistence', async ({ page }) => {
   await importPixels(page);
   const before = await downloadProject(page);

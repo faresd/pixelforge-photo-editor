@@ -387,6 +387,7 @@ type Command =
   | 'filter-warm'
   | 'filter-cool'
   | 'filter-average'
+  | 'filter-blur-more'
   | 'filter-box-blur'
   | 'filter-gaussian-blur'
   | 'filter-motion-blur'
@@ -783,7 +784,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Field Blur…', command: 'filter-field-blur' },
     { label: 'Tilt-Shift…', command: 'filter-tilt-shift' },
     { label: 'Average', command: 'filter-average' },
-    { label: 'Blur More', command: 'noop', disabled: true },
+    { label: 'Blur More', command: 'filter-blur-more' },
     { label: 'Box Blur…', command: 'filter-box-blur' },
     { label: 'Gaussian Blur…', command: 'filter-gaussian-blur' },
     { label: 'Motion Blur…', command: 'filter-motion-blur' },
@@ -3364,6 +3365,7 @@ export default function Home() {
                 type,
                 amount:
                   type === 'average-blur' ||
+                  type === 'blur-more' ||
                   type === 'mosaic' || type === 'color-halftone'
                     ? 85
                     : type === 'box-blur' || type === 'gaussian-blur'
@@ -8029,6 +8031,8 @@ export default function Home() {
       chooseFilterEffect('none', 'Filter effect');
     else if (command === 'filter-average')
       chooseFilterEffect('average-blur', 'Average Blur');
+    else if (command === 'filter-blur-more')
+      chooseFilterEffect('blur-more', 'Blur More');
     else if (command === 'filter-box-blur')
       chooseFilterEffect('box-blur', 'Box Blur');
     else if (command === 'filter-gaussian-blur')
@@ -8211,6 +8215,7 @@ export default function Home() {
       case 'auto-color':
         return !layer || layer.kind !== 'raster' || locked || !layer.visible;
       case 'filter-average':
+      case 'filter-blur-more':
       case 'filter-field-blur':
       case 'filter-box-blur':
       case 'filter-gaussian-blur':
