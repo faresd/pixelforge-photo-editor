@@ -662,7 +662,7 @@ function applyDistort(
         sampleY = y + (dy / Math.max(1, distance)) * wave;
       }
       const sample =
-        (effect.type === 'pinch' || effect.type === 'spherize')
+        (effect.type === 'pinch' || effect.type === 'spherize' || effect.type === 'ripple')
           ? sourcePixelBilinear(source, width, height, sampleX, sampleY)
           : sourcePixel(source, width, height, sampleX, sampleY);
       if (sample[3] === 0) continue;

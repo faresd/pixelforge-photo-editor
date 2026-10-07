@@ -128,3 +128,5 @@ The first reference groups tools into Move and Selection, Crop and Slice, Measur
 
 ### Solid fill layer
 Editable local solid-color layers are active. The source color is stored as validated metadata, so rendering remains nondestructive and project files preserve the fill across reloads.
+
+Ripple is active as a bounded radial displacement with editable centre/radius metadata, premultiplied-alpha bilinear sampling, source retention and desktop/mobile acceptance; see [`ripple-effect-contract.md`](./ripple-effect-contract.md).

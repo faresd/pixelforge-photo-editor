@@ -10234,6 +10234,26 @@ export default function Home() {
                     />
                   </>
                 )}
+                {filterEffects.type === 'ripple' && (
+                  <>
+                    <Slider
+                      label="Ripple center X"
+                      value={Math.round(filterEffects.centerX * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      suffix="%"
+                    />
+                    <Slider
+                      label="Ripple center Y"
+                      value={Math.round(filterEffects.centerY * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      suffix="%"
+                    />
+                  </>
+                )}
                 {filterEffects.type === 'spherize' && (
                   <>
                     <Slider
