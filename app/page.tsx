@@ -233,9 +233,12 @@ import {
   type SpongeMode,
 } from '../src/tonal';
 import {
+  hitTestPathHandle,
   hitTestPathNode,
+  movePathHandle,
   movePathNode,
   validatePath,
+  type PathHandleKind,
   type PathNode,
   type PathModel,
 } from '../src/paths';
@@ -875,6 +878,8 @@ type Gesture = {
   replaceTarget?: [number, number, number, number];
   /** Local node index for an in-progress Direct Selection drag. */
   pathIndex?: number;
+  /** Handle kind for an in-progress Direct Selection handle drag. */
+  pathHandle?: PathHandleKind;
   /** Local path model at pointer-down, used to keep a drag deterministic. */
   pathOrigin?: PathModel;
   /** Composite RGBA sample used by the bounded Magnetic Lasso snapper. */
@@ -4771,6 +4776,29 @@ export default function Home() {
     context.stroke();
     if (path.closed && path.fill) context.fill();
     context.setLineDash([]);
+    // Expose editable Bezier controls while a path is selected so Direct
+    // Selection can discover and drag them without hiding the curve shape.
+    const map = (point: { x: number; y: number }) => ({
+      x: matrix[0] * point.x + matrix[2] * point.y + matrix[4],
+      y: matrix[1] * point.x + matrix[3] * point.y + matrix[5],
+    });
+    context.lineWidth = 1;
+    for (const node of path.nodes) {
+      const anchor = map(node);
+      for (const handle of [node.inHandle, node.outHandle]) {
+        if (!handle) continue;
+        const control = map(handle);
+        context.strokeStyle = 'rgba(148,163,184,.8)';
+        context.beginPath();
+        context.moveTo(anchor.x, anchor.y);
+        context.lineTo(control.x, control.y);
+        context.stroke();
+        context.fillStyle = '#38bdf8';
+        context.beginPath();
+        context.arc(control.x, control.y, 4, 0, Math.PI * 2);
+        context.fill();
+      }
+    }
     for (const [index, node] of transformed.entries()) {
       context.beginPath();
       context.fillStyle = index === selectedIndex ? '#fbbf24' : '#ffffff';
@@ -5157,9 +5185,10 @@ export default function Home() {
         Math.hypot(layer.matrix[2], layer.matrix[3]),
         0.0001,
       );
-      const pathIndex = hitTestPathNode(layer.path, localPoint, 10 / scale);
+      const pathHandle = hitTestPathHandle(layer.path, localPoint, 10 / scale);
+      const pathIndex = pathHandle?.index ?? hitTestPathNode(layer.path, localPoint, 10 / scale);
       if (pathIndex === null) {
-        setNotice('Click a path node to select it');
+        setNotice('Click a path node or Bezier handle to select it');
         return;
       }
       const g: Gesture = {
@@ -5169,6 +5198,7 @@ export default function Home() {
         frame: f,
         layer,
         pathIndex,
+        pathHandle: pathHandle?.kind,
         pathOrigin: validatePath(layer.path),
         moved: false,
       };
@@ -6288,7 +6318,9 @@ export default function Home() {
       g.pathIndex !== undefined &&
       g.pathOrigin
     ) {
-      const moved = movePathNode(g.pathOrigin, g.pathIndex, local.x, local.y);
+      const moved = g.pathHandle
+        ? movePathHandle(g.pathOrigin, g.pathIndex, g.pathHandle, local.x, local.y)
+        : movePathNode(g.pathOrigin, g.pathIndex, local.x, local.y);
       g.moved = true;
       void paint({
         ...g.frame,
@@ -6986,7 +7018,9 @@ export default function Home() {
         void paint(f);
         return;
       }
-      const moved = movePathNode(g.pathOrigin, g.pathIndex, local.x, local.y);
+      const moved = g.pathHandle
+        ? movePathHandle(g.pathOrigin, g.pathIndex, g.pathHandle, local.x, local.y)
+        : movePathNode(g.pathOrigin, g.pathIndex, local.x, local.y);
       if (
         commit({
           ...f,
@@ -6995,7 +7029,7 @@ export default function Home() {
           ),
         })
       )
-        setNotice('Path node moved');
+        setNotice(g.pathHandle ? 'Path handle moved' : 'Path node moved');
     } else if (g.tool === 'move' && g.layer && g.moved) {
       const matrix = [...g.layer.matrix] as Matrix;
       matrix[4] += p.x - g.start.x;
