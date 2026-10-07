@@ -74,7 +74,7 @@ test('worker renderer rejects a forged result size and terminates', async () => 
               id: message.id,
               width: 2,
               height: 1,
-              image: { close() {} },
+              image: { width: 1, height: 1, close() {} },
             },
           }),
         );
@@ -177,7 +177,7 @@ test('worker renderer forwards monotonic bounded layer progress', async () => {
               id: message.id,
               width: 1,
               height: 1,
-              image: { close() {} },
+              image: { width: 1, height: 1, close() {} },
             },
           });
         });
@@ -229,7 +229,7 @@ test('worker renderer rejects forged or regressing progress before accepting out
               id: message.id,
               width: 1,
               height: 1,
-              image: { close() {} },
+              image: { width: 1, height: 1, close() {} },
             },
           });
         });
@@ -343,4 +343,138 @@ test('worker renderer aborts, posts cancellation and cleans up', async () => {
   } finally {
     restoreGlobals();
   }
+});
+
+test('pre-cancelled fallback rejects before canvas allocation, including live overrides', async () => {
+  const controller = new AbortController();
+  controller.abort();
+  for (const overrides of [undefined, {}]) {
+    await assert.rejects(renderFrameWithWorker(rectangleFrame(), {}, overrides, {
+      signal: controller.signal,
+    }), (error) => error.name === 'AbortError');
+  }
+  await assert.rejects(renderFrameWithWorker(rectangleFrame(), {}, undefined, {
+    isCancelled: () => true,
+  }), (error) => error.name === 'AbortError');
+});
+
+async function withByteWorker(run) {
+  let worker;
+  class FakeOffscreenCanvas {
+    getContext() { return {}; }
+    transferToImageBitmap() { return {}; }
+  }
+  class FakeWorker {
+    constructor() { worker = this; this.terminated = false; }
+    postMessage(message) {
+      if (message.kind === 'render') queueMicrotask(() => this.onmessage?.({data: {
+        kind: 'result-bytes', id: message.id, width: 1, height: 1,
+        bytes: new ArrayBuffer(1),
+      }}));
+    }
+    terminate() { this.terminated = true; }
+  }
+  setGlobal('Worker', FakeWorker);
+  setGlobal('OffscreenCanvas', FakeOffscreenCanvas);
+  try { await run(() => worker); } finally { restoreGlobals(); }
+}
+
+test('bitmap decode completing after abort closes the unused allocation', async () => {
+  await withByteWorker(async (getWorker) => {
+    let completeDecode;
+    let closed = 0;
+    setGlobal('createImageBitmap', () => new Promise(resolve => { completeDecode = resolve; }));
+    const controller = new AbortController();
+    const result = renderFrameWithWorker(rectangleFrame(), {}, undefined, {
+      forceWorker: true, signal: controller.signal,
+    });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    controller.abort();
+    await assert.rejects(result, error => error.name === 'AbortError');
+    completeDecode({width: 1, height: 1, close() { closed++; }});
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(closed, 1);
+    assert.equal(getWorker().terminated, true);
+  });
+});
+
+test('encoded result checks decoded dimensions and closes forged output', async () => {
+  await withByteWorker(async (getWorker) => {
+    let closed = 0;
+    setGlobal('createImageBitmap', async () => ({width: 2, height: 1, close() { closed++; }}));
+    await assert.rejects(renderFrameWithWorker(rectangleFrame(), {}, undefined, {
+      forceWorker: true,
+    }), /decoded an invalid render size/);
+    assert.equal(closed, 1);
+    assert.equal(getWorker().terminated, true);
+  });
+});
+
+test('callback cancellation during bitmap decode closes output and rejects', async () => {
+  await withByteWorker(async (getWorker) => {
+    let cancelled = false;
+    let closed = 0;
+    setGlobal('createImageBitmap', async () => {
+      cancelled = true;
+      return {width: 1, height: 1, close() { closed++; }};
+    });
+    await assert.rejects(renderFrameWithWorker(rectangleFrame(), {}, undefined, {
+      forceWorker: true, isCancelled: () => cancelled,
+    }), error => error.name === 'AbortError');
+    assert.equal(closed, 1);
+    assert.equal(getWorker().terminated, true);
+  });
+});
+
+test('bitmap response validates actual size and releases rejected output', async () => {
+  let closed = 0;
+  let terminated = false;
+  class FakeCanvas { getContext() { return {}; } transferToImageBitmap() { return {}; } }
+  class FakeWorker {
+    postMessage(message) {
+      if (message.kind === 'render') queueMicrotask(() => this.onmessage?.({ data: {
+        kind: 'result', id: message.id, width: 1, height: 1,
+        image: { width: 2, height: 1, close() { closed++; } },
+      } }));
+    }
+    terminate() { terminated = true; }
+  }
+  setGlobal('Worker', FakeWorker);
+  setGlobal('OffscreenCanvas', FakeCanvas);
+  setGlobal('createImageBitmap', async () => ({}));
+  try {
+    await assert.rejects(renderFrameWithWorker(rectangleFrame(), {}, undefined, {
+      forceWorker: true,
+    }), /invalid render result/);
+    assert.equal(closed, 1);
+    assert.equal(terminated, true);
+  } finally { restoreGlobals(); }
+});
+
+test('unrelated bitmap response is released without settling the active request', async () => {
+  let unrelatedClosed = 0;
+  let acceptedClosed = 0;
+  const expected = {width: 1, height: 1, close() { acceptedClosed++; }};
+  class FakeCanvas { getContext() { return {}; } transferToImageBitmap() { return {}; } }
+  class FakeWorker {
+    postMessage(message) {
+      if (message.kind === 'render') queueMicrotask(() => {
+        this.onmessage?.({data: {kind: 'result', id: message.id + 1, width: 1, height: 1,
+          image: {width: 1, height: 1, close() { unrelatedClosed++; }}}});
+        this.onmessage?.({data: {kind: 'result', id: message.id, width: 1, height: 1, image: expected}});
+      });
+    }
+    terminate() {}
+  }
+  setGlobal('Worker', FakeWorker);
+  setGlobal('OffscreenCanvas', FakeCanvas);
+  setGlobal('createImageBitmap', async () => ({}));
+  try {
+    const result = await renderFrameWithWorker(rectangleFrame(), {}, undefined, {forceWorker: true});
+    assert.equal(result, expected);
+    assert.equal(unrelatedClosed, 1);
+    assert.equal(acceptedClosed, 0);
+    result.close();
+    assert.equal(acceptedClosed, 1);
+  } finally { restoreGlobals(); }
 });

@@ -178,3 +178,27 @@ The tiled document compositor and neighborhood-effect parity rules remain a
 separate Phase 6 scale milestone. Until those gates pass, large-image work
 remains opt-in and the 16 MP, 16,000-pixel-edge and layer/history limits stay
 in force.
+
+## Cancellation and decoded bitmap ownership
+
+Abort signals and callback cancellation now share the same guard on worker,
+unsupported-browser fallback and live-override paths. An already cancelled
+request fails before any canvas/worker allocation. A fallback checks cancellation
+again before returning its completed surface. PNG worker results validate the
+actual decoded bitmap dimensions, rather than trusting response metadata alone.
+An image decoded after cancellation/timeout is closed immediately and never
+returned; malformed decoded dimensions also close the bitmap before rejection.
+Unit regressions cover pre-aborted fallback/overrides, late decode cleanup,
+forged decoded dimensions and callback cancellation during decode.
+Transferred bitmap results also validate their actual dimensions. Rejected,
+unrelated and already-settled bitmap responses are closed; an accepted bitmap
+remains owned by its caller until the caller finishes drawing and closes it.
+Focused regressions verify rejected/unrelated cleanup and accepted ownership.
+
+Project installation also checks its abort signal and render generation before
+and after each retained asset decode and immediately before replacing document
+history, assets or canvas pixels. A superseded import preserves the winning
+draft. The desktop/mobile acceptance fixture pauses an older image decode,
+installs a newer blue-pixel project, resumes the older import, and checks that
+the newer pixels, bookmark and reload remain intact. This acceptance coverage
+must pass the protected browser gate before release.
