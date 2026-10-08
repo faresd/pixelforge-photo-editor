@@ -8,7 +8,7 @@
  * predictable for large documents while preserving partial edge coverage.
  */
 
-export type SelectionRefineMode = 'grow' | 'contract' | 'border';
+export type SelectionRefineMode = 'grow' | 'contract' | 'border' | 'smooth';
 
 const MAX_PIXELS = 16_000_000;
 const MAX_RADIUS = 1_000;
@@ -36,7 +36,7 @@ function validate(
   if (alpha.length !== width * height) {
     throw new Error('Selection mask alpha data has the wrong size.');
   }
-  if (mode !== 'grow' && mode !== 'contract' && mode !== 'border') {
+  if (mode !== 'grow' && mode !== 'contract' && mode !== 'border' && mode !== 'smooth') {
     throw new Error('Selection refinement mode is invalid.');
   }
   if (!Number.isInteger(radius) || radius < 0 || radius > MAX_RADIUS) {
@@ -64,6 +64,38 @@ export function refineSelectionAlpha(
     if (!Number.isFinite(value)) return 0;
     return Math.max(0, Math.min(255, Math.round(value)));
   });
+  if (mode === 'smooth') {
+    if (radius === 0) return source;
+    const horizontal = new Float64Array(source.length);
+    const output = new Uint8ClampedArray(source.length);
+    const span = radius * 2 + 1;
+    for (let y = 0; y < height; y += 1) {
+      let sum = 0;
+      for (let offset = -radius; offset <= radius; offset += 1)
+        sum += source[y * width + Math.max(0, Math.min(width - 1, offset))];
+      for (let x = 0; x < width; x += 1) {
+        if (x > 0) {
+          sum += source[y * width + Math.min(width - 1, x + radius)];
+          sum -= source[y * width + Math.max(0, x - radius - 1)];
+        }
+        horizontal[y * width + x] = sum / span;
+      }
+    }
+    for (let x = 0; x < width; x += 1) {
+      let sum = 0;
+      for (let offset = -radius; offset <= radius; offset += 1)
+        sum += horizontal[Math.max(0, Math.min(height - 1, offset)) * width + x];
+      for (let y = 0; y < height; y += 1) {
+        if (y > 0) {
+          sum += horizontal[Math.min(height - 1, y + radius) * width + x];
+          sum -= horizontal[Math.max(0, y - radius - 1) * width + x];
+        }
+        output[y * width + x] = Math.round(sum / span);
+      }
+    }
+    return output;
+  }
+
   // A border is the bounded difference between the expanded outer selection
   // and the contracted inner selection. Keeping this subtraction in alpha
   // space preserves fractional edge coverage instead of thresholding it.

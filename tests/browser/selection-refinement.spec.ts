@@ -110,6 +110,25 @@ test('Grow and Contract refine alpha nondestructively and survive project reload
   expect(await alphaCoverage(page, saved.assets[frame.selection!.mask!])).toBe(borderCoverage);
 });
 
+test('Smooth selection softens alpha edges and survives project reload', async ({ page }) => {
+  await selectTool(page, 'Select');
+  await drag(page, [0.25, 0.25], [0.55, 0.55]);
+  await page.getByRole('button', { name: 'Select', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Smooth…', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Smooth Selection' })).toBeVisible();
+  await page.getByLabel('Selection refinement radius (px)', { exact: true }).fill('4');
+  await page.getByRole('button', { name: 'Apply selection refinement', exact: true }).click();
+  await expect(page.getByText('Selection smoothed by 4 px', { exact: true })).toBeVisible();
+  const saved = await project(page);
+  const frame = saved.history[saved.index];
+  expect(frame.selection?.mask).toBeTruthy();
+  const coverage = await alphaCoverage(page, saved.assets[frame.selection!.mask!]);
+  expect(coverage).toBeGreaterThan(0);
+  await page.reload();
+  const reloaded = await project(page);
+  expect(await alphaCoverage(page, reloaded.assets[reloaded.history[reloaded.index].selection!.mask!])).toBe(coverage);
+});
+
 test('Grow rejects invalid radius without mutating the active selection', async ({ page }) => {
   await selectTool(page, 'Select');
   await drag(page, [0.25, 0.25], [0.55, 0.55]);

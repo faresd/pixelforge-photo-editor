@@ -66,3 +66,22 @@ test('radius zero clones alpha and bounds reject malformed masks', () => {
   assert.throws(() => refineSelectionAlpha(source, 2, 2, 'grow', selectionRefineBounds.maxRadius + 1), /whole number/);
   assert.throws(() => refineSelectionAlpha(new Uint8ClampedArray(3), 2, 2, 'grow', 1), /wrong size/);
 });
+
+test('smooth averages alpha edges deterministically without mutating source', () => {
+  const source = new Uint8ClampedArray(5 * 5);
+  source[2 * 5 + 2] = 255;
+  const smoothed = refineSelectionAlpha(source, 5, 5, 'smooth', 1);
+  assert.equal(source.filter(Boolean).length, 1);
+  assert.equal(smoothed[2 * 5 + 2], 28);
+  assert.equal(smoothed[2 * 5 + 1], 28);
+  assert.equal(smoothed[0], 0);
+  assert.ok(smoothed.some((value) => value > 0 && value < 255));
+});
+
+test('smooth validates its radius and preserves a zero-radius copy', () => {
+  const source = new Uint8ClampedArray([0, 120, 255, 40]);
+  const copy = refineSelectionAlpha(source, 2, 2, 'smooth', 0);
+  assert.deepEqual([...copy], [...source]);
+  assert.notEqual(copy, source);
+  assert.throws(() => refineSelectionAlpha(source, 2, 2, 'smooth', 1.5), /whole number/);
+});
