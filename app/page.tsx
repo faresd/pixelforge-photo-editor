@@ -173,6 +173,7 @@ import {
   paintSelectionBrushSegment,
 } from '../src/selectionBrush';
 import { snapMagneticPoint } from '../src/magneticLasso';
+import { appendFreeformPoint, buildFreeformPath } from '../src/freeformPen';
 import { colorRangeMask } from '../src/colorRange';
 import { focusAreaMask } from '../src/focusArea';
 import { similarColorMask } from '../src/similarSelection';
@@ -455,6 +456,7 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'sponge', label: 'Sponge', icon: Sparkles, key: 'O' },
   { id: 'smudge', label: 'Smudge', icon: Brush, key: 'R' },
   { id: 'pen', label: 'Pen', icon: Pencil, key: 'P' },
+  { id: 'freeform-pen', label: 'Freeform Pen', icon: Pencil, key: 'P' },
   {
     id: 'direct-select',
     label: 'Direct Selection',
@@ -545,11 +547,11 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   r: ['smudge'],
   s: ['clone', 'pattern-stamp'],
   j: ['heal', 'spot-heal', 'patch', 'red-eye'],
+  p: ['pen', 'freeform-pen'],
 };
 /** Existing PixelForge aliases retained while the primary keys follow Photoshop. */
 const TOOL_ALIASES: Record<string, Tool> = {
   a: 'direct-select',
-  p: 'pen',
 };
 const FILTERS = [
   ['Original', 'none', '#315277', '#d59b6c'],
@@ -4832,6 +4834,40 @@ export default function Home() {
         drawPathOverlay(preview, [1, 0, 0, 1, 0, 0], null, true);
     });
   };
+  const previewFreeformPath = (g: Gesture) => {
+    const points = g.points || [];
+    if (points.length < 2) return previewPenPath(g);
+    const preview = buildFreeformPath(points, {
+      strokeWidth: Math.max(1, size / 3),
+      fillColor: color,
+      strokeColor: color,
+    });
+    void paint(g.frame).then(() => {
+      if (gesture.current === g)
+        drawPathOverlay(preview, [1, 0, 0, 1, 0, 0], null, true);
+    });
+  };
+  const finishFreeformPath = (g: Gesture) => {
+    if (!g.points || g.points.length < 2) {
+      setNotice('Freeform Pen needs at least two points');
+      return;
+    }
+    try {
+      const path = buildFreeformPath(g.points, {
+        strokeWidth: Math.max(1, size / 3),
+        fillColor: color,
+        strokeColor: color,
+      });
+      const added = addLayer({
+        ...commonLayer('Freeform Path ' + g.frame.layers.length),
+        kind: 'path',
+        path,
+      });
+      if (added) setNotice('Editable freeform path layer added');
+    } catch {
+      setNotice('Could not create a freeform path');
+    }
+  };
   const pointerDown = async (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (quickMasking && quickMaskRef.current) {
       if (gesture.current || quickMaskGesture.current || doc.rendering) return;
@@ -4893,6 +4929,20 @@ export default function Home() {
       }
       return;
     }
+    if (gesture.current?.tool === 'freeform-pen') {
+      const g = gesture.current, p = point(e), points = g.points || [];
+      const next = appendFreeformPoint(points, {
+        x: Math.max(0, Math.min(g.frame.w, p.x)),
+        y: Math.max(0, Math.min(g.frame.h, p.y)),
+      });
+      if (next.length !== points.length) {
+        g.points = next;
+        g.last = p;
+        g.moved = next.length > 1;
+        previewFreeformPath(g);
+      }
+      return;
+    }
     // Pen is a click-to-place straight-segment workflow. Keep this gesture
     // alive between clicks so it works consistently with mouse, pen and touch.
     if (gesture.current?.tool === 'pen') {
@@ -4938,6 +4988,22 @@ export default function Home() {
         g.moved = points.length > 1;
         previewPenPath(g);
       }
+      return;
+    }
+    if (tool === 'freeform-pen') {
+      if (doc.rendering || !frame) return;
+      const f = current(), p = point(e);
+      canvas.current!.setPointerCapture(e.pointerId);
+      const g: Gesture = {
+        tool,
+        start: p,
+        last: p,
+        frame: f,
+        points: [{ x: Math.max(0, Math.min(f.w, p.x)), y: Math.max(0, Math.min(f.h, p.y)) }],
+        moved: false,
+      };
+      gesture.current = g;
+      setNotice('Freeform Pen: draw a path, release to finish');
       return;
     }
     if (tool === 'pen') {
@@ -6891,6 +6957,17 @@ export default function Home() {
       }
       return;
     }
+    if (g.tool === 'freeform-pen') {
+      if (e.type === 'pointercancel') {
+        gesture.current = null;
+        void paint(current());
+        setNotice('Freeform Pen cancelled');
+      } else {
+        gesture.current = null;
+        finishFreeformPath(g);
+      }
+      return;
+    }
     if (g.tool === 'pen') {
       if (e.type === 'pointercancel') {
         gesture.current = null;
@@ -7663,6 +7740,7 @@ export default function Home() {
       if (
         e.key === 'Escape' &&
         (gesture.current?.tool === 'pen' ||
+          gesture.current?.tool === 'freeform-pen' ||
           gesture.current?.tool === 'direct-select' ||
           gesture.current?.tool === 'selection-brush' ||
           gesture.current?.tool === 'patch')
@@ -7671,7 +7749,7 @@ export default function Home() {
         gesture.current = null;
         void paint(current());
         setNotice(
-          canceledTool === 'pen'
+          canceledTool === 'pen' || canceledTool === 'freeform-pen'
             ? 'Pen path cancelled'
             : canceledTool === 'selection-brush'
               ? 'Selection Brush cancelled'
