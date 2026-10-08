@@ -16,6 +16,7 @@ export const FILTER_EFFECT_TYPES = [
   'lens-blur',
   'iris-blur',
   'smart-blur',
+  'surface-blur',
   'motion-blur',
   'radial-blur',
   'field-blur',
@@ -347,6 +348,59 @@ function applySmartBlur(
             source[sampleOffset + 2] * 0.0722;
           const similarity = Math.exp(-Math.abs(sampleLuma - targetLuma) / similarityScale);
           const sampleWeight = spatial * similarity * alpha;
+          red += source[sampleOffset] * sampleWeight;
+          green += source[sampleOffset + 1] * sampleWeight;
+          blue += source[sampleOffset + 2] * sampleWeight;
+          weight += sampleWeight;
+        }
+      }
+      if (!weight) continue;
+      output[destination] = clampByte(source[destination] * (1 - strength) + (red / weight) * strength);
+      output[destination + 1] = clampByte(source[destination + 1] * (1 - strength) + (green / weight) * strength);
+      output[destination + 2] = clampByte(source[destination + 2] * (1 - strength) + (blue / weight) * strength);
+    }
+  }
+}
+
+/**
+ * Surface Blur approximation using a hard luminance threshold. Only nearby
+ * pixels on the same tonal surface contribute, so edges stay crisp while
+ * broad regions smooth. The bounded neighbourhood keeps interaction costs
+ * predictable and never changes source alpha or hidden RGB padding.
+ */
+function applySurfaceBlur(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const bounded = Math.max(1, Math.min(8, Math.round(radius)));
+  const threshold = 12 + bounded * 3;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      if (!source[destination + 3]) continue;
+      const targetLuma =
+        source[destination] * 0.2126 +
+        source[destination + 1] * 0.7152 +
+        source[destination + 2] * 0.0722;
+      let red = 0, green = 0, blue = 0, weight = 0;
+      for (let dy = -bounded; dy <= bounded; dy += 1) {
+        for (let dx = -bounded; dx <= bounded; dx += 1) {
+          const sx = x + dx, sy = y + dy;
+          if (sx < 0 || sy < 0 || sx >= width || sy >= height) continue;
+          const sampleOffset = (sy * width + sx) * 4;
+          const alpha = source[sampleOffset + 3] / 255;
+          if (!alpha) continue;
+          const sampleLuma =
+            source[sampleOffset] * 0.2126 +
+            source[sampleOffset + 1] * 0.7152 +
+            source[sampleOffset + 2] * 0.0722;
+          if (Math.abs(sampleLuma - targetLuma) > threshold) continue;
+          const spatialWeight = 1 / (1 + dx * dx + dy * dy);
+          const sampleWeight = spatialWeight * alpha;
           red += source[sampleOffset] * sampleWeight;
           green += source[sampleOffset + 1] * sampleWeight;
           blue += source[sampleOffset + 2] * sampleWeight;
@@ -879,6 +933,8 @@ export function applyFilterEffectsPixels(
     applyGaussianBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'smart-blur') {
     applySmartBlur(data, width, height, effect.radius, output, strength);
+  } else if (effect.type === 'surface-blur') {
+    applySurfaceBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'lens-blur') {
     applyLensBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'iris-blur') {

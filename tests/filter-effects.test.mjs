@@ -485,6 +485,20 @@ test('smart blur is deterministic, edge-preserving and alpha-safe', () => {
   assert.equal(pixel(first, 9, 0, 0)[3], 255);
 });
 
+test('surface blur smooths tonal surfaces while retaining a hard luminance edge', () => {
+  const source = rgba(9, 3, (x, y) => {
+    if (x === 2 && y === 1) return [24, 24, 24, 255];
+    return x < 4 ? [0, 0, 0, 255] : [255, 255, 255, 255];
+  });
+  const effect = effectiveFilterEffects({ type: 'surface-blur', amount: 100, radius: 5 });
+  assert.equal(validFilterEffects(effect), true);
+  const output = applyFilterEffectsPixels(source, 9, 3, effect);
+  assert.notDeepEqual(output, source);
+  assert.ok(pixel(output, 9, 3, 1)[0] < 64);
+  assert.ok(pixel(output, 9, 4, 1)[0] > 191);
+  assert.equal(pixel(output, 9, 0, 0)[3], 255);
+});
+
 test('iris blur keeps a central focal ellipse sharp while blurring the outside', () => {
   const source = rgba(9, 5, (x, y) =>
     x === 4 && y === 2 ? [255, 255, 255, 255] : [0, 0, 0, 255],
