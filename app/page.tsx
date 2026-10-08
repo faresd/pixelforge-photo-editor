@@ -397,6 +397,7 @@ type Command =
   | 'filter-gaussian-blur'
   | 'filter-lens-blur'
   | 'filter-iris-blur'
+  | 'filter-smart-blur'
   | 'filter-motion-blur'
   | 'filter-radial-blur'
   | 'filter-field-blur'
@@ -799,7 +800,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Lens Blur…', command: 'filter-lens-blur' },
     { label: 'Motion Blur…', command: 'filter-motion-blur' },
     { label: 'Radial Blur…', command: 'filter-radial-blur' },
-    { label: 'Smart Blur…', command: 'noop', disabled: true },
+    { label: 'Smart Blur…', command: 'filter-smart-blur' },
     { label: 'Blur Gallery', command: 'noop', disabled: true },
     { label: 'Iris Blur…', command: 'filter-iris-blur' },
     { label: 'Distort', command: 'noop', disabled: true },
@@ -3382,7 +3383,7 @@ export default function Home() {
                   type === 'blur-more' ||
                   type === 'mosaic' || type === 'color-halftone'
                     ? 85
-                    : type === 'box-blur' || type === 'gaussian-blur' || type === 'lens-blur' || type === 'iris-blur'
+                    : type === 'box-blur' || type === 'gaussian-blur' || type === 'lens-blur' || type === 'iris-blur' || type === 'smart-blur'
                       ? 85
                       : 70,
                 radius:
@@ -8163,6 +8164,8 @@ export default function Home() {
       chooseFilterEffect('lens-blur', 'Lens Blur (local approximation)');
     else if (command === 'filter-iris-blur')
       chooseFilterEffect('iris-blur', 'Iris Blur (elliptical focal approximation)');
+    else if (command === 'filter-smart-blur')
+      chooseFilterEffect('smart-blur', 'Smart Blur (edge-preserving approximation)');
     else if (command === 'filter-motion-blur')
       chooseFilterEffect('motion-blur', 'Motion Blur');
     else if (command === 'filter-radial-blur')
@@ -8347,6 +8350,7 @@ export default function Home() {
       case 'filter-gaussian-blur':
       case 'filter-lens-blur':
       case 'filter-iris-blur':
+      case 'filter-smart-blur':
       case 'filter-tilt-shift':
       case 'filter-mosaic':
       case 'filter-color-halftone':
@@ -10295,6 +10299,9 @@ export default function Home() {
             {filterEffects.type === 'iris-blur' && (
               <p>Local elliptical focal-plane blur. The centre stays sharp and blur ramps to the edge; no depth map is inferred.</p>
             )}
+            {filterEffects.type === 'smart-blur' && (
+              <p>Local edge-preserving bilateral approximation. Luminance boundaries are protected; semantic edges and depth are not inferred.</p>
+            )}
             {filterEffects.type !== 'none' && (
               <>
                 <Slider
@@ -10313,6 +10320,7 @@ export default function Home() {
                           filterEffects.type === 'gaussian-blur' ||
                           filterEffects.type === 'lens-blur' ||
                           filterEffects.type === 'iris-blur' ||
+                          filterEffects.type === 'smart-blur' ||
                           filterEffects.type === 'motion-blur'
                           ? 'Blur radius'
                       : filterEffects.type === 'radial-blur'

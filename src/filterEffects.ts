@@ -15,6 +15,7 @@ export const FILTER_EFFECT_TYPES = [
   'gaussian-blur',
   'lens-blur',
   'iris-blur',
+  'smart-blur',
   'motion-blur',
   'radial-blur',
   'field-blur',
@@ -304,6 +305,60 @@ function applyIrisBlur(
     const distance = Math.sqrt(dx * dx + dy * dy);
     return clamp((distance - 0.78) / 0.72, 0, 1);
   });
+}
+
+/**
+ * Edge-preserving local blur. Neighbours are weighted by both spatial
+ * distance and luminance similarity, so strong boundaries remain defined
+ * while flat regions soften. This bounded bilateral approximation is fully
+ * local and does not infer semantic edges or depth.
+ */
+function applySmartBlur(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const bounded = Math.max(1, Math.min(8, Math.round(radius)));
+  const similarityScale = 18 + bounded * 2;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      const destinationAlpha = source[destination + 3];
+      if (destinationAlpha === 0) continue;
+      const targetLuma =
+        source[destination] * 0.2126 +
+        source[destination + 1] * 0.7152 +
+        source[destination + 2] * 0.0722;
+      let red = 0, green = 0, blue = 0, weight = 0;
+      for (let dy = -bounded; dy <= bounded; dy += 1) {
+        for (let dx = -bounded; dx <= bounded; dx += 1) {
+          const sx = x + dx, sy = y + dy;
+          if (sx < 0 || sy < 0 || sx >= width || sy >= height) continue;
+          const sampleOffset = (sy * width + sx) * 4;
+          const alpha = source[sampleOffset + 3] / 255;
+          if (!alpha) continue;
+          const spatial = Math.exp(-(dx * dx + dy * dy) / (2 * bounded * bounded));
+          const sampleLuma =
+            source[sampleOffset] * 0.2126 +
+            source[sampleOffset + 1] * 0.7152 +
+            source[sampleOffset + 2] * 0.0722;
+          const similarity = Math.exp(-Math.abs(sampleLuma - targetLuma) / similarityScale);
+          const sampleWeight = spatial * similarity * alpha;
+          red += source[sampleOffset] * sampleWeight;
+          green += source[sampleOffset + 1] * sampleWeight;
+          blue += source[sampleOffset + 2] * sampleWeight;
+          weight += sampleWeight;
+        }
+      }
+      if (!weight) continue;
+      output[destination] = clampByte(source[destination] * (1 - strength) + (red / weight) * strength);
+      output[destination + 1] = clampByte(source[destination + 1] * (1 - strength) + (green / weight) * strength);
+      output[destination + 2] = clampByte(source[destination + 2] * (1 - strength) + (blue / weight) * strength);
+    }
+  }
 }
 
 function applyAverageBlur(
@@ -822,6 +877,8 @@ export function applyFilterEffectsPixels(
     applyBoxBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'gaussian-blur') {
     applyGaussianBlur(data, width, height, effect.radius, output, strength);
+  } else if (effect.type === 'smart-blur') {
+    applySmartBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'lens-blur') {
     applyLensBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'iris-blur') {

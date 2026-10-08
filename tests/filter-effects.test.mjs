@@ -469,6 +469,22 @@ test('lens blur keeps alpha, softens a point highlight and remains bounded on ti
   assert.ok(pixel(output, 3, 0, 1)[0] > 0);
 });
 
+test('smart blur is deterministic, edge-preserving and alpha-safe', () => {
+  const source = rgba(9, 3, (x, y) => {
+    if (x === 2 && y === 1) return [24, 24, 24, 255];
+    return x < 4 ? [0, 0, 0, 255] : [255, 255, 255, 255];
+  });
+  const effect = effectiveFilterEffects({ type: 'smart-blur', amount: 100, radius: 5 });
+  assert.equal(validFilterEffects(effect), true);
+  const first = applyFilterEffectsPixels(source, 9, 3, effect);
+  const second = applyFilterEffectsPixels(source, 9, 3, effect);
+  assert.deepEqual(first, second);
+  assert.notDeepEqual(first, source);
+  assert.ok(pixel(first, 9, 3, 1)[0] < 64);
+  assert.ok(pixel(first, 9, 4, 1)[0] > 191);
+  assert.equal(pixel(first, 9, 0, 0)[3], 255);
+});
+
 test('iris blur keeps a central focal ellipse sharp while blurring the outside', () => {
   const source = rgba(9, 5, (x, y) =>
     x === 4 && y === 2 ? [255, 255, 255, 255] : [0, 0, 0, 255],
