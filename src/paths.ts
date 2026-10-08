@@ -25,6 +25,7 @@ export type PathModel = {
 };
 
 export type PathMatrix = readonly [number, number, number, number, number, number];
+export type PathHandleKind = 'in' | 'out';
 
 export const PATH_MAX_NODES = 10_000;
 export const PATH_MAX_COORDINATE = 1_000_000;
@@ -208,6 +209,53 @@ export function hitTestPathNode(path: PathModel, point: PathNode, radius: number
     if (distance < best || (match === null && distance <= best)) { best = distance; match = index; }
   });
   return match;
+}
+
+/** Return the nearest editable Bezier handle within radius. */
+export function hitTestPathHandle(
+  path: PathModel,
+  point: PathNode,
+  radius: number,
+): { index: number; kind: PathHandleKind } | null {
+  const valid = validatePath(path);
+  if (!finite(point.x) || !finite(point.y) || !finite(radius) || radius < 0)
+    throw new Error('Path hit-test input is invalid');
+  let match: { index: number; kind: PathHandleKind } | null = null;
+  let best = radius;
+  valid.nodes.forEach((node, index) => {
+    (['in', 'out'] as const).forEach((kind) => {
+      const handle = node[`${kind}Handle`];
+      if (!handle) return;
+      const distance = Math.hypot(point.x - handle.x, point.y - handle.y);
+      if (distance < best || (match === null && distance <= best)) {
+        best = distance;
+        match = { index, kind };
+      }
+    });
+  });
+  return match;
+}
+
+/** Move one Bezier handle without changing its anchor or sibling handles. */
+export function movePathHandle(
+  path: PathModel,
+  index: number,
+  kind: PathHandleKind,
+  x: number,
+  y: number,
+): PathModel {
+  const valid = validatePath(path);
+  if (!Number.isInteger(index) || index < 0 || index >= valid.nodes.length)
+    throw new Error('Path node index is invalid');
+  if (kind !== 'in' && kind !== 'out') throw new Error('Path handle kind is invalid');
+  if (!finite(x) || !finite(y)) throw new Error('Path handles are invalid');
+  if (!valid.nodes[index][`${kind}Handle`]) throw new Error('Path handle is not defined');
+  return validatePath({
+    ...valid,
+    nodes: valid.nodes.map((node, nodeIndex) =>
+      nodeIndex === index ? { ...cloneNode(node), [`${kind}Handle`]: { x, y } } : cloneNode(node),
+    ),
+  });
 }
 
 /** Return whether a point lies on a straight or cubic path stroke. */

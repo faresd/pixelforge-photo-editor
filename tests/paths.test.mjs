@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   clonePath,
+  hitTestPathHandle,
   hitTestPathNode,
   hitTestPathStroke,
+  movePathHandle,
   movePathNode,
   pathBounds,
   serializePathData,
@@ -115,6 +117,30 @@ test('cubic extrema and stroke hit testing follow curve geometry', () => {
   assert.equal(bounds.bottom, 100);
   assert.equal(hitTestPathStroke(curved, { x: 50, y: 50 }, 2), true);
   assert.equal(hitTestPathStroke(curved, { x: 50, y: 5 }, 2), false);
+});
+
+test('Bezier handle hit testing and movement are immutable and deterministic', () => {
+  const path = validatePath({
+    nodes: [
+      { x: 0, y: 0, outHandle: { x: 0, y: 100 } },
+      { x: 100, y: 100, inHandle: { x: 100, y: 0 } },
+    ],
+    closed: false,
+    fill: false,
+    stroke: true,
+    strokeWidth: 2,
+    fillColor: '#ff0000',
+    strokeColor: '#000000',
+  });
+  assert.deepEqual(hitTestPathHandle(path, { x: 1, y: 99 }, 2), { index: 0, kind: 'out' });
+  assert.deepEqual(hitTestPathHandle(path, { x: 99, y: 1 }, 2), { index: 1, kind: 'in' });
+  assert.equal(hitTestPathHandle(path, { x: 50, y: 50 }, 2), null);
+  const moved = movePathHandle(path, 0, 'out', 20, 80);
+  assert.deepEqual(path.nodes[0].outHandle, { x: 0, y: 100 });
+  assert.deepEqual(moved.nodes[0], { x: 0, y: 0, outHandle: { x: 20, y: 80 } });
+  assert.deepEqual(moved.nodes[1], path.nodes[1]);
+  assert.throws(() => movePathHandle(path, 0, 'in', 1, 1), /not defined/);
+  assert.throws(() => movePathHandle(path, 4, 'out', 1, 1), /index/);
 });
 
 test('moving and transforming a cubic anchor carries its handles', () => {

@@ -4,7 +4,7 @@ import { test, expect, type Page } from '@playwright/test';
 type PathLayer = {
   kind: string;
   matrix: number[];
-  path: { nodes: Array<{ x: number; y: number }>; closed: boolean };
+  path: { nodes: Array<{ x: number; y: number; inHandle?: { x: number; y: number }; outHandle?: { x: number; y: number } }>; closed: boolean };
 };
 type Project = { history: Array<{ w: number; h: number; layers: PathLayer[] }>; index: number };
 
@@ -100,4 +100,36 @@ test('malformed imported path metadata never replaces the current draft, history
     expect(await project(page)).toEqual(original);
     expect(await page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())).toBe(pixels);
   }
+});
+
+test('Direct Selection edits cubic handles and persists the curve through reload', async ({ page }) => {
+  await triangle(page);
+  const value = await project(page);
+  const path = pathLayer(value);
+  path.path.nodes[0].outHandle = { x: path.path.nodes[0].x + 80, y: path.path.nodes[0].y + 20 };
+  const original = structuredClone(path);
+  await upload(page, value);
+  await expect(page.locator('footer')).toContainText('Project opened with editable layers and history');
+  const frame = value.history[value.index];
+  const node = path.path.nodes[0];
+  const box = (await page.getByTestId('editor-canvas').boundingBox())!;
+  const screen = (x: number, y: number) => ({
+    x: box.x + box.width * x / frame.w,
+    y: box.y + box.height * y / frame.h,
+  });
+  const start = screen(node.outHandle!.x, node.outHandle!.y);
+  const end = screen(node.outHandle!.x + 24, node.outHandle!.y + 36);
+  await selectTool(page, 'Direct Selection');
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(end.x, end.y, { steps: 3 });
+  await page.mouse.up();
+  await expect(page.locator('footer')).toContainText('Path handle moved');
+  const moved = pathLayer(await project(page));
+  expect(moved.path.nodes[0].x).toBeCloseTo(original.path.nodes[0].x, 1);
+  expect(moved.path.nodes[0].y).toBeCloseTo(original.path.nodes[0].y, 1);
+  expect(moved.path.nodes[0].outHandle!.x).toBeCloseTo(node.outHandle!.x + 24, 1);
+  expect(moved.path.nodes[0].outHandle!.y).toBeCloseTo(node.outHandle!.y + 36, 1);
+  await page.reload();
+  expect(pathLayer(await project(page))).toEqual(moved);
 });
