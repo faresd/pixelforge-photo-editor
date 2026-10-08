@@ -454,3 +454,17 @@ test('lens blur uses a bounded local approximation with explicit source and alph
   assert.equal(pixel(output, 9, 0, 0)[3], 0);
   assert.deepEqual(pixel(output, 9, 0, 0).slice(0, 3), [0, 0, 0]);
 });
+
+test('lens blur keeps alpha, softens a point highlight and remains bounded on tiny canvases', () => {
+  const source = rgba(3, 3, (x, y) =>
+    x === 1 && y === 1 ? [255, 255, 255, 255] : [0, 0, 0, 255],
+  );
+  const output = applyFilterEffectsPixels(source, 3, 3, {
+    type: 'lens-blur',
+    amount: 100,
+    radius: 2,
+  });
+  assert.equal(pixel(output, 3, 1, 1)[3], 255);
+  assert.ok(pixel(output, 3, 1, 1)[0] < 255);
+  assert.ok(pixel(output, 3, 0, 1)[0] > 0);
+});
