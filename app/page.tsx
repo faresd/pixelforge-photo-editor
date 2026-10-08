@@ -357,6 +357,7 @@ type Command =
   | 'grow-selection'
   | 'contract-selection'
   | 'border-selection'
+  | 'smooth-selection'
   | 'similar-selection'
   | 'color-range'
   | 'focus-area'
@@ -761,6 +762,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Grow…', command: 'grow-selection' },
     { label: 'Contract…', command: 'contract-selection' },
     { label: 'Border…', command: 'border-selection' },
+    { label: 'Smooth…', command: 'smooth-selection' },
     { label: 'Similar', command: 'similar-selection' },
     { label: 'Transform Selection', command: 'transform-selection' },
     { label: 'Edit in Quick Mask Mode', command: 'quick-mask' },
@@ -2924,7 +2926,9 @@ export default function Home() {
             ? 'grown'
             : mode === 'contract'
               ? 'contracted'
-              : 'bordered';
+              : mode === 'border'
+                ? 'bordered'
+                : 'smoothed';
         setNotice(`Selection ${label} by ${radius} px`);
       }
     } catch (error) {
@@ -8100,7 +8104,8 @@ export default function Home() {
     } else if (
       command === 'grow-selection' ||
       command === 'contract-selection' ||
-      command === 'border-selection'
+      command === 'border-selection' ||
+      command === 'smooth-selection'
     ) {
       if (current().selection)
         setSelectionRefining(
@@ -8108,7 +8113,9 @@ export default function Home() {
             ? 'grow'
             : command === 'contract-selection'
               ? 'contract'
-              : 'border',
+              : command === 'border-selection'
+                ? 'border'
+                : 'smooth',
         );
       else setNotice('Create a selection before refining it');
     } else if (command === 'color-range') setColorRanging(true);
@@ -8386,6 +8393,7 @@ export default function Home() {
       case 'grow-selection':
       case 'contract-selection':
       case 'border-selection':
+      case 'smooth-selection':
       case 'similar-selection':
         return !frame.selection;
       case 'hide-layer':

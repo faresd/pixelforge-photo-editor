@@ -29,14 +29,18 @@ export default function SelectionModifyDialog({
             ? 'Grow Selection'
             : mode === 'contract'
               ? 'Contract Selection'
-              : 'Border Selection'}
+              : mode === 'border'
+                ? 'Border Selection'
+                : 'Smooth Selection'}
         </h2>
         <p>
           {mode === 'grow'
             ? 'Expand the selected alpha by a bounded local radius. Image pixels stay unchanged.'
             : mode === 'contract'
               ? 'Shrink the selected alpha by a bounded local radius. Image pixels stay unchanged.'
-              : 'Create a bounded alpha border by subtracting the contracted inner selection from the expanded outer selection. Image pixels stay unchanged.'}
+              : mode === 'border'
+                ? 'Create a bounded alpha border by subtracting the contracted inner selection from the expanded outer selection. Image pixels stay unchanged.'
+                : 'Soften jagged selection edges with a bounded alpha average. Image pixels stay unchanged.'}
         </p>
         <label>
           Radius (px)
