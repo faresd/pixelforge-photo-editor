@@ -133,3 +133,20 @@ test('Direct Selection edits cubic handles and persists the curve through reload
   await page.reload();
   expect(pathLayer(await project(page))).toEqual(moved);
 });
+
+test('Freeform Pen creates a smooth open path and preserves it on reload', async ({ page }) => {
+  await selectTool(page, 'Freeform Pen');
+  const box = (await page.getByTestId('editor-canvas').boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.35);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.45, box.y + box.height * 0.55, { steps: 8 });
+  await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.35, { steps: 8 });
+  await page.mouse.up();
+  await expect(page.locator('footer')).toContainText('Editable freeform path layer added');
+  const created = pathLayer(await project(page));
+  expect(created.path.closed).toBe(false);
+  expect(created.path.nodes.length).toBeGreaterThan(2);
+  expect(created.path.nodes.some((node) => node.outHandle || node.inHandle)).toBe(true);
+  await page.reload();
+  expect(pathLayer(await project(page))).toEqual(created);
+});

@@ -76,6 +76,7 @@ export type Tool =
   | 'smudge'
   | 'text'
   | 'pen'
+  | 'freeform-pen'
   | 'direct-select'
   | 'rectangle'
   | 'ellipse'
@@ -237,6 +238,7 @@ function validSettings(settings: unknown): settings is Settings {
       'smudge',
       'text',
       'pen',
+      'freeform-pen',
       'direct-select',
       'rectangle',
       'ellipse',
