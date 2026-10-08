@@ -4929,20 +4929,6 @@ export default function Home() {
       }
       return;
     }
-    if (gesture.current?.tool === 'freeform-pen') {
-      const g = gesture.current, p = point(e), points = g.points || [];
-      const next = appendFreeformPoint(points, {
-        x: Math.max(0, Math.min(g.frame.w, p.x)),
-        y: Math.max(0, Math.min(g.frame.h, p.y)),
-      });
-      if (next.length !== points.length) {
-        g.points = next;
-        g.last = p;
-        g.moved = next.length > 1;
-        previewFreeformPath(g);
-      }
-      return;
-    }
     // Pen is a click-to-place straight-segment workflow. Keep this gesture
     // alive between clicks so it works consistently with mouse, pen and touch.
     if (gesture.current?.tool === 'pen') {
@@ -6348,6 +6334,20 @@ export default function Home() {
           ? { ...item, patchStrokes: [...(item.patchStrokes ?? []), stroke] }
           : item),
       });
+      return;
+    }
+    if (g.tool === 'freeform-pen') {
+      const points = g.points || [];
+      const next = appendFreeformPoint(points, {
+        x: Math.max(0, Math.min(g.frame.w, p.x)),
+        y: Math.max(0, Math.min(g.frame.h, p.y)),
+      });
+      if (next.length !== points.length) {
+        g.points = next;
+        g.last = p;
+        g.moved = next.length > 1;
+        previewFreeformPath(g);
+      }
       return;
     }
     if (g.tool === 'hand') {
