@@ -520,7 +520,7 @@ test('Iris Blur exposes an editable elliptical focal plane and round-trips safel
   const before = await downloadProject(page);
   const sourceLayer = before.history[before.index].layers.at(-1)!;
   const sourceAsset = sourceLayer.asset;
-  const sourcePixel = await pixel(page, 4, 2);
+  const sourcePixel = await pixel(page, 1, 0);
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
   const command = page.getByRole('menuitem', { name: 'Iris Blur…', exact: true });
   await expect(command).toBeEnabled();
@@ -533,7 +533,7 @@ test('Iris Blur exposes an editable elliptical focal plane and round-trips safel
   await page.getByLabel('Focal centre X', { exact: true }).press('ArrowRight');
   await page.getByLabel('Blur radius', { exact: true }).press('ArrowRight');
   await expect(page.getByLabel('Focal centre X', { exact: true })).toHaveValue('51');
-  await expect.poll(() => pixel(page, 4, 2)).not.toEqual(sourcePixel);
+  await expect.poll(() => pixel(page, 1, 0)).not.toEqual(sourcePixel);
   expect((await pixel(page, 0, 0))[3]).toBe(0);
   const adjusted = await downloadProject(page);
   const adjustedLayer = adjusted.history[adjusted.index].layers.at(-1)!;
