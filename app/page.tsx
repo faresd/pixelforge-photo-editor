@@ -405,6 +405,7 @@ type Command =
   | 'filter-field-blur'
   | 'filter-tilt-shift'
   | 'filter-mosaic'
+  | 'filter-crystallize'
   | 'filter-color-halftone'
   | 'filter-pointillize'
   | 'filter-lens-correction'
@@ -827,6 +828,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Add Noise…', command: 'sharpen-noise' },
     { label: 'Pixelate', command: 'noop', disabled: true },
     { label: 'Color Halftone…', command: 'filter-color-halftone' },
+    { label: 'Crystallize…', command: 'filter-crystallize' },
     { label: 'Mosaic…', command: 'filter-mosaic' },
     { label: 'Pointillize…', command: 'filter-pointillize' },
     { label: 'Render', command: 'noop', disabled: true },
@@ -3393,7 +3395,7 @@ export default function Home() {
                 amount:
                   type === 'average-blur' ||
                   type === 'blur-more' ||
-                  type === 'mosaic' || type === 'color-halftone'
+                  type === 'mosaic' || type === 'crystallize' || type === 'color-halftone'
                   || type === 'pointillize'
                     ? 85
                   : type === 'lens-correction'
@@ -3402,7 +3404,7 @@ export default function Home() {
                       ? 85
                       : 70,
                 radius:
-                  type === 'mosaic' || type === 'color-halftone' || type === 'pointillize'
+                  type === 'mosaic' || type === 'crystallize' || type === 'color-halftone' || type === 'pointillize'
                     ? 10
                     : type === 'lens-correction'
                       ? 64
@@ -8199,6 +8201,8 @@ export default function Home() {
       chooseFilterEffect('tilt-shift', 'Tilt-Shift');
     else if (command === 'filter-mosaic')
       chooseFilterEffect('mosaic', 'Mosaic');
+    else if (command === 'filter-crystallize')
+      chooseFilterEffect('crystallize', 'Crystallize');
     else if (command === 'filter-color-halftone')
       chooseFilterEffect('color-halftone', 'Color Halftone');
     else if (command === 'filter-pointillize')
@@ -8390,6 +8394,7 @@ export default function Home() {
       case 'filter-shape-blur':
       case 'filter-tilt-shift':
       case 'filter-mosaic':
+      case 'filter-crystallize':
       case 'filter-color-halftone':
       case 'filter-pointillize':
       case 'filter-lens-correction':
@@ -10366,6 +10371,9 @@ export default function Home() {
             {filterEffects.type === 'pointillize' && (
               <p>Bounded stipple-cell approximation with unchanged alpha. Density, foreground/background color and full procedural controls remain planned.</p>
             )}
+            {filterEffects.type === 'crystallize' && (
+              <p>Bounded seeded Voronoi-cell approximation with unchanged alpha. Cell geometry is deterministic and editable; true polygon edge reconstruction remains planned.</p>
+            )}
             {filterEffects.type === 'lens-correction' && (
               <p>Manual radial correction with inward or outward source sampling. Camera profiles and chromatic aberration correction remain planned.</p>
             )}
@@ -10381,6 +10389,7 @@ export default function Home() {
                 <Slider
                   label={
                     filterEffects.type === 'mosaic' ||
+                    filterEffects.type === 'crystallize' ||
                     filterEffects.type === 'color-halftone' ||
                     filterEffects.type === 'pointillize'
                       ? 'Cell size'

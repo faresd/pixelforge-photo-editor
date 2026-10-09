@@ -461,6 +461,31 @@ test('mosaic and halftone operate by bounded cells without touching alpha', () =
   assert.notDeepEqual(half, source);
 });
 
+test('crystallize uses seeded bounded cells without mutating source or transparent RGB', () => {
+  const source = rgba(13, 9, (x, y) => {
+    if (x === 0 && y === 0) return [241, 17, 233, 0];
+    return [(x * 31 + y * 7) % 256, (x * 11 + y * 23) % 256, (x * 5 + y * 17) % 256, 180 + (x % 4) * 15];
+  });
+  const original = source.slice();
+  const effect = { type: 'crystallize', amount: 100, radius: 4, seed: 42 };
+  const first = applyFilterEffectsPixels(source, 13, 9, effect);
+  assert.deepEqual(source, original);
+  assert.deepEqual(first, applyFilterEffectsPixels(source, 13, 9, effect));
+  assert.notDeepEqual(first, source);
+  assert.deepEqual(pixel(first, 13, 0, 0), [241, 17, 233, 0]);
+  for (let y = 0; y < 9; y += 1)
+    for (let x = 0; x < 13; x += 1)
+      assert.equal(pixel(first, 13, x, y)[3], pixel(source, 13, x, y)[3]);
+  assert.notDeepEqual(
+    first,
+    applyFilterEffectsPixels(source, 13, 9, { ...effect, seed: 43 }),
+  );
+  assert.deepEqual(
+    applyFilterEffectsPixels(source, 13, 9, { ...effect, amount: 0 }),
+    source,
+  );
+});
+
 test('ripple and twirl are stable remaps and retain transparent pixels', () => {
   const source = fixture();
   for (const type of ['ripple', 'twirl']) {

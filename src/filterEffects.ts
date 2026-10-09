@@ -23,6 +23,7 @@ export const FILTER_EFFECT_TYPES = [
   'field-blur',
   'tilt-shift',
   'mosaic',
+  'crystallize',
   'color-halftone',
   'pointillize',
   'lens-correction',
@@ -845,6 +846,53 @@ function applyColorHalftone(
   }
 }
 
+/**
+ * Apply a bounded Voronoi-cell approximation of Photoshop Crystallize.
+ * Jittered cell centres are derived from the persisted seed, so the effect is
+ * reproducible without storing generated pixels. Alpha and transparent RGB
+ * padding remain source-owned; only visible colour channels are blended.
+ */
+function applyCrystallize(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  seed: number,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const cell = Math.max(2, Math.min(64, Math.round(radius)));
+  const hash = (x: number, y: number) => {
+    let value = (Math.imul(x, 374761393) + Math.imul(y, 668265263) + seed) | 0;
+    value = Math.imul(value ^ (value >>> 13), 1274126177);
+    return ((value ^ (value >>> 16)) >>> 0) / 0xffffffff - 0.5;
+  };
+  const centre = (cellX: number, cellY: number) => ({
+    x: cellX * cell + cell * (0.5 + hash(cellX, cellY) * 0.34),
+    y: cellY * cell + cell * (0.5 + hash(cellX + 97, cellY - 53) * 0.34),
+  });
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      if (!source[offset + 3]) continue;
+      const baseX = Math.floor(x / cell), baseY = Math.floor(y / cell);
+      let selected = centre(baseX, baseY), best = Infinity;
+      for (let dy = -1; dy <= 1; dy += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) {
+          const candidate = centre(baseX + dx, baseY + dy),
+            distance = (candidate.x - x) ** 2 + (candidate.y - y) ** 2;
+          if (distance < best) {
+            best = distance;
+            selected = candidate;
+          }
+        }
+      }
+      const sample = sourcePixel(source, width, height, selected.x, selected.y);
+      if (sample[3]) blendPixel(output, offset, sample, strength);
+    }
+  }
+}
+
 function applyDistort(
   source: Uint8ClampedArray,
   width: number,
@@ -1226,6 +1274,8 @@ export function applyFilterEffectsPixels(
     );
   } else if (effect.type === 'mosaic') {
     applyMosaic(data, width, height, effect.radius, output, strength);
+  } else if (effect.type === 'crystallize') {
+    applyCrystallize(data, width, height, effect.radius, effect.seed, output, strength);
   } else if (effect.type === 'color-halftone') {
     applyColorHalftone(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'tilt-shift') {
