@@ -10,12 +10,14 @@ They are whole-project JSON operations with generation-based conflict handling,
 not a pixel stream. The editor therefore remains usable offline and does not
 upload anonymous work in the background.
 
-Progressive large-image rendering is a separate performance milestone. It
-should use a worker, OffscreenCanvas and bounded tiles before introducing any
-network transport. The current worker slice reports completed layer passes and
-cancellation state only; it does not stream partial pixels or remove the
-full-frame allocation. If realtime collaboration becomes a product requirement,
-it must be an explicit opt-in for authenticated projects, send version or
+Progressive large-image rendering is a separate performance milestone. When
+worker capability is available, the committed visible adapter uses a worker,
+OffscreenCanvas and bounded tiles internally for Box and Gaussian Blur, but the
+worker still publishes a full-frame result; it does not stream partial pixels
+or remove every full-frame allocation.
+Unsupported effects and interactive overrides remain on the full-frame or
+main-thread paths. If realtime collaboration becomes a product requirement, it
+must be an explicit opt-in for authenticated projects, send version or
 validated operation deltas through a durable session service, queue offline
 operations in IndexedDB, and preserve conflict recovery. Anonymous editing
 must remain fully local.

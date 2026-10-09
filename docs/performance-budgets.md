@@ -106,9 +106,8 @@ state.
 The path remains provisional until repeated physical-device measurements show
 that worker scheduling improves responsiveness without unacceptable memory
 pressure. Worker image encoding now consumes a shared row-major tile schedule
-with a 16 MiB expanded-RGBA batch budget and a 64 MiB hard ceiling; this is a
-safety and planning seed for document rendering, not evidence that document
-pixels are already tiled. The isolated `src/tiledCompositor.ts` module now
+with a 16 MiB expanded-RGBA batch budget and a 64 MiB hard ceiling. The
+isolated `src/tiledCompositor.ts` module now
 assembles one expanded tile at a time, writes only inner rectangles, enforces a
 retained input/output byte budget, and compares its result with a full-frame
 oracle. The visible document path now consumes a source-provider/destination-
@@ -121,8 +120,9 @@ shared tile planner
 now has an opt-in byte-bounded LRU cache with cumulative hit/miss, peak-byte
 and eviction counters, and the cancellable tile runner can reuse outputs when
 a caller supplies a safe retained-byte estimate. This is instrumentation and a
-reusable cache boundary; it is not evidence that document pixels are already
-tiled, and it does not select a cache size for any device. Fonts,
+reusable cache boundary; it does not claim that unsupported document effects
+or the full-frame result path are tiled, and it does not select a cache size
+for any device. Fonts,
 CSS filters and colour management may also vary by browser, so representative
 pixel/alpha fixtures remain required for each effect family.
 
