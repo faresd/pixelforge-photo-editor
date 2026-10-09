@@ -413,6 +413,7 @@ type Command =
   | 'filter-twirl'
   | 'filter-wave'
   | 'filter-shear'
+  | 'filter-zigzag'
   | 'filter-clear-effect'
   | 'zoom-in'
   | 'zoom-out'
@@ -818,6 +819,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Spherize…', command: 'filter-spherize' },
     { label: 'Twirl…', command: 'filter-twirl' },
     { label: 'Wave…', command: 'filter-wave' },
+    { label: 'ZigZag…', command: 'filter-zigzag' },
     { label: 'Noise', command: 'noop', disabled: true },
     { label: 'Add Noise…', command: 'sharpen-noise' },
     { label: 'Pixelate', command: 'noop', disabled: true },
@@ -8203,6 +8205,8 @@ export default function Home() {
     else if (command === 'filter-wave') chooseFilterEffect('wave', 'Wave');
     else if (command === 'filter-shear')
       chooseFilterEffect('shear', 'Shear (linear local approximation)');
+    else if (command === 'filter-zigzag')
+      chooseFilterEffect('zigzag', 'ZigZag (radial local approximation)');
     else if (command === 'crop') {
       if (slicePreview) cancelSlicePreview();
       setTool('crop');
@@ -8379,6 +8383,7 @@ export default function Home() {
       case 'filter-twirl':
       case 'filter-wave':
       case 'filter-shear':
+      case 'filter-zigzag':
       case 'filter-clear-effect':
         return !layer || locked || !layer.visible;
       case 'quick-mask':
@@ -10335,6 +10340,9 @@ export default function Home() {
             {filterEffects.type === 'polar-coordinates' && (
               <p>Bounded rectangular-to-polar remap with clamped seams and unchanged alpha. Polar-to-rectangular mode and canvas-aware seam controls remain planned.</p>
             )}
+            {filterEffects.type === 'zigzag' && (
+              <p>Bounded radial zigzag displacement with clamped edges and unchanged alpha. Editable amplitude profiles and geometric canvas expansion remain planned.</p>
+            )}
             {filterEffects.type !== 'none' && (
               <>
                 <Slider
@@ -10370,6 +10378,8 @@ export default function Home() {
                           ? 'Shear displacement'
                       : filterEffects.type === 'polar-coordinates'
                           ? 'Polar radius'
+                      : filterEffects.type === 'zigzag'
+                          ? 'ZigZag wavelength'
                       : 'Radius'
                   }
                   value={filterEffects.radius}

@@ -31,6 +31,7 @@ export const FILTER_EFFECT_TYPES = [
   'twirl',
   'wave',
   'shear',
+  'zigzag',
 ] as const;
 export type FilterEffectType = (typeof FILTER_EFFECT_TYPES)[number];
 
@@ -1024,6 +1025,40 @@ function applyShear(
   }
 }
 
+/** Apply a bounded radial zigzag displacement without mutating the source. */
+function applyZigZag(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+): void {
+  const strength = effect.amount / 100;
+  const centreX = effect.centerX * (width - 1);
+  const centreY = effect.centerY * (height - 1);
+  const wavelength = Math.max(1, effect.radius);
+  const influenceRadius = Math.max(1, Math.min(width, height) * 0.7);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      if (!source[destination + 3]) continue;
+      const dx = x - centreX;
+      const dy = y - centreY;
+      const distance = Math.hypot(dx, dy);
+      const normalized = clamp(distance / influenceRadius, 0, 1);
+      const wave = Math.sin((distance / wavelength) * Math.PI * 2) * strength * wavelength;
+      const falloff = 1 - normalized;
+      const scale = distance < 1e-6 ? 0 : (wave * falloff) / distance;
+      const sample = sourcePixelBilinear(source, width, height, x + dx * scale, y + dy * scale);
+      if (!sample[3]) continue;
+      output[destination] = sample[0];
+      output[destination + 1] = sample[1];
+      output[destination + 2] = sample[2];
+      output[destination + 3] = source[destination + 3];
+    }
+  }
+}
+
 export function applyFilterEffectsPixels(
   data: Uint8ClampedArray,
   width: number,
@@ -1094,6 +1129,8 @@ export function applyFilterEffectsPixels(
     applyPolarCoordinates(data, width, height, effect, output);
   } else if (effect.type === 'shear') {
     applyShear(data, width, height, effect, output);
+  } else if (effect.type === 'zigzag') {
+    applyZigZag(data, width, height, effect, output);
   } else {
     applyDistort(data, width, height, effect, output);
   }
