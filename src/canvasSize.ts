@@ -5,7 +5,7 @@
  * The caller applies the returned matrix through transformFrameWithMasks so
  * raster sources remain immutable and canvas-space masks stay valid.
  */
-import type { Assets, Frame, Layer, Matrix } from './document.ts';
+import { isRasterContentLayer, type Assets, type Frame, type Layer, type Matrix } from './document.ts';
 import {
   alignedTextOffset,
   identity,
@@ -459,7 +459,7 @@ export function layerLocalBounds(layer: Layer, assets: Assets): PixelBounds {
     // expand Reveal All bounds.
     return { x: 0, y: 0, width: 0, height: 0 };
   }
-  if (layer.kind === 'raster') {
+  if (isRasterContentLayer(layer)) {
     const asset = assets[layer.asset];
     if (!asset) throw new Error(`Raster asset ${layer.asset} is missing`);
     assertDimensions(asset.w, asset.h, 'Raster asset');

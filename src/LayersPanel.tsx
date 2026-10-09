@@ -4,6 +4,7 @@ import {
   FONTS,
   TEXT_ALIGNS,
   TEXT_ORIENTATIONS,
+  isRasterContentLayer,
   type Frame,
   type Group,
   type Layer,
@@ -26,6 +27,8 @@ type Props = {
   edit: (patch: Partial<Layer>) => void;
   add: () => void;
   addAdjustment: () => void;
+  addSmartObject: () => void;
+  replaceSmartObject: () => void;
   duplicate: () => void;
   remove: () => void;
   reorder: (direction: number) => void;
@@ -55,6 +58,8 @@ export default function LayersPanel({
   edit,
   add,
   addAdjustment,
+  addSmartObject,
+  replaceSmartObject,
   duplicate,
   remove,
   reorder,
@@ -150,6 +155,8 @@ export default function LayersPanel({
               ? 'T'
               : item.kind === 'raster'
                 ? '▧'
+                : item.kind === 'smart-object'
+                  ? '◈'
                 : item.kind === 'adjustment'
                   ? '◐'
                 : item.kind === 'line'
@@ -195,6 +202,15 @@ export default function LayersPanel({
         </button>
         <button onClick={addAdjustment} disabled={frame.layers.length >= 32}>
           Add adjustment layer
+        </button>
+        <button onClick={addSmartObject} disabled={frame.layers.length >= 32}>
+          Add smart object
+        </button>
+        <button
+          onClick={replaceSmartObject}
+          disabled={layer.kind !== 'smart-object' || layerLocked}
+        >
+          Replace contents
         </button>
         <button onClick={importImage} disabled={frame.layers.length >= 32}>
           Add image layer
@@ -341,7 +357,7 @@ export default function LayersPanel({
         <button
           onClick={createMask}
           disabled={
-            layer.kind !== 'raster' ||
+            !isRasterContentLayer(layer) ||
             !frame.selection ||
             layerLocked ||
             !layer.visible
@@ -352,7 +368,7 @@ export default function LayersPanel({
         <button
           onClick={clearMask}
           disabled={
-            layer.kind !== 'raster' ||
+            !isRasterContentLayer(layer) ||
             !layer.mask ||
             layerLocked ||
             !layer.visible
@@ -363,7 +379,7 @@ export default function LayersPanel({
         <button
           onClick={invertMask}
           disabled={
-            layer.kind !== 'raster' ||
+            !isRasterContentLayer(layer) ||
             !layer.mask ||
             layerLocked ||
             !layer.visible
@@ -374,7 +390,7 @@ export default function LayersPanel({
         <button
           onClick={toggleMask}
           disabled={
-            layer.kind !== 'raster' ||
+            !isRasterContentLayer(layer) ||
             !layer.mask ||
             layerLocked ||
             !layer.visible
@@ -389,8 +405,13 @@ export default function LayersPanel({
           Clear selection
         </button>
       </div>
-      {layer.kind === 'raster' && layer.mask && (
+      {isRasterContentLayer(layer) && layer.mask && (
         <p className="mask-status">Nondestructive mask active</p>
+      )}
+      {layer.kind === 'smart-object' && (
+        <p className="mask-status">
+          Embedded source · {layer.sourceName || 'untitled image'} · replaceable without changing transforms
+        </p>
       )}
       <label className="layer-field">
         Layer name
