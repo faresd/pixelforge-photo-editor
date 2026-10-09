@@ -42,7 +42,8 @@ function load(id: string) {
   // canonical gtag snippet. Pushing a rest-parameter array looks equivalent,
   // but the loader silently ignores those entries and no `g/collect` request
   // is emitted. Keep the canonical queue shape while retaining our typed API.
-  const gtag = function (..._args: unknown[]) {
+  // oxlint-disable-next-line prefer-rest-params
+  const gtag = function gtag() {
     dataLayer.push(arguments);
   };
   page.gtag = gtag;
