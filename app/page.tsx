@@ -407,6 +407,7 @@ type Command =
   | 'filter-mosaic'
   | 'filter-color-halftone'
   | 'filter-pinch'
+  | 'filter-polar-coordinates'
   | 'filter-ripple'
   | 'filter-spherize'
   | 'filter-twirl'
@@ -811,6 +812,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Distort', command: 'noop', disabled: true },
     { label: 'Displace…', command: 'noop', disabled: true },
     { label: 'Pinch…', command: 'filter-pinch' },
+    { label: 'Polar Coordinates…', command: 'filter-polar-coordinates' },
     { label: 'Ripple…', command: 'filter-ripple' },
     { label: 'Shear…', command: 'filter-shear' },
     { label: 'Spherize…', command: 'filter-spherize' },
@@ -3396,8 +3398,10 @@ export default function Home() {
                     ? 10
                     : type === 'pinch'
                       ? 40
-                      : type === 'spherize'
+                    : type === 'spherize'
                         ? 40
+                      : type === 'polar-coordinates'
+                        ? 64
                       : type === 'radial-blur'
                         ? 18
                         : type === 'wave'
@@ -8191,6 +8195,8 @@ export default function Home() {
       chooseFilterEffect('ripple', 'Ripple');
     else if (command === 'filter-pinch')
       chooseFilterEffect('pinch', 'Pinch');
+    else if (command === 'filter-polar-coordinates')
+      chooseFilterEffect('polar-coordinates', 'Polar Coordinates (local approximation)');
     else if (command === 'filter-spherize')
       chooseFilterEffect('spherize', 'Spherize');
     else if (command === 'filter-twirl') chooseFilterEffect('twirl', 'Twirl');
@@ -8368,6 +8374,7 @@ export default function Home() {
       case 'filter-mosaic':
       case 'filter-color-halftone':
       case 'filter-ripple':
+      case 'filter-polar-coordinates':
       case 'filter-spherize':
       case 'filter-twirl':
       case 'filter-wave':
@@ -10325,6 +10332,9 @@ export default function Home() {
             {filterEffects.type === 'shear' && (
               <p>Linear horizontal shear with clamped edges and unchanged alpha. Editable shear curves and wrap-around remain planned.</p>
             )}
+            {filterEffects.type === 'polar-coordinates' && (
+              <p>Bounded rectangular-to-polar remap with clamped seams and unchanged alpha. Polar-to-rectangular mode and canvas-aware seam controls remain planned.</p>
+            )}
             {filterEffects.type !== 'none' && (
               <>
                 <Slider
@@ -10358,6 +10368,8 @@ export default function Home() {
                           ? 'Wave length'
                       : filterEffects.type === 'shear'
                           ? 'Shear displacement'
+                      : filterEffects.type === 'polar-coordinates'
+                          ? 'Polar radius'
                       : 'Radius'
                   }
                   value={filterEffects.radius}

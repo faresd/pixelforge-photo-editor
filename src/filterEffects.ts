@@ -25,6 +25,7 @@ export const FILTER_EFFECT_TYPES = [
   'mosaic',
   'color-halftone',
   'pinch',
+  'polar-coordinates',
   'ripple',
   'spherize',
   'twirl',
@@ -955,6 +956,45 @@ function applyWave(
   }
 }
 
+/** Apply a bounded rectangular-to-polar remap without mutating the source. */
+function applyPolarCoordinates(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+): void {
+  const strength = effect.amount / 100;
+  const centreX = effect.centerX * (width - 1);
+  const centreY = effect.centerY * (height - 1);
+  const maxRadius = Math.max(1, Math.min(width, height) * 0.5);
+  const radialExtent = Math.max(1 / 64, effect.radius / 64);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      if (!source[destination + 3]) continue;
+      const dx = x - centreX;
+      const dy = y - centreY;
+      const distance = Math.min(1, Math.hypot(dx, dy) / maxRadius);
+      const angle = (Math.atan2(dy, dx) + Math.PI) / (Math.PI * 2);
+      const sourceX = angle * (width - 1);
+      const sourceY = Math.min(1, distance / radialExtent) * (height - 1);
+      const sample = sourcePixelBilinear(
+        source,
+        width,
+        height,
+        x + (sourceX - x) * strength,
+        y + (sourceY - y) * strength,
+      );
+      if (!sample[3]) continue;
+      output[destination] = sample[0];
+      output[destination + 1] = sample[1];
+      output[destination + 2] = sample[2];
+      output[destination + 3] = source[destination + 3];
+    }
+  }
+}
+
 /** Apply a Filter menu effect to an RGBA buffer without mutating its input. */
 function applyShear(
   source: Uint8ClampedArray,
@@ -1050,6 +1090,8 @@ export function applyFilterEffectsPixels(
     );
   } else if (effect.type === 'wave') {
     applyWave(data, width, height, effect, output);
+  } else if (effect.type === 'polar-coordinates') {
+    applyPolarCoordinates(data, width, height, effect, output);
   } else if (effect.type === 'shear') {
     applyShear(data, width, height, effect, output);
   } else {
