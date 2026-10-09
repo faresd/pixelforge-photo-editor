@@ -246,6 +246,15 @@ import {
 } from '../src/paths';
 import { applySmudgeStroke } from '../src/smudge';
 import {
+  DEFAULT_HISTORY_BRUSH,
+  DEFAULT_MIXER_BRUSH,
+  applyHistoryBrushPixels,
+  applyMixerBrushPixels,
+  type HistoryBrushSettings,
+  type MixerBrushSettings,
+  type BrushStrokePoint,
+} from '../src/mixerHistoryBrush';
+import {
   SPOT_HEALING_MAX_POINTS,
   SPOT_HEALING_MAX_STROKES,
   type SpotHealingStroke,
@@ -305,6 +314,9 @@ type Command =
   | 'noop'
   | 'actions'
   | 'patch-tool'
+  | 'mixer-brush-tool'
+  | 'history-brush-tool'
+  | 'set-history-source'
   | 'content-aware-fill'
   | 'resize'
   | 'canvas-size'
@@ -466,6 +478,8 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'slice-select', label: 'Slice Select', icon: Crop, key: 'C' },
   { id: 'frame', label: 'Frame', icon: Crop, key: 'K' },
   { id: 'brush', label: 'Brush', icon: Brush, key: 'B' },
+  { id: 'mixer-brush', label: 'Mixer Brush', icon: Brush, key: 'B' },
+  { id: 'history-brush', label: 'History Brush', icon: Undo2, key: 'Y' },
   { id: 'pencil', label: 'Pencil', icon: Pencil, key: 'B' },
   { id: 'color-replace', label: 'Color Replace', icon: Palette, key: 'B' },
   { id: 'eraser', label: 'Eraser', icon: Eraser, key: 'E' },
@@ -562,7 +576,7 @@ const MARQUEE_TOOLS: Tool[] = [
 const TOOL_GROUPS: Record<string, Tool[]> = {
   c: ['crop', 'perspective-crop', 'slice', 'slice-select'],
   g: ['gradient', 'fill'],
-  b: ['brush', 'pencil', 'color-replace'],
+  b: ['brush', 'pencil', 'color-replace', 'mixer-brush'],
   u: ['rectangle', 'ellipse', 'line', 'polygon'],
   m: MARQUEE_TOOLS,
   i: ['eyedropper', 'color-sampler', 'ruler', 'note', 'count'],
@@ -573,6 +587,7 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   o: ['dodge', 'burn', 'sponge'],
   r: ['smudge'],
   s: ['clone', 'pattern-stamp'],
+  y: ['history-brush'],
   j: ['heal', 'spot-heal', 'patch', 'red-eye'],
   p: ['pen', 'freeform-pen'],
 };
@@ -635,6 +650,9 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Fill…', shortcut: 'Shift+F5', command: 'fill-layer' },
     { label: 'Action recipes…', command: 'actions' },
     { label: 'Patch Tool', shortcut: 'J', command: 'patch-tool' },
+    { label: 'Mixer Brush Tool', shortcut: 'B', command: 'mixer-brush-tool' },
+    { label: 'History Brush Tool', shortcut: 'Y', command: 'history-brush-tool' },
+    { label: 'Set History Brush Source', command: 'set-history-source' },
     { label: 'Stroke…', command: 'noop', disabled: true },
     { label: 'Content-Aware Fill…', command: 'content-aware-fill' },
     { label: 'Prompt to Edit…', command: 'noop', disabled: true },
@@ -886,6 +904,10 @@ type Gesture = {
   layer?: Layer;
   buffer?: HTMLCanvasElement;
   source?: HTMLCanvasElement;
+  /** Immutable source captured at pointer-down for Mixer/History Brush. */
+  sourcePixels?: Uint8ClampedArray;
+  historySourceIndex?: number;
+  brushPoints?: BrushStrokePoint[];
   /** Canvas-sized mask buffer used while a refinement stroke is in flight. */
   maskBuffer?: HTMLCanvasElement;
   maskPreviewAsset?: string;
@@ -1460,6 +1482,9 @@ export default function Home() {
     [tonalRange, setTonalRange] = useState<TonalRange>('midtones'),
     [spongeMode, setSpongeMode] = useState<SpongeMode>('saturate'),
     [spongeVibrance, setSpongeVibrance] = useState(50),
+    [mixerBrush, setMixerBrush] = useState<MixerBrushSettings>({ ...DEFAULT_MIXER_BRUSH }),
+    [historyBrush, setHistoryBrush] = useState<HistoryBrushSettings>({ ...DEFAULT_HISTORY_BRUSH }),
+    [historySourceIndex, setHistorySourceIndex] = useState<number | undefined>(undefined),
     [exportFormat, setExportFormat] = useState<ExportFormat>('png'),
     [exportQuality, setExportQuality] = useState(92),
     [exportTargetBytes, setExportTargetBytes] = useState<number | undefined>(
@@ -1757,6 +1782,9 @@ export default function Home() {
     tonalRange,
     spongeMode,
     spongeVibrance,
+    mixerBrush,
+    historyBrush,
+    historySourceIndex,
     exportFormat,
     exportQuality,
     exportTargetBytes,
@@ -1797,6 +1825,9 @@ export default function Home() {
     setTonalRange(s.tonalRange ?? 'midtones');
     setSpongeMode(s.spongeMode ?? 'saturate');
     setSpongeVibrance(s.spongeVibrance ?? 50);
+    setMixerBrush({ ...DEFAULT_MIXER_BRUSH, ...s.mixerBrush });
+    setHistoryBrush({ ...DEFAULT_HISTORY_BRUSH, ...s.historyBrush });
+    setHistorySourceIndex(s.historySourceIndex);
     setExportFormat(s.exportFormat ?? 'png');
     setExportQuality(s.exportQuality ?? 92);
     setExportTargetBytes(s.exportTargetBytes);
@@ -1827,6 +1858,9 @@ export default function Home() {
     setTonalRange,
     setSpongeMode,
     setSpongeVibrance,
+    setMixerBrush,
+    setHistoryBrush,
+    setHistorySourceIndex,
     setExportFormat,
     setExportQuality,
     setExportTargetBytes,
@@ -3736,6 +3770,9 @@ export default function Home() {
         tonalRange,
         spongeMode,
         spongeVibrance,
+        mixerBrush,
+        historyBrush,
+        historySourceIndex,
         exportFormat,
         exportQuality,
         exportTargetBytes,
@@ -3806,6 +3843,9 @@ export default function Home() {
     tonalRange,
     spongeMode,
     spongeVibrance,
+    mixerBrush,
+    historyBrush,
+    historySourceIndex,
     exportFormat,
     exportQuality,
     exportTargetBytes,
@@ -5420,6 +5460,8 @@ export default function Home() {
         'burn',
         'sponge',
         'gradient',
+        'mixer-brush',
+        'history-brush',
       ].includes(tool)
     ) {
       paintSpan.current?.cancel();
@@ -5864,6 +5906,77 @@ export default function Home() {
         } catch {
           gesture.current = null;
           setNotice('Could not prepare Smudge tool');
+        }
+      })();
+      await g.pending;
+      return;
+    }
+    if (tool === 'mixer-brush' || tool === 'history-brush') {
+      if (layerIsLocked(f, layer) || !layer.visible || layer.kind !== 'raster') {
+        setNotice(`Select a visible, unlocked raster layer before using ${tool === 'mixer-brush' ? 'Mixer Brush' : 'History Brush'}`);
+        return;
+      }
+      const g: Gesture = {
+        tool,
+        start: local,
+        last: local,
+        frame: f,
+        layer,
+        lastPressure: pressure(e),
+        pointerType: e.pointerType,
+        moved: false,
+        brushPoints: [{ x: local.x, y: local.y, pressure: pressure(e) }],
+        queued: [{ ...local, pressure: pressure(e), pointerType: e.pointerType }],
+      };
+      gesture.current = g;
+      g.pending = (async () => {
+        try {
+          const currentImage = await decodeAsset(assets.current[layer.asset]),
+            source = surface(currentImage.naturalWidth, currentImage.naturalHeight),
+            buffer = surface(currentImage.naturalWidth, currentImage.naturalHeight);
+          source.getContext('2d')!.drawImage(currentImage, 0, 0);
+          buffer.getContext('2d')!.drawImage(currentImage, 0, 0);
+          let sourceIndex = index.current;
+          if (tool === 'history-brush') {
+            sourceIndex = Math.max(0, Math.min(history.current.length - 1, historySourceIndex ?? index.current));
+            const sourceFrame = history.current[sourceIndex];
+            const sourceLayer = sourceFrame?.layers.find((item) => item.id === layer.id) ||
+              sourceFrame?.layers.find((item) => item.id === sourceFrame.active);
+            if (sourceLayer?.kind === 'raster' && sourceLayer.asset) {
+              const candidate = await decodeAsset(assets.current[sourceLayer.asset]);
+              if (candidate.naturalWidth === currentImage.naturalWidth && candidate.naturalHeight === currentImage.naturalHeight) {
+                source.getContext('2d')!.clearRect(0, 0, source.width, source.height);
+                source.getContext('2d')!.drawImage(candidate, 0, 0);
+              }
+            }
+            g.historySourceIndex = sourceIndex;
+          }
+          if (gesture.current !== g) return;
+          g.source = source;
+          g.buffer = buffer;
+          g.sourcePixels = new Uint8ClampedArray(source.getContext('2d')!.getImageData(0, 0, source.width, source.height).data);
+          g.selectionMask = await selectionMaskForLayer(f.selection, f, layer, assets.current, source.width, source.height);
+          const points = (g.queued || []).map((item) => ({ x: item.x, y: item.y, pressure: item.pressure }));
+          g.brushPoints = points;
+          const destination = new Uint8ClampedArray(buffer.getContext('2d')!.getImageData(0, 0, buffer.width, buffer.height).data);
+          const next = tool === 'mixer-brush'
+            ? applyMixerBrushPixels(destination, g.sourcePixels, buffer.width, buffer.height, points, {
+                ...mixerBrush,
+                size: localSize(layer.matrix, size),
+                hardness,
+              }, g.selectionMask)
+            : applyHistoryBrushPixels(destination, g.sourcePixels, buffer.width, buffer.height, points, {
+                ...historyBrush,
+                size: localSize(layer.matrix, size),
+                hardness,
+              }, g.selectionMask);
+          buffer.getContext('2d')!.putImageData(new ImageData(next as unknown as Uint8ClampedArray<ArrayBuffer>, buffer.width, buffer.height), 0, 0);
+          g.last = points.at(-1) || g.last;
+          g.queued = undefined;
+          void paint(f, { [layer.id]: buffer });
+        } catch {
+          gesture.current = null;
+          setNotice(`Could not prepare ${tool === 'mixer-brush' ? 'Mixer Brush' : 'History Brush'}`);
         }
       })();
       await g.pending;
@@ -6872,6 +6985,31 @@ export default function Home() {
       g.last = local;
       return;
     }
+    if (g.tool === 'mixer-brush' || g.tool === 'history-brush') {
+      if (!g.buffer || !g.sourcePixels || !g.layer) {
+        (g.queued || (g.queued = [])).push({ ...local, pressure: pressure(e), pointerType: e.pointerType });
+        return;
+      }
+      const nextPoint = { x: local.x, y: local.y, pressure: pressure(e) };
+      const destination = new Uint8ClampedArray(g.buffer.getContext('2d')!.getImageData(0, 0, g.buffer.width, g.buffer.height).data);
+      const next = g.tool === 'mixer-brush'
+        ? applyMixerBrushPixels(destination, g.sourcePixels, g.buffer.width, g.buffer.height, [nextPoint], {
+            ...mixerBrush,
+            size: localSize(g.layer.matrix, size),
+            hardness,
+          }, g.selectionMask)
+        : applyHistoryBrushPixels(destination, g.sourcePixels, g.buffer.width, g.buffer.height, [nextPoint], {
+            ...historyBrush,
+            size: localSize(g.layer.matrix, size),
+            hardness,
+          }, g.selectionMask);
+      g.buffer.getContext('2d')!.putImageData(new ImageData(next as unknown as Uint8ClampedArray<ArrayBuffer>, g.buffer.width, g.buffer.height), 0, 0);
+      g.brushPoints = [...(g.brushPoints || []), nextPoint];
+      g.moved = true;
+      g.last = local;
+      void paint(g.frame, { [g.layer.id]: g.buffer });
+      return;
+    }
     if (g.tool === 'background-eraser' && !g.buffer) {
       (g.queued || (g.queued = [])).push({
         ...local,
@@ -7737,6 +7875,20 @@ export default function Home() {
         setNotice('Could not apply gradient');
       }
     } else if (
+      (g.tool === 'mixer-brush' || g.tool === 'history-brush') &&
+      g.buffer &&
+      g.layer
+    ) {
+      const asset = addAsset(assets.current, g.buffer);
+      if (commit({
+        ...f,
+        layers: f.layers.map((item) => item.id === g.layer!.id ? { ...item, asset } : item),
+      })) {
+        const label = g.tool === 'mixer-brush' ? 'Mixer Brush stroke applied' :
+          `History Brush restored source ${typeof g.historySourceIndex === 'number' ? g.historySourceIndex + 1 : index.current + 1}`;
+        setNotice(label);
+      }
+    } else if (
       (g.tool === 'clone' || g.tool === 'heal') &&
       g.buffer &&
       g.layer
@@ -8437,6 +8589,15 @@ export default function Home() {
       setTool('patch');
       setCloneSource(null);
       setNotice('Patch tool selected; click a source, then drag a destination');
+    } else if (command === 'mixer-brush-tool') {
+      setTool('mixer-brush');
+      setNotice('Mixer Brush selected; drag to blend the immutable source snapshot');
+    } else if (command === 'history-brush-tool') {
+      setTool('history-brush');
+      setNotice(`History Brush selected; source snapshot ${typeof historySourceIndex === 'number' ? historySourceIndex + 1 : index.current + 1}`);
+    } else if (command === 'set-history-source') {
+      setHistorySourceIndex(index.current);
+      setNotice(`History Brush source set to snapshot ${index.current + 1}`);
     } else if (command === 'content-aware-fill') {
       await applyContentAwareFill();
     } else if (command === 'text-tool') {
@@ -10442,6 +10603,8 @@ export default function Home() {
             tool === 'patch' ||
             tool === 'red-eye' ||
             tool === 'pattern-stamp' ||
+            tool === 'mixer-brush' ||
+            tool === 'history-brush' ||
             tool === 'selection-brush' ||
             tool === 'rectangle' ||
             tool === 'ellipse' ||
@@ -10477,6 +10640,8 @@ export default function Home() {
                 tool === 'patch' ||
                 tool === 'red-eye' ||
                 tool === 'pattern-stamp' ||
+                tool === 'mixer-brush' ||
+                tool === 'history-brush' ||
                 tool === 'selection-brush') && (
                 <>
                   {(tool === 'brush' || tool === 'pencil') && (
@@ -10708,6 +10873,29 @@ export default function Home() {
                           <option value="desaturate">Desaturate</option>
                         </select>
                       </label>
+                    </>
+                  )}
+                  {tool === 'mixer-brush' && (
+                    <>
+                      <Slider label="Wet" value={mixerBrush.wet} min={0} max={100} set={(value) => setMixerBrush((current) => ({ ...current, wet: value }))} suffix="%" />
+                      <Slider label="Load" value={mixerBrush.load} min={0} max={100} set={(value) => setMixerBrush((current) => ({ ...current, load: value }))} suffix="%" />
+                      <Slider label="Mix" value={mixerBrush.mix} min={0} max={100} set={(value) => setMixerBrush((current) => ({ ...current, mix: value }))} suffix="%" />
+                      <Slider label="Flow" value={mixerBrush.flow} min={1} max={100} set={(value) => setMixerBrush((current) => ({ ...current, flow: value }))} suffix="%" />
+                      <p className="adjust-note">Mixer Brush blends an immutable source snapshot with the active raster. Wet-media buildup, bristle scattering and canvas rotation are intentionally bounded for predictable local drafts.</p>
+                    </>
+                  )}
+                  {tool === 'history-brush' && (
+                    <>
+                      <Slider label="History opacity" value={historyBrush.opacity} min={1} max={100} set={(value) => setHistoryBrush((current) => ({ ...current, opacity: value }))} suffix="%" />
+                      <Slider label="History flow" value={historyBrush.flow} min={1} max={100} set={(value) => setHistoryBrush((current) => ({ ...current, flow: value }))} suffix="%" />
+                      <label className="select-row">
+                        <span>History source</span>
+                        <select aria-label="History source" value={String(historySourceIndex ?? index.current)} onChange={(event) => setHistorySourceIndex(Number(event.target.value))}>
+                          {history.current.map((_, snapshot) => <option key={snapshot} value={snapshot}>Snapshot {snapshot + 1}</option>)}
+                        </select>
+                      </label>
+                      <button type="button" className="secondary" onClick={() => { setHistorySourceIndex(index.current); setNotice(`History Brush source set to snapshot ${index.current + 1}`); }}>Set source to current snapshot</button>
+                      <p className="adjust-note">Source snapshot: {typeof historySourceIndex === 'number' ? historySourceIndex + 1 : index.current + 1} of {history.current.length}. Restore is painted through the brush and remains undoable; discarded snapshots cannot be recovered.</p>
                     </>
                   )}
                   {tool === 'pattern-stamp' && (

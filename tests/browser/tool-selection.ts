@@ -8,13 +8,14 @@ const TOOL_FAMILIES = [
   ['Selection Brush', 'Magic Wand'],
   ['Crop', 'Perspective Crop', 'Slice', 'Slice Select', 'Frame'],
   ['Gradient', 'Fill'],
-  ['Brush', 'Pencil', 'Color Replace'],
+  ['Brush', 'Pencil', 'Color Replace', 'Mixer Brush'],
   ['Shape', 'Ellipse', 'Line', 'Polygon'],
   ['Eyedropper', 'Color Sampler', 'Ruler', 'Note', 'Count'],
   ['Eraser', 'Background Eraser', 'Magic Eraser'],
   ['Dodge', 'Burn', 'Sponge'],
   ['Clone', 'Pattern Stamp'],
   ['Healing', 'Spot Healing', 'Patch', 'Red Eye'],
+  ['History Brush'],
   ['Mask Brush', 'Mask Eraser'],
 ] as const;
 
