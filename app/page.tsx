@@ -407,6 +407,7 @@ type Command =
   | 'filter-mosaic'
   | 'filter-color-halftone'
   | 'filter-pointillize'
+  | 'filter-lens-correction'
   | 'filter-displace'
   | 'filter-pinch'
   | 'filter-polar-coordinates'
@@ -793,7 +794,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Camera Raw Filter…', command: 'noop', disabled: true },
     { label: 'AI Denoise…', command: 'noop', disabled: true },
     { label: 'AI Sharpen…', command: 'noop', disabled: true },
-    { label: 'Lens Correction…', command: 'noop', disabled: true },
+    { label: 'Lens Correction…', command: 'filter-lens-correction' },
     { label: 'Liquify…', command: 'noop', disabled: true },
     { label: 'Vanishing Point…', command: 'noop', disabled: true },
     { label: '', command: 'noop', separator: true },
@@ -3395,12 +3396,16 @@ export default function Home() {
                   type === 'mosaic' || type === 'color-halftone'
                   || type === 'pointillize'
                     ? 85
+                  : type === 'lens-correction'
+                    ? 75
                     : type === 'box-blur' || type === 'gaussian-blur' || type === 'lens-blur' || type === 'iris-blur' || type === 'smart-blur' || type === 'surface-blur' || type === 'shape-blur'
                       ? 85
                       : 70,
                 radius:
                   type === 'mosaic' || type === 'color-halftone' || type === 'pointillize'
                     ? 10
+                    : type === 'lens-correction'
+                      ? 64
                     : type === 'pinch'
                       ? 40
                     : type === 'spherize'
@@ -8198,6 +8203,8 @@ export default function Home() {
       chooseFilterEffect('color-halftone', 'Color Halftone');
     else if (command === 'filter-pointillize')
       chooseFilterEffect('pointillize', 'Pointillize (local approximation)');
+    else if (command === 'filter-lens-correction')
+      chooseFilterEffect('lens-correction', 'Lens Correction (local approximation)');
     else if (command === 'filter-displace')
       chooseFilterEffect('displace', 'Displace (procedural local approximation)');
     else if (command === 'filter-ripple')
@@ -8385,6 +8392,7 @@ export default function Home() {
       case 'filter-mosaic':
       case 'filter-color-halftone':
       case 'filter-pointillize':
+      case 'filter-lens-correction':
       case 'filter-displace':
       case 'filter-ripple':
       case 'filter-polar-coordinates':
@@ -10358,6 +10366,9 @@ export default function Home() {
             {filterEffects.type === 'pointillize' && (
               <p>Bounded stipple-cell approximation with unchanged alpha. Density, foreground/background color and full procedural controls remain planned.</p>
             )}
+            {filterEffects.type === 'lens-correction' && (
+              <p>Bounded radial lens-correction approximation with unchanged alpha. Camera profiles, chromatic aberration and pincushion/barrel mode selection remain planned.</p>
+            )}
             {filterEffects.type !== 'none' && (
               <>
                 <Slider
@@ -10398,6 +10409,8 @@ export default function Home() {
                           ? 'ZigZag wavelength'
                       : filterEffects.type === 'displace'
                           ? 'Displace wavelength'
+                      : filterEffects.type === 'lens-correction'
+                          ? 'Correction radius'
                       : 'Radius'
                   }
                   value={filterEffects.radius}
@@ -10478,6 +10491,26 @@ export default function Home() {
                     />
                     <Slider
                       label="Spherize center Y"
+                      value={Math.round(filterEffects.centerY * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      suffix="%"
+                    />
+                  </>
+                )}
+                {filterEffects.type === 'lens-correction' && (
+                  <>
+                    <Slider
+                      label="Correction centre X"
+                      value={Math.round(filterEffects.centerX * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      suffix="%"
+                    />
+                    <Slider
+                      label="Correction centre Y"
                       value={Math.round(filterEffects.centerY * 100)}
                       min={0}
                       max={100}
