@@ -9,7 +9,7 @@
 
 export type PaletteToolId =
   | 'move' | 'hand' | 'zoom' | 'eyedropper' | 'color-sampler' | 'ruler' | 'note' | 'count'
-  | 'fill' | 'gradient' | 'clone' | 'heal' | 'spot-heal' | 'patch' | 'red-eye' | 'pattern-stamp'
+  | 'fill' | 'gradient' | 'clone' | 'heal' | 'spot-heal' | 'patch' | 'red-eye' | 'pattern-stamp' | 'mixer-brush' | 'history-brush'
   | 'crop' | 'perspective-crop' | 'slice' | 'slice-select' | 'frame' | 'brush' | 'pencil' | 'color-replace' | 'eraser'
   | 'background-eraser' | 'magic-eraser' | 'dodge' | 'burn' | 'sponge' | 'smudge' | 'pen'
   | 'mask-brush' | 'mask-eraser'
@@ -30,8 +30,8 @@ export const TOOL_CATEGORIES: readonly ToolCategory[] = [
   { id: 'lasso', label: 'Lasso', tools: ['lasso', 'polygonal-lasso', 'magnetic-lasso'] },
   { id: 'selection', label: 'Selection', tools: ['selection-brush', 'magic-wand'] },
   { id: 'crop', label: 'Crop & Slice', tools: ['crop', 'perspective-crop', 'slice', 'slice-select', 'frame'] },
-  { id: 'retouch', label: 'Retouch', tools: ['clone', 'pattern-stamp', 'heal', 'spot-heal', 'patch', 'red-eye', 'smudge', 'dodge', 'burn', 'sponge'] },
-  { id: 'paint', label: 'Paint & Fill', tools: ['brush', 'pencil', 'color-replace', 'gradient', 'fill', 'eraser', 'background-eraser', 'magic-eraser'] },
+  { id: 'retouch', label: 'Retouch', tools: ['clone', 'pattern-stamp', 'heal', 'spot-heal', 'patch', 'red-eye', 'smudge', 'dodge', 'burn', 'sponge', 'history-brush'] },
+  { id: 'paint', label: 'Paint & Fill', tools: ['brush', 'pencil', 'color-replace', 'mixer-brush', 'gradient', 'fill', 'eraser', 'background-eraser', 'magic-eraser'] },
   { id: 'mask', label: 'Mask Refinement', tools: ['mask-brush', 'mask-eraser'] },
   { id: 'draw', label: 'Draw & Type', tools: ['pen', 'freeform-pen', 'direct-select', 'text', 'rectangle', 'ellipse', 'line', 'polygon'] },
 ] as const;
@@ -40,7 +40,7 @@ export const TOOL_CATEGORIES: readonly ToolCategory[] = [
 export const TOOL_FAMILIES: Readonly<Record<string, readonly PaletteToolId[]>> = {
   c: ['crop', 'perspective-crop', 'slice', 'slice-select'],
   g: ['gradient', 'fill'],
-  b: ['brush', 'pencil', 'color-replace'],
+  b: ['brush', 'pencil', 'color-replace', 'mixer-brush'],
   u: ['rectangle', 'ellipse', 'line', 'polygon'],
   m: ['select', 'ellipse-select', 'row-select', 'column-select'],
   i: ['eyedropper', 'color-sampler', 'ruler', 'note', 'count'],
@@ -61,13 +61,14 @@ export const TOOL_FLYOUTS: Readonly<Record<string, readonly PaletteToolId[]>> = 
   selection: ['selection-brush', 'magic-wand'],
   crop: ['crop', 'perspective-crop', 'slice', 'slice-select', 'frame'],
   fill: ['gradient', 'fill'],
-  paint: ['brush', 'pencil', 'color-replace'],
+  paint: ['brush', 'pencil', 'color-replace', 'mixer-brush'],
   shape: ['rectangle', 'ellipse', 'line', 'polygon'],
   measure: ['eyedropper', 'color-sampler', 'ruler', 'note', 'count'],
   eraser: ['eraser', 'background-eraser', 'magic-eraser'],
   tone: ['dodge', 'burn', 'sponge'],
   stamp: ['clone', 'pattern-stamp'],
   healing: ['heal', 'spot-heal', 'patch', 'red-eye'],
+  history: ['history-brush'],
   mask: ['mask-brush', 'mask-eraser'],
 };
 

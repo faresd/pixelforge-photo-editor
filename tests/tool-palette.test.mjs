@@ -38,8 +38,8 @@ test('categories and families resolve stable labels for common Photoshop groups'
 
 test('family cycling wraps and supports reverse keyboard navigation', () => {
   assert.equal(cycleFamilyTool('brush', 'b'), 'pencil');
-  assert.equal(cycleFamilyTool('color-replace', 'b'), 'brush');
-  assert.equal(cycleFamilyTool('brush', 'b', true), 'color-replace');
+  assert.equal(cycleFamilyTool('color-replace', 'b'), 'mixer-brush');
+  assert.equal(cycleFamilyTool('brush', 'b', true), 'mixer-brush');
   assert.equal(cycleFamilyTool('unknown', 'b'), 'brush');
   assert.equal(cycleFamilyTool('clone', 'missing'), undefined);
 });
@@ -64,7 +64,7 @@ test('compact category slots show one family representative and active variant',
   assert.deepEqual(compactCategoryTools(lasso, 'move', { lasso: 'magnetic-lasso' }), ['magnetic-lasso']);
   assert.deepEqual(compactCategoryTools(lasso, 'lasso', { lasso: 'magnetic-lasso' }), ['lasso']);
   const retouch = TOOL_CATEGORIES.find((category) => category.id === 'retouch');
-  assert.deepEqual(compactCategoryTools(retouch), ['clone', 'heal', 'smudge', 'dodge']);
+  assert.deepEqual(compactCategoryTools(retouch), ['clone', 'heal', 'smudge', 'dodge', 'history-brush']);
 });
 
 test('every active variant keeps one visible slot per family', () => {

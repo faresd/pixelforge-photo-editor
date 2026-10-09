@@ -29,6 +29,14 @@ import {
 } from './brush.ts';
 import { validBrushPresetId, type BrushPresetId } from './brushPresets.ts';
 import {
+  DEFAULT_HISTORY_BRUSH,
+  DEFAULT_MIXER_BRUSH,
+  validHistoryBrushSettings,
+  validMixerBrushSettings,
+  type HistoryBrushSettings,
+  type MixerBrushSettings,
+} from './mixerHistoryBrush.ts';
+import {
   PATTERN_IDS,
   normalizePatternTileSize,
   type PatternId,
@@ -65,6 +73,8 @@ export type Tool =
   | 'slice-select'
   | 'frame'
   | 'brush'
+  | 'mixer-brush'
+  | 'history-brush'
   | 'pencil'
   | 'color-replace'
   | 'eraser'
@@ -131,6 +141,12 @@ export type Settings = {
   tonalRange?: 'shadows' | 'midtones' | 'highlights';
   spongeMode?: 'saturate' | 'desaturate';
   spongeVibrance?: number;
+  /** Bounded wet/load/mix controls persisted for the Mixer Brush. */
+  mixerBrush?: MixerBrushSettings;
+  /** Bounded restore controls persisted for the History Brush. */
+  historyBrush?: HistoryBrushSettings;
+  /** Index into the local undo history used as the History Brush source. */
+  historySourceIndex?: number;
   exportFormat?: ExportFormat;
   exportQuality?: number;
   /** Optional lossy-export target in bytes; absent means manual quality mode. */
@@ -231,6 +247,8 @@ function validSettings(settings: unknown): settings is Settings {
       'slice-select',
       'frame',
       'brush',
+      'mixer-brush',
+      'history-brush',
       'pencil',
       'color-replace',
       'eraser',
@@ -310,6 +328,10 @@ function validSettings(settings: unknown): settings is Settings {
       return false;
     }
   }
+  if (candidate.mixerBrush !== undefined && !validMixerBrushSettings(candidate.mixerBrush)) return false;
+  if (candidate.historyBrush !== undefined && !validHistoryBrushSettings(candidate.historyBrush)) return false;
+  if (candidate.historySourceIndex !== undefined &&
+    (!Number.isInteger(candidate.historySourceIndex) || candidate.historySourceIndex < 0 || candidate.historySourceIndex > 23)) return false;
   return (
     ranges.every(
       ([value, min, max]) =>
@@ -417,6 +439,8 @@ export function validateDraft(input: unknown): Draft {
           ...effectiveBrushPressureSettings(
             value.settings as BrushPressureSettings,
           ),
+          mixerBrush: (value.settings as Partial<Settings>).mixerBrush ?? { ...DEFAULT_MIXER_BRUSH },
+          historyBrush: (value.settings as Partial<Settings>).historyBrush ?? { ...DEFAULT_HISTORY_BRUSH },
         }
       : value.settings;
   if (
