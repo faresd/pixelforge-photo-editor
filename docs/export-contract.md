@@ -32,10 +32,13 @@ artboard. The preview, dimensions and downloaded pixels are limited to that
 selected rectangle. A solid `background` swatch is painted beneath transparent
 composite pixels, while the editable frame and source assets remain unchanged.
 Frames without artboards use the virtual full canvas viewport, preserving legacy
-dimensions and export behavior. The bounded implementation composites one
-document surface and crops the selected view; it does not yet render each
-artboard as an isolated layer tree or provide an artboard-specific visibility
-override.
+dimensions and export behavior. Artboards with explicit `layerIds` render an
+isolated cloned layer/group tree before cropping, retaining folder opacity and
+blend isolation; omitted membership preserves the legacy full-document view and
+an explicit empty list exports the configured background only. Membership is
+sanitized after layer deletion, merge and flatten operations. The implementation
+is still a viewport/artboard contract: Photoshop content-frame fitting,
+replacement and linked frame assets remain staged.
 
 ## Acceptance evidence
 

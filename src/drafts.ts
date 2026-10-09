@@ -62,6 +62,8 @@ export type Tool =
   | 'crop'
   | 'perspective-crop'
   | 'slice'
+  | 'slice-select'
+  | 'frame'
   | 'brush'
   | 'pencil'
   | 'color-replace'
@@ -226,6 +228,8 @@ function validSettings(settings: unknown): settings is Settings {
       'crop',
       'perspective-crop',
       'slice',
+      'slice-select',
+      'frame',
       'brush',
       'pencil',
       'color-replace',

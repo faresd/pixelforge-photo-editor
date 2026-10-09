@@ -277,6 +277,11 @@ import {
   type SliceRect,
 } from '../src/cropTools';
 import {
+  createArtboard,
+  sanitizeArtboardLayerMembership,
+} from '../src/artboards';
+import { sliceAtPoint } from '../src/slices';
+import {
   formatMeasurement,
   measurementAngle,
   measurementDistance,
@@ -382,6 +387,8 @@ type Command =
   | 'crop'
   | 'perspective-crop'
   | 'slice'
+  | 'slice-select'
+  | 'frame'
   | 'rotate-left'
   | 'rotate-right'
   | 'flip-h'
@@ -451,6 +458,8 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'crop', label: 'Crop', icon: Crop, key: 'C' },
   { id: 'perspective-crop', label: 'Perspective Crop', icon: Crop, key: 'C' },
   { id: 'slice', label: 'Slice', icon: Crop, key: 'C' },
+  { id: 'slice-select', label: 'Slice Select', icon: Crop, key: 'C' },
+  { id: 'frame', label: 'Frame', icon: Crop, key: 'K' },
   { id: 'brush', label: 'Brush', icon: Brush, key: 'B' },
   { id: 'pencil', label: 'Pencil', icon: Pencil, key: 'B' },
   { id: 'color-replace', label: 'Color Replace', icon: Palette, key: 'B' },
@@ -546,7 +555,7 @@ const MARQUEE_TOOLS: Tool[] = [
 ];
 /** Photoshop's repeated-key tool groups, limited to tools PixelForge actually implements. */
 const TOOL_GROUPS: Record<string, Tool[]> = {
-  c: ['crop', 'perspective-crop', 'slice'],
+  c: ['crop', 'perspective-crop', 'slice', 'slice-select'],
   g: ['gradient', 'fill'],
   b: ['brush', 'pencil', 'color-replace'],
   u: ['rectangle', 'ellipse', 'line', 'polygon'],
@@ -555,7 +564,7 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   l: ['lasso', 'polygonal-lasso', 'magnetic-lasso', 'selection-brush'],
   w: ['selection-brush', 'magic-wand'],
   e: ['eraser', 'background-eraser', 'magic-eraser'],
-  k: ['mask-brush', 'mask-eraser'],
+  k: ['frame'],
   o: ['dodge', 'burn', 'sponge'],
   r: ['smudge'],
   s: ['clone', 'pattern-stamp'],
@@ -672,6 +681,8 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Crop', shortcut: 'C', command: 'crop' },
     { label: 'Perspective Crop…', command: 'perspective-crop' },
     { label: 'Slice tool', shortcut: 'C', command: 'slice' },
+    { label: 'Slice Select tool', shortcut: 'C', command: 'slice-select' },
+    { label: 'Frame tool', shortcut: 'K', command: 'frame' },
     { label: 'Rotate left', command: 'rotate-left' },
     { label: 'Rotate right', command: 'rotate-right' },
     { label: 'Flip horizontal', command: 'flip-h' },
@@ -923,6 +934,13 @@ type Gesture = {
 };
 
 type SlicePreview = SliceRect & { frame: Frame };
+type FramePreview = {
+  frame: Frame;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
 
 const brushColor = (value: string): BrushColor => {
   const match = value.match(/^#([a-f\d]{6})$/i);
@@ -1589,9 +1607,13 @@ export default function Home() {
   const perspectiveCropPreviewId = useRef(0);
   const [perspectiveCropApplying, setPerspectiveCropApplying] = useState(false);
   const [slicePreview, setSlicePreview] = useState<SlicePreview | null>(null);
+  const [slicePreviewMode, setSlicePreviewMode] = useState<'draft' | 'selected'>('draft');
   const slicePreviewId = useRef(0);
   const [sliceName, setSliceName] = useState('slice-1');
   const [sliceExporting, setSliceExporting] = useState(false);
+  const [framePreview, setFramePreview] = useState<FramePreview | null>(null);
+  const [frameName, setFrameName] = useState('Artboard 1');
+  const [frameBackground, setFrameBackground] = useState('#ffffff');
   const [selectionTransforming, setSelectionTransforming] = useState(false);
   const [layerTransforming, setLayerTransforming] = useState(false);
   const [selectionRefining, setSelectionRefining] =
@@ -1698,7 +1720,7 @@ export default function Home() {
     photoAdjustments,
   } = adjustments;
   const dimensions = frame ? `${frame.w} × ${frame.h} px` : 'Opening…',
-    canUndo = Boolean(slicePreview) || index.current > 0,
+    canUndo = Boolean(slicePreview && slicePreviewMode === 'draft') || index.current > 0,
     canRedo = index.current < history.current.length - 1;
   const gesture = useRef<Gesture | null>(null);
   const paintSpan = useRef<PerformanceSpan | null>(null);
@@ -2001,8 +2023,15 @@ export default function Home() {
     if (!slicePreview) return;
     slicePreviewId.current += 1;
     setSlicePreview(null);
+    setSlicePreviewMode('draft');
     void paint(current());
     setNotice('Slice preview cancelled; document unchanged');
+  };
+  const cancelFramePreview = () => {
+    if (!framePreview) return;
+    setFramePreview(null);
+    void paint(current());
+    setNotice('Frame preview cancelled; document unchanged');
   };
   const downloadSlice = async () => {
     const preview = slicePreview;
@@ -2067,6 +2096,118 @@ export default function Home() {
       );
     } finally {
       setSliceExporting(false);
+    }
+  };
+  const saveSliceMetadata = () => {
+    const preview = slicePreview;
+    if (!preview) return;
+    const f = current();
+    if (f !== preview.frame) {
+      cancelSlicePreview();
+      setNotice('Slice preview expired because the document changed');
+      return;
+    }
+    try {
+      const [normalized] = planSlices(f.w, f.h, [{
+        id: preview.id,
+        name: sliceName,
+        x: preview.x,
+        y: preview.y,
+        width: preview.width,
+        height: preview.height,
+      }]).slices;
+      const slices = [...(f.slices || []).filter((item) => item.id !== normalized.id), normalized];
+      if (slices.length > 256) throw new Error('The document already has 256 slices');
+      if (commit({ ...f, slices, activeSliceId: normalized.id })) {
+        setSlicePreview({ frame: current(), ...normalized });
+        setSlicePreviewMode('selected');
+        setSliceName(normalized.name);
+        setNotice(`Slice saved: ${normalized.name}`);
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not save the slice');
+    }
+  };
+  const updateSelectedSlice = () => {
+    const preview = slicePreview;
+    if (!preview || slicePreviewMode !== 'selected') return;
+    const f = current();
+    if (f !== preview.frame) {
+      cancelSlicePreview();
+      setNotice('Slice selection expired because the document changed');
+      return;
+    }
+    try {
+      const [normalized] = planSlices(f.w, f.h, [{ ...preview, name: sliceName }]).slices;
+      const slices = (f.slices || []).map((item) => item.id === normalized.id ? normalized : item);
+      if (commit({ ...f, slices, activeSliceId: normalized.id })) {
+        setSlicePreview({ frame: current(), ...normalized });
+        setSliceName(normalized.name);
+        setNotice(`Slice updated: ${normalized.name}`);
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not update the slice');
+    }
+  };
+  const deleteSelectedSlice = () => {
+    const preview = slicePreview;
+    if (!preview || slicePreviewMode !== 'selected') return;
+    const f = current();
+    const slices = (f.slices || []).filter((item) => item.id !== preview.id);
+    if (commit({
+      ...f,
+      ...(slices.length ? { slices, activeSliceId: slices[0].id } : { slices: undefined, activeSliceId: undefined }),
+    })) {
+      setSlicePreview(null);
+      setSlicePreviewMode('draft');
+      void paint(current());
+      setNotice('Slice deleted');
+    }
+  };
+  const addFrameArtboard = () => {
+    const preview = framePreview;
+    if (!preview) return;
+    const f = current();
+    if (f !== preview.frame) {
+      cancelFramePreview();
+      setNotice('Frame preview expired because the document changed');
+      return;
+    }
+    try {
+      const selected = selectedIdsForFrame(f);
+      const artboard = createArtboard({
+        // UUID-backed IDs remain unique even if an artboard is later removed
+        // or a draft is merged across browser sessions.
+        id: `artboard-${crypto.randomUUID()}`,
+        name: frameName,
+        x: preview.x,
+        y: preview.y,
+        w: preview.width,
+        h: preview.height,
+        visible: true,
+        locked: false,
+        background: frameBackground,
+        ...(selected.length ? { layerIds: selected } : {}),
+      }, f.w, f.h);
+      if (commit({
+        ...f,
+        artboards: [...(f.artboards || []), artboard],
+        activeArtboardId: artboard.id,
+      })) {
+        setFramePreview(null);
+        void paint(current());
+        setNotice(`Artboard added: ${artboard.name}`);
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not add the artboard');
+    }
+  };
+  const selectArtboard = (id: string) => {
+    const f = current();
+    if (!f.artboards?.some((item) => item.id === id)) return;
+    if (f.activeArtboardId !== id) {
+      commit({ ...f, activeArtboardId: id });
+      setNotice(`Active artboard: ${f.artboards.find((item) => item.id === id)?.name || id}`);
     }
   };
   const appendMeasurement = (annotation: MeasurementAnnotation) => {
@@ -4499,6 +4640,14 @@ export default function Home() {
           ...f,
           layers,
           groups: (f.groups || []).filter((group) => usedGroups.has(group.id)),
+          ...(f.artboards
+            ? {
+                artboards: sanitizeArtboardLayerMembership(
+                  f.artboards,
+                  layers.map((layer) => layer.id),
+                ),
+              }
+            : {}),
           active: merged.layers[0].id,
           selectedLayerIds: [merged.layers[0].id],
         })
@@ -4547,11 +4696,19 @@ export default function Home() {
       layers.splice(plan.lowerIndex, 2, merged);
       if (
         commit({
-        ...f,
-        layers,
-        active: merged.id,
-        selectedLayerIds: [merged.id],
-      })
+          ...f,
+          layers,
+          ...(f.artboards
+            ? {
+                artboards: sanitizeArtboardLayerMembership(
+                  f.artboards,
+                  layers.map((layer) => layer.id),
+                ),
+              }
+            : {}),
+          active: merged.id,
+          selectedLayerIds: [merged.id],
+        })
       )
         setNotice('Layers merged; undo restores the individual layers');
     } catch {
@@ -4563,7 +4720,20 @@ export default function Home() {
       const f = current(),
         image = await renderFrame(f, assets.current),
         flattened = rasterFrame(image, assets.current, 'Flattened image');
-      if (commit({ ...flattened, selectedLayerIds: [flattened.active] }))
+      if (
+        commit({
+          ...flattened,
+          ...(f.artboards
+            ? {
+                artboards: sanitizeArtboardLayerMembership(
+                  f.artboards,
+                  flattened.layers.map((layer) => layer.id),
+                ),
+              }
+            : {}),
+          selectedLayerIds: [flattened.active],
+        })
+      )
         setNotice('Image flattened; undo restores editable layers');
     } catch {
       setNotice('Could not flatten the image');
@@ -4596,6 +4766,14 @@ export default function Home() {
         ...f,
         layers,
         groups: (f.groups || []).filter((group) => usedGroups.has(group.id)),
+        ...(f.artboards
+          ? {
+              artboards: sanitizeArtboardLayerMembership(
+                f.artboards,
+                layers.map((layer) => layer.id),
+              ),
+            }
+          : {}),
         active,
         selectedLayerIds,
       })
@@ -5155,6 +5333,28 @@ export default function Home() {
     const local =
       layer.kind === 'raster' ? inversePoint(layer.matrix, p) || p : p;
     canvas.current!.setPointerCapture(e.pointerId);
+    if (tool === 'slice-select') {
+      const selected = sliceAtPoint(f.slices, p.x, p.y);
+      if (!selected) {
+        setSlicePreview(null);
+        setSlicePreviewMode('draft');
+        void paint(f);
+        setNotice('Click inside a saved slice to select it');
+        return;
+      }
+      if (f.activeSliceId !== selected.id) commit({ ...f, activeSliceId: selected.id });
+      setSlicePreview({ frame: current(), ...selected });
+      setSlicePreviewMode('selected');
+      setSliceName(selected.name);
+      void paint(current());
+      setNotice(`Slice selected: ${selected.name} · ${selected.width} × ${selected.height} px`);
+      return;
+    }
+    if (tool === 'frame') {
+      gesture.current = { tool, start: p, last: p, frame: f, moved: false };
+      setNotice('Frame: drag an artboard viewport, then add it');
+      return;
+    }
     if (tool === 'mask-brush' || tool === 'mask-eraser') {
       if (
         layerIsLocked(f, layer) ||
@@ -6925,6 +7125,18 @@ export default function Home() {
         x.strokeRect(g.start.x, g.start.y, p.x - g.start.x, p.y - g.start.y);
         x.restore();
       });
+    } else if (g.tool === 'frame') {
+      const c = canvas.current!,
+        x = c.getContext('2d')!;
+      void paint(g.frame).then(() => {
+        if (gesture.current !== g) return;
+        x.save();
+        x.strokeStyle = '#c084fc';
+        x.lineWidth = 2;
+        x.setLineDash([10, 5]);
+        x.strokeRect(g.start.x, g.start.y, p.x - g.start.x, p.y - g.start.y);
+        x.restore();
+      });
     }
     g.last = g.layer?.kind === 'raster' || g.layer?.kind === 'path' ? local : p;
   };
@@ -7381,6 +7593,21 @@ export default function Home() {
         void paint(f);
         setNotice('Slice needs at least one pixel inside the image');
       }
+    } else if (g.tool === 'frame' && g.moved) {
+      try {
+        const crop = planRectangularCrop(f.w, f.h, g.start, p);
+        setFramePreview({ frame: f, x: crop.left, y: crop.top, width: crop.width, height: crop.height });
+        setFrameName(`Artboard ${(f.artboards?.length || 0) + 1}`);
+        setFrameBackground(backgroundColor);
+        void paint(f);
+        setNotice(`Frame preview: ${crop.width} × ${crop.height} px · name and add artboard`);
+      } catch {
+        void paint(f);
+        setNotice('Frame needs at least one pixel inside the image');
+      }
+    } else if (g.tool === 'frame') {
+      void paint(f);
+      setNotice('Frame needs a drag of at least one pixel');
     } else if (g.tool === 'gradient' && g.moved && g.layer) {
       try {
         if (g.layer.kind !== 'raster') return;
@@ -7688,6 +7915,10 @@ export default function Home() {
         cancelSlicePreview();
         return;
       }
+      if (framePreview) {
+        cancelFramePreview();
+        return;
+      }
       if (quickMasking) {
         setNotice('Exit Quick Mask mode before changing history');
         return;
@@ -7821,15 +8052,22 @@ export default function Home() {
         cancelSlicePreview();
         return;
       }
+      if (e.key === 'Escape' && framePreview) {
+        e.preventDefault();
+        cancelFramePreview();
+        return;
+      }
       if (
         e.key === 'Escape' &&
         (gesture.current?.tool === 'crop' ||
           gesture.current?.tool === 'perspective-crop' ||
-          gesture.current?.tool === 'slice')
+          gesture.current?.tool === 'slice' ||
+          gesture.current?.tool === 'frame')
       ) {
         e.preventDefault();
         const canceledPerspective = gesture.current.tool === 'perspective-crop';
         const canceledSlice = gesture.current.tool === 'slice';
+        const canceledFrame = gesture.current.tool === 'frame';
         gesture.current = null;
         void paint(current());
         setNotice(
@@ -7837,7 +8075,9 @@ export default function Home() {
             ? 'Perspective crop drag cancelled; document unchanged'
             : canceledSlice
               ? 'Slice drag cancelled; document unchanged'
-              : 'Crop drag cancelled; document unchanged',
+              : canceledFrame
+                ? 'Frame drag cancelled; document unchanged'
+                : 'Crop drag cancelled; document unchanged',
         );
         return;
       }
@@ -7849,6 +8089,11 @@ export default function Home() {
       if (e.key === 'Enter' && slicePreview && !typing) {
         e.preventDefault();
         void downloadSlice();
+        return;
+      }
+      if (e.key === 'Enter' && framePreview && !typing) {
+        e.preventDefault();
+        addFrameArtboard();
         return;
       }
       if (e.key === 'Enter' && cropPreview && !typing) {
@@ -8238,6 +8483,19 @@ export default function Home() {
       setTool('slice');
       setCloneSource(null);
       setNotice('Drag on the image to select a slice');
+    } else if (command === 'slice-select') {
+      setTool('slice-select');
+      setCloneSource(null);
+      setNotice(
+        current().slices?.length
+          ? 'Click a saved slice to select and edit it'
+          : 'Create and save a slice before selecting it',
+      );
+    } else if (command === 'frame') {
+      if (slicePreview) cancelSlicePreview();
+      setTool('frame');
+      setCloneSource(null);
+      setNotice('Drag on the image to define an independent artboard');
     } else if (command === 'rotate-left') return transform('left');
     else if (command === 'rotate-right') return transform('right');
     else if (command === 'flip-h') return transform('h');
@@ -8492,6 +8750,7 @@ export default function Home() {
     if (cropPreview) cancelCropPreview();
     if (perspectiveCropPreview) cancelPerspectiveCropPreview();
     if (slicePreview) cancelSlicePreview();
+    if (framePreview) cancelFramePreview();
     if (gesture.current && gesture.current.tool !== id) {
       // Switching tools abandons any staged pointer gesture. This is
       // especially important for click-to-place tools on touch devices.
@@ -9181,6 +9440,22 @@ export default function Home() {
               </button>
               <button
                 type="button"
+                data-testid="slice-save"
+                onClick={slicePreviewMode === 'draft' ? saveSliceMetadata : updateSelectedSlice}
+              >
+                {slicePreviewMode === 'draft' ? 'Save slice' : 'Update slice'}
+              </button>
+              {slicePreviewMode === 'selected' && (
+                <button
+                  type="button"
+                  data-testid="slice-delete"
+                  onClick={deleteSelectedSlice}
+                >
+                  Delete
+                </button>
+              )}
+              <button
+                type="button"
                 data-testid="slice-cancel"
                 onClick={cancelSlicePreview}
               >
@@ -9188,6 +9463,69 @@ export default function Home() {
               </button>
             </fieldset>
           )}
+          {framePreview && (
+            <fieldset
+              className="crop-preview-controls frame-preview-controls"
+              aria-label="Frame preview controls"
+              data-testid="frame-preview-controls"
+            >
+              <label>
+                <span>Artboard name</span>
+                <input
+                  aria-label="Artboard name"
+                  required
+                  maxLength={120}
+                  value={frameName}
+                  onChange={(event) => setFrameName(event.target.value)}
+                />
+              </label>
+              <label>
+                <span>Background</span>
+                <input
+                  aria-label="Artboard background"
+                  type="color"
+                  value={frameBackground}
+                  onChange={(event) => setFrameBackground(event.target.value)}
+                />
+              </label>
+              <span>
+                {framePreview.width} × {framePreview.height} px · selected layers render independently
+              </span>
+              <button
+                type="button"
+                data-testid="frame-add"
+                onClick={addFrameArtboard}
+              >
+                Add artboard
+              </button>
+              <button
+                type="button"
+                data-testid="frame-cancel"
+                onClick={cancelFramePreview}
+              >
+                Cancel
+              </button>
+            </fieldset>
+          )}
+          {frame?.artboards?.length ? (
+            <fieldset className="artboard-controls" aria-label="Artboard controls" data-testid="artboard-controls">
+              <label>
+                <span>Active artboard</span>
+                <select
+                  aria-label="Active artboard"
+                  value={frame.activeArtboardId || frame.artboards[0].id}
+                  onChange={(event) => selectArtboard(event.target.value)}
+                >
+                  {frame.artboards.map((item) => (
+                    <option key={item.id} value={item.id} disabled={!item.visible}>
+                      {item.name} ({item.w} × {item.h} px)
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <span data-testid="artboard-render-note">Export renders the selected artboard layer tree independently.</span>
+            </fieldset>
+          ) : null}
           <div
             className="canvas-wrap"
             style={{ width: `${zoom}%` }}
@@ -9459,6 +9797,64 @@ export default function Home() {
                 <text x={slicePreview.x + 8} y={slicePreview.y + 18}>
                   {sliceName || 'Unnamed slice'}
                 </text>
+              </svg>
+            )}
+            {frame?.artboards?.length ? (
+              <svg
+                className="artboard-overlay"
+                data-testid="artboard-overlay"
+                viewBox={`0 0 ${frame.w} ${frame.h}`}
+                preserveAspectRatio="none"
+                aria-label="Artboard viewports"
+              >
+                {frame.artboards.map((artboard) => (
+                  <g
+                    key={artboard.id}
+                    className={artboard.id === frame.activeArtboardId ? 'artboard-active' : 'artboard-inactive'}
+                  >
+                    <rect
+                      x={artboard.x}
+                      y={artboard.y}
+                      width={artboard.w}
+                      height={artboard.h}
+                      style={{ fill: artboard.background || '#ffffff' }}
+                    />
+                    <rect
+                      className="artboard-border"
+                      x={artboard.x}
+                      y={artboard.y}
+                      width={artboard.w}
+                      height={artboard.h}
+                    />
+                    <text x={artboard.x + 8} y={Math.max(16, artboard.y - 7)}>
+                      {artboard.name}
+                    </text>
+                  </g>
+                ))}
+              </svg>
+            ) : null}
+            {framePreview && (
+              <svg
+                className="frame-preview-overlay"
+                data-testid="frame-preview-overlay"
+                viewBox={`0 0 ${framePreview.frame.w} ${framePreview.frame.h}`}
+                preserveAspectRatio="none"
+                aria-label={`Frame preview ${framePreview.width} by ${framePreview.height} pixels`}
+              >
+                <rect
+                  className="frame-preview-dim"
+                  x="0"
+                  y="0"
+                  width={framePreview.frame.w}
+                  height={framePreview.frame.h}
+                />
+                <rect
+                  className="frame-preview-border"
+                  x={framePreview.x}
+                  y={framePreview.y}
+                  width={framePreview.width}
+                  height={framePreview.height}
+                />
               </svg>
             )}
           </div>
