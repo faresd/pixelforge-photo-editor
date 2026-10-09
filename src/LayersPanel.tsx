@@ -4,7 +4,7 @@ import {
   FONTS,
   TEXT_ALIGNS,
   TEXT_ORIENTATIONS,
-  isRasterContentLayer,
+  isMaskableLayer,
   type Frame,
   type Group,
   type Layer,
@@ -357,7 +357,7 @@ export default function LayersPanel({
         <button
           onClick={createMask}
           disabled={
-            !isRasterContentLayer(layer) ||
+            !isMaskableLayer(layer) ||
             !frame.selection ||
             layerLocked ||
             !layer.visible
@@ -368,7 +368,7 @@ export default function LayersPanel({
         <button
           onClick={clearMask}
           disabled={
-            !isRasterContentLayer(layer) ||
+            !isMaskableLayer(layer) ||
             !layer.mask ||
             layerLocked ||
             !layer.visible
@@ -379,7 +379,7 @@ export default function LayersPanel({
         <button
           onClick={invertMask}
           disabled={
-            !isRasterContentLayer(layer) ||
+            !isMaskableLayer(layer) ||
             !layer.mask ||
             layerLocked ||
             !layer.visible
@@ -390,7 +390,7 @@ export default function LayersPanel({
         <button
           onClick={toggleMask}
           disabled={
-            !isRasterContentLayer(layer) ||
+            !isMaskableLayer(layer) ||
             !layer.mask ||
             layerLocked ||
             !layer.visible
@@ -405,7 +405,7 @@ export default function LayersPanel({
           Clear selection
         </button>
       </div>
-      {isRasterContentLayer(layer) && layer.mask && (
+      {isMaskableLayer(layer) && layer.mask && (
         <p className="mask-status">Nondestructive mask active</p>
       )}
       {layer.kind === 'smart-object' && (

@@ -291,6 +291,20 @@ export function isRasterContentLayer(layer: unknown): layer is RasterContentLaye
       (layer as { kind: unknown }).kind === 'smart-object')
   );
 }
+export type MaskableLayer = Extract<
+  Layer,
+  { kind: 'raster' | 'smart-object' | 'adjustment' }
+>;
+/** Layers that can carry a canvas-space nondestructive alpha mask. */
+export function isMaskableLayer(layer: unknown): layer is MaskableLayer {
+  return (
+    isRasterContentLayer(layer) ||
+    (typeof layer === 'object' &&
+      layer !== null &&
+      'kind' in layer &&
+      (layer as { kind?: unknown }).kind === 'adjustment')
+  );
+}
 /** A persisted, editable layer folder. Layers keep their own order in Frame.layers. */
 export type Group = {
   id: string;
@@ -709,7 +723,7 @@ export async function transformFrameWithMasks(
   const next = transformFrame(frame, matrix, w, h);
   const layers = await Promise.all(
     next.layers.map(async (layer) => {
-      if (!isRasterContentLayer(layer) || !layer.mask) return layer;
+      if (!isMaskableLayer(layer) || !layer.mask) return layer;
       const mask = assets[layer.mask];
       if (!mask) throw new Error('Layer mask asset is missing');
       const image = await decodeAsset(mask),
@@ -1229,6 +1243,7 @@ export function validateFrame(
     ids.add(layer.id);
     if (
       !isRasterContentLayer(layer) &&
+      layer.kind !== 'adjustment' &&
       (layer.mask !== undefined ||
         layer.maskEnabled !== undefined ||
         layer.maskInverted !== undefined ||
@@ -1253,15 +1268,12 @@ export function validateFrame(
           typeof layer.maskInverted !== 'boolean') ||
         ((layer.maskEnabled !== undefined ||
           layer.maskInverted !== undefined) &&
-          layer.mask === undefined)
-      )
-        return fail();
-      if (
-        layer.mask !== undefined &&
-        (!validId(layer.mask) ||
-          !Object.hasOwn(assets, layer.mask) ||
-          assets[layer.mask].w !== value.w ||
-          assets[layer.mask].h !== value.h)
+          layer.mask === undefined) ||
+        (layer.mask !== undefined &&
+          (!validId(layer.mask) ||
+            !Object.hasOwn(assets, layer.mask) ||
+            assets[layer.mask].w !== value.w ||
+            assets[layer.mask].h !== value.h))
       )
         return fail();
       if (
@@ -1295,9 +1307,27 @@ export function validateFrame(
       pixels += assets[layer.asset].w * assets[layer.asset].h;
     } else if (layer.kind === 'adjustment') {
       // Adjustment nodes are source-free and operate on the composite below;
-      // their shared metadata is validated above and they cannot carry a
-      // raster mask or asset reference.
-      if (Object.hasOwn(layer, 'asset')) return fail();
+      // Adjustment nodes are source-free and can carry a canvas-sized mask,
+      // but never raster-only cleanup metadata or a source asset.
+      if (
+        (layer.maskEnabled !== undefined &&
+          typeof layer.maskEnabled !== 'boolean') ||
+        (layer.maskInverted !== undefined &&
+          typeof layer.maskInverted !== 'boolean') ||
+        ((layer.maskEnabled !== undefined ||
+          layer.maskInverted !== undefined) &&
+          layer.mask === undefined) ||
+        (layer.mask !== undefined &&
+          (!validId(layer.mask) ||
+            !Object.hasOwn(assets, layer.mask) ||
+            assets[layer.mask].w !== value.w ||
+            assets[layer.mask].h !== value.h)) ||
+        layer.spotHealing !== undefined ||
+        layer.patchStrokes !== undefined ||
+        layer.contentAwareFills !== undefined ||
+        Object.hasOwn(layer, 'asset')
+      )
+        return fail();
       continue;
     } else if (layer.kind === 'text') {
       if (
@@ -1453,13 +1483,14 @@ export function referencedAssets(history: Frame[], assets: Assets): Assets {
       if (entry.selection.mask && assets[entry.selection.mask])
         used[entry.selection.mask] = assets[entry.selection.mask];
     }
-    for (const layer of frame.layers)
+    for (const layer of frame.layers) {
+      if (isMaskableLayer(layer) && layer.mask) used[layer.mask] = assets[layer.mask];
       if (isRasterContentLayer(layer)) {
         used[layer.asset] = assets[layer.asset];
-        if (layer.mask) used[layer.mask] = assets[layer.mask];
         for (const fill of layer.kind === 'raster' ? layer.contentAwareFills || [] : [])
           if (assets[fill.mask]) used[fill.mask] = assets[fill.mask];
       }
+    }
   }
   return used;
 }
@@ -1822,6 +1853,43 @@ export async function renderFrame(
         correctedContext = corrected.getContext('2d')!;
       correctedContext.drawImage(out, 0, 0);
       applyAdjustmentLayerCorrections(corrected, layer.adjustments);
+      const maskSettings = effectiveLayerMask({
+        enabled: layer.maskEnabled,
+        inverted: layer.maskInverted,
+      });
+      if (layer.mask && maskSettings.enabled) {
+        const maskImage = await decodeAsset(assets[layer.mask]);
+        if (!maskSettings.inverted) {
+          correctedContext.save();
+          correctedContext.globalCompositeOperation = 'destination-in';
+          correctedContext.setTransform(1, 0, 0, 1, 0, 0);
+          correctedContext.drawImage(maskImage, 0, 0);
+          correctedContext.restore();
+        } else {
+          const maskCanvas = surface(frame.w, frame.h),
+            maskCanvasContext = maskCanvas.getContext('2d')!;
+          maskCanvasContext.drawImage(maskImage, 0, 0);
+          const maskData = maskCanvasContext.getImageData(
+              0,
+              0,
+              frame.w,
+              frame.h,
+            ).data,
+            maskAlpha = new Uint8ClampedArray(frame.w * frame.h);
+          for (let pixel = 0; pixel < maskAlpha.length; pixel += 1)
+            maskAlpha[pixel] = maskData[pixel * 4 + 3];
+          const correctedImage = correctedContext.getImageData(
+            0,
+            0,
+            frame.w,
+            frame.h,
+          );
+          correctedImage.data.set(
+            applyLayerMaskPixels(correctedImage.data, maskAlpha, maskSettings),
+          );
+          correctedContext.putImageData(correctedImage, 0, 0);
+        }
+      }
       context.save();
       context.setTransform(1, 0, 0, 1, 0, 0);
       context.globalAlpha = layer.opacity;

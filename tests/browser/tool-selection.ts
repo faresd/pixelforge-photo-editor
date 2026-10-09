@@ -16,7 +16,7 @@ const TOOL_FAMILIES = [
   ['Clone', 'Pattern Stamp'],
   ['Healing', 'Spot Healing', 'Patch', 'Red Eye'],
   ['History Brush'],
-  ['Mask Brush', 'Mask Eraser'],
+  ['Mask Brush', 'Mask Eraser', 'Adjustment Brush'],
 ] as const;
 
 const FLYOUT_LABELS: Readonly<Record<string, string>> = {

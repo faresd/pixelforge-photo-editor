@@ -3,11 +3,18 @@ import assert from 'node:assert/strict';
 import {
   commonLayer,
   neutral,
+  referencedAssets,
   validateFrame,
 } from '../src/document.ts';
 import { layerBounds } from '../src/canvasSize.ts';
 
 const id = () => crypto.randomUUID();
+const maskId = '00000000-0000-4000-8000-000000000010';
+const maskAsset = {
+  url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAQAAACe1JrP8AAAADElEQVR42mNkYPgPAAEDAQAIwJcY0QAAAABJRU5ErkJggg==',
+  w: 8,
+  h: 8,
+};
 
 test('adjustment layers are source-free, valid document nodes', () => {
   const layer = {
@@ -67,4 +74,56 @@ test('invalid adjustment node carrying a source asset fails closed', () => {
     selectedLayerIds: [layer.id],
   };
   assert.throws(() => validateFrame(frame, {}), /Invalid layer document/);
+});
+
+test('adjustment masks validate, survive JSON round trips and stay referenced', () => {
+  const layer = {
+    ...commonLayer('Masked correction'),
+    kind: 'adjustment',
+    mask: maskId,
+    maskEnabled: true,
+    maskInverted: false,
+  };
+  const frame = {
+    w: 8,
+    h: 8,
+    layers: [layer],
+    active: layer.id,
+    selectedLayerIds: [layer.id],
+  };
+  const assets = { [maskId]: maskAsset };
+  assert.doesNotThrow(() => validateFrame(frame, assets));
+  const restored = JSON.parse(JSON.stringify(frame));
+  validateFrame(restored, assets);
+  assert.equal(restored.layers[0].kind, 'adjustment');
+  assert.equal(restored.layers[0].mask, maskId);
+  assert.deepEqual(referencedAssets([restored], assets), assets);
+});
+
+test('adjustment masks reject malformed flags, dimensions and raster cleanup metadata', () => {
+  const base = {
+    ...commonLayer('Masked correction'),
+    kind: 'adjustment',
+    mask: maskId,
+  };
+  const frame = (layer) => ({
+    w: 8,
+    h: 8,
+    layers: [layer],
+    active: layer.id,
+    selectedLayerIds: [layer.id],
+  });
+  const assets = { [maskId]: maskAsset };
+  assert.throws(
+    () => validateFrame(frame({ ...base, maskEnabled: 'yes' }), assets),
+    /Invalid layer document/,
+  );
+  assert.throws(
+    () => validateFrame(frame({ ...base, mask: id() }), assets),
+    /Invalid layer document/,
+  );
+  assert.throws(
+    () => validateFrame(frame({ ...base, spotHealing: [] }), assets),
+    /Invalid layer document/,
+  );
 });

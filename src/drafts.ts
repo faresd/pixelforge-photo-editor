@@ -82,6 +82,7 @@ export type Tool =
   | 'magic-eraser'
   | 'mask-brush'
   | 'mask-eraser'
+  | 'adjustment-brush'
   | 'dodge'
   | 'burn'
   | 'sponge'
@@ -254,6 +255,7 @@ function validSettings(settings: unknown): settings is Settings {
       'eraser',
       'background-eraser',
       'magic-eraser',
+      'adjustment-brush',
       'dodge',
       'burn',
       'sponge',
