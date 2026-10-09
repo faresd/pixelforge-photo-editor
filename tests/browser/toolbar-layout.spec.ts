@@ -245,13 +245,15 @@ test('M/L/W flyouts retain Photoshop tool names and shortcuts', async ({ page })
   await page.keyboard.press('ArrowDown');
   flyout = page.locator('[role="menu"]:visible');
   const selection = flyout.getByRole('menuitem', { name: 'Selection Brush', exact: true });
+  const quick = flyout.getByRole('menuitem', { name: 'Quick Selection', exact: true });
   const wand = flyout.getByRole('menuitem', { name: 'Magic Wand', exact: true });
   await expect(selection).toBeVisible();
+  await expect(quick).toBeVisible();
   await expect(wand).toBeVisible();
-  await expect(wand.locator('svg')).toBeVisible();
+  await expect(quick.locator('svg')).toBeVisible();
   await expect(selection.locator('kbd')).toHaveText('W');
+  await expect(quick.locator('kbd')).toHaveText('W');
   await expect(wand.locator('kbd')).toHaveText('W');
-  await expect(flyout.getByRole('menuitem', { name: 'Quick Selection', exact: true })).toHaveCount(0);
 });
 
 test('family variants occupy one category slot without duplicate toolbar ids', async ({ page }) => {

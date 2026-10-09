@@ -15,7 +15,7 @@ export type PaletteToolId =
   | 'mask-brush' | 'mask-eraser' | 'adjustment-brush'
   | 'direct-select' | 'text' | 'rectangle' | 'ellipse' | 'line' | 'polygon' | 'freeform-pen' | 'select'
   | 'ellipse-select' | 'row-select' | 'column-select' | 'lasso' | 'polygonal-lasso'
-  | 'magnetic-lasso' | 'selection-brush' | 'magic-wand';
+  | 'magnetic-lasso' | 'selection-brush' | 'quick-selection' | 'magic-wand';
 
 export type ToolCategory = {
   id: string;
@@ -28,7 +28,7 @@ export const TOOL_CATEGORIES: readonly ToolCategory[] = [
   { id: 'measure', label: 'Measure', tools: ['eyedropper', 'color-sampler', 'ruler', 'note', 'count'] },
   { id: 'marquee', label: 'Marquee', tools: ['select', 'ellipse-select', 'row-select', 'column-select'] },
   { id: 'lasso', label: 'Lasso', tools: ['lasso', 'polygonal-lasso', 'magnetic-lasso'] },
-  { id: 'selection', label: 'Selection', tools: ['selection-brush', 'magic-wand'] },
+  { id: 'selection', label: 'Selection', tools: ['selection-brush', 'quick-selection', 'magic-wand'] },
   { id: 'crop', label: 'Crop & Slice', tools: ['crop', 'perspective-crop', 'slice', 'slice-select', 'frame'] },
   { id: 'retouch', label: 'Retouch', tools: ['clone', 'pattern-stamp', 'heal', 'spot-heal', 'patch', 'red-eye', 'smudge', 'dodge', 'burn', 'sponge', 'history-brush'] },
   { id: 'paint', label: 'Paint & Fill', tools: ['brush', 'pencil', 'color-replace', 'mixer-brush', 'gradient', 'fill', 'eraser', 'background-eraser', 'magic-eraser'] },
@@ -45,7 +45,7 @@ export const TOOL_FAMILIES: Readonly<Record<string, readonly PaletteToolId[]>> =
   m: ['select', 'ellipse-select', 'row-select', 'column-select'],
   i: ['eyedropper', 'color-sampler', 'ruler', 'note', 'count'],
   l: ['lasso', 'polygonal-lasso', 'magnetic-lasso'],
-  w: ['selection-brush', 'magic-wand'],
+  w: ['selection-brush', 'quick-selection', 'magic-wand'],
   e: ['eraser', 'background-eraser', 'magic-eraser'],
   o: ['dodge', 'burn', 'sponge'],
   s: ['clone', 'pattern-stamp'],
@@ -58,7 +58,7 @@ export const TOOL_FAMILIES: Readonly<Record<string, readonly PaletteToolId[]>> =
 export const TOOL_FLYOUTS: Readonly<Record<string, readonly PaletteToolId[]>> = {
   marquee: ['select', 'ellipse-select', 'row-select', 'column-select'],
   lasso: ['lasso', 'polygonal-lasso', 'magnetic-lasso'],
-  selection: ['selection-brush', 'magic-wand'],
+  selection: ['selection-brush', 'quick-selection', 'magic-wand'],
   crop: ['crop', 'perspective-crop', 'slice', 'slice-select', 'frame'],
   fill: ['gradient', 'fill'],
   paint: ['brush', 'pencil', 'color-replace', 'mixer-brush'],

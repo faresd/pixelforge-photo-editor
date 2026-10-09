@@ -179,6 +179,7 @@ import { appendFreeformPoint, buildFreeformPath } from '../src/freeformPen';
 import { colorRangeMask } from '../src/colorRange';
 import { focusAreaMask } from '../src/focusArea';
 import { similarColorMask } from '../src/similarSelection';
+import { quickSelectionMask } from '../src/quickSelection';
 import { composeSelectionAlpha } from '../src/selectionComposition';
 import {
   createQuickMask,
@@ -539,6 +540,7 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
     icon: WandSparkles,
     key: 'L',
   },
+  { id: 'quick-selection', label: 'Quick Selection', icon: Wand2, key: 'W' },
   { id: 'magic-wand', label: 'Magic Wand', icon: Wand2, key: 'W' },
 ];
 const toolSelectionNotice = (tool: Tool, label: string) =>
@@ -583,7 +585,7 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   m: MARQUEE_TOOLS,
   i: ['eyedropper', 'color-sampler', 'ruler', 'note', 'count'],
   l: ['lasso', 'polygonal-lasso', 'magnetic-lasso', 'selection-brush'],
-  w: ['selection-brush', 'magic-wand'],
+  w: ['selection-brush', 'quick-selection', 'magic-wand'],
   e: ['eraser', 'background-eraser', 'magic-eraser'],
   k: ['frame', 'mask-brush', 'mask-eraser', 'adjustment-brush'],
   o: ['dodge', 'burn', 'sponge'],
@@ -937,6 +939,15 @@ type Gesture = {
   selectionBrushOpacity?: number;
   selectionBrushPressureSize?: boolean;
   selectionBrushPressureOpacity?: boolean;
+  /** Detached alpha grown by an in-progress Quick Selection gesture. */
+  quickSelectionMask?: Uint8ClampedArray;
+  quickSelectionSource?: Uint8ClampedArray;
+  quickSelectionBase?: Uint8ClampedArray;
+  quickSelectionExisting?: Uint8ClampedArray;
+  quickSelectionOperation?: SelectionOperation;
+  quickSelectionSize?: number;
+  quickSelectionTolerance?: number;
+  quickSelectionOpacity?: number;
   changed?: boolean;
   replaceTarget?: [number, number, number, number];
   /** Local node index for an in-progress Direct Selection drag. */
@@ -5363,6 +5374,64 @@ export default function Home() {
       setNotice('Pen: click to place points, click the first point to close');
       return;
     }
+    if (tool === 'quick-selection') {
+      if (gesture.current || !frame || doc.rendering) return;
+      const f = current(),
+        p = point(e),
+        g: Gesture = {
+          tool,
+          start: p,
+          last: p,
+          frame: f,
+          moved: false,
+          points: [p],
+          queued: [{ x: p.x, y: p.y, pressure: pressure(e), pointerType: e.pointerType }],
+          quickSelectionOperation: selectionOperation,
+          quickSelectionSize: size,
+          quickSelectionTolerance: colorTolerance,
+          quickSelectionOpacity: brushOpacity / 100,
+        };
+      gesture.current = g;
+      canvas.current?.setPointerCapture(e.pointerId);
+      g.pending = (async () => {
+        try {
+          const rendered = await renderFrame(f, assets.current),
+            context = rendered.getContext('2d');
+          if (!context) throw new Error('Quick Selection canvas is unavailable');
+          g.quickSelectionSource = new Uint8ClampedArray(
+            context.getImageData(0, 0, f.w, f.h).data,
+          );
+          if (f.selection) {
+            const selectionCanvas = await renderSelection(f.selection, f.w, f.h, assets.current),
+              alpha = selectionCanvas.getContext('2d')!.getImageData(0, 0, f.w, f.h).data;
+            g.quickSelectionExisting = new Uint8ClampedArray(f.w * f.h);
+            for (let index = 0; index < g.quickSelectionExisting.length; index += 1)
+              g.quickSelectionExisting[index] = alpha[index * 4 + 3];
+            if (g.quickSelectionOperation !== 'replace')
+              g.quickSelectionBase = g.quickSelectionExisting.slice();
+          }
+          if (gesture.current !== g) return;
+          g.quickSelectionMask = quickSelectionMask(g.quickSelectionSource, {
+            width: f.w,
+            height: f.h,
+            size: g.quickSelectionSize!,
+            tolerance: g.quickSelectionTolerance!,
+            opacity: g.quickSelectionOpacity!,
+            points: g.points || [p],
+          });
+          g.changed = g.quickSelectionMask.some((value) => value > 0);
+          g.queued = undefined;
+          selectionBrushPreview(g);
+        } catch {
+          if (gesture.current === g) {
+            gesture.current = null;
+            setNotice('Could not prepare Quick Selection');
+          }
+        }
+      })();
+      await g.pending;
+      return;
+    }
     if (tool === 'selection-brush') {
       if (gesture.current || !frame || doc.rendering) return;
       const f = current(),
@@ -6928,6 +6997,33 @@ export default function Home() {
       g.last = local;
       return;
     }
+    if (g.tool === 'quick-selection') {
+      const points = g.points || (g.points = [g.start]);
+      if (Math.hypot(p.x - g.last.x, p.y - g.last.y) >= 1) points.push(p);
+      if (!g.quickSelectionSource) {
+        (g.queued || (g.queued = [])).push({
+          x: p.x,
+          y: p.y,
+          pressure: g.lastPressure,
+          pointerType: g.pointerType,
+        });
+        g.last = p;
+        return;
+      }
+      g.quickSelectionMask = quickSelectionMask(g.quickSelectionSource, {
+        width: g.frame.w,
+        height: g.frame.h,
+        size: g.quickSelectionSize ?? size,
+        tolerance: g.quickSelectionTolerance ?? colorTolerance,
+        opacity: g.quickSelectionOpacity ?? brushOpacity / 100,
+        points,
+      });
+      g.changed = g.quickSelectionMask.some((value) => value > 0);
+      selectionBrushPreview(g);
+      g.last = p;
+      g.moved = true;
+      return;
+    }
     if (g.tool === 'selection-brush') {
       const points = g.points || (g.points = [g.start]);
       if (Math.hypot(p.x - g.last.x, p.y - g.last.y) >= 1) points.push(p);
@@ -7499,6 +7595,53 @@ export default function Home() {
       discardPreviewAsset(assets.current, g.maskPreviewAsset);
       void paint(current());
       setNotice('Gesture cancelled');
+      return;
+    }
+    if (g.tool === 'quick-selection' && g.quickSelectionSource) {
+      if (g.points && g.points.length) {
+        g.quickSelectionMask = quickSelectionMask(g.quickSelectionSource, {
+          width: f.w,
+          height: f.h,
+          size: g.quickSelectionSize ?? size,
+          tolerance: g.quickSelectionTolerance ?? colorTolerance,
+          opacity: g.quickSelectionOpacity ?? brushOpacity / 100,
+          points: g.points,
+        });
+      }
+      const mask = g.quickSelectionMask;
+      if (!mask || !mask.some((value) => value > 0)) {
+        void paint(f);
+        setNotice('No Quick Selection change applied');
+        return;
+      }
+      const composed = combineSelectionBrushMasks(
+        g.quickSelectionBase,
+        mask,
+        g.quickSelectionOperation ?? selectionOperation,
+      );
+      const sameAsExisting =
+        g.quickSelectionExisting &&
+        g.quickSelectionExisting.length === composed.mask.length &&
+        g.quickSelectionExisting.every((value, index) => value === composed.mask[index]);
+      if (!composed.changed || sameAsExisting) {
+        void paint(f);
+        setNotice('No Quick Selection change applied');
+        return;
+      }
+      const selectionMask = createQuickMask(f.w, f.h, composed.mask),
+        maskId = quickMaskAsset(selectionMask),
+        selection: Selection = {
+          shape: 'rectangle',
+          x: 0,
+          y: 0,
+          w: f.w,
+          h: f.h,
+          feather: 0,
+          inverted: false,
+          mask: maskId,
+        };
+      if (commit({ ...f, selection }))
+        setNotice(`Quick Selection created (tolerance ${g.quickSelectionTolerance ?? colorTolerance})`);
       return;
     }
     if (
@@ -8280,6 +8423,7 @@ export default function Home() {
           gesture.current?.tool === 'freeform-pen' ||
           gesture.current?.tool === 'direct-select' ||
           gesture.current?.tool === 'selection-brush' ||
+          gesture.current?.tool === 'quick-selection' ||
           gesture.current?.tool === 'patch')
       ) {
         const canceledTool = gesture.current.tool;
@@ -8290,6 +8434,8 @@ export default function Home() {
             ? 'Pen path cancelled'
             : canceledTool === 'selection-brush'
               ? 'Selection Brush cancelled'
+              : canceledTool === 'quick-selection'
+                ? 'Quick Selection cancelled'
               : canceledTool === 'patch'
                 ? 'Patch stroke cancelled'
                 : 'Path node selection cancelled',
@@ -10634,6 +10780,7 @@ export default function Home() {
             tool === 'mixer-brush' ||
             tool === 'history-brush' ||
             tool === 'selection-brush' ||
+            tool === 'quick-selection' ||
             tool === 'rectangle' ||
             tool === 'ellipse' ||
             tool === 'line' ||
@@ -10671,7 +10818,8 @@ export default function Home() {
                 tool === 'pattern-stamp' ||
                 tool === 'mixer-brush' ||
                 tool === 'history-brush' ||
-                tool === 'selection-brush') && (
+                tool === 'selection-brush' ||
+                tool === 'quick-selection') && (
                 <>
                   {(tool === 'brush' || tool === 'pencil') && (
                     <label className="select-row">
@@ -10812,7 +10960,8 @@ export default function Home() {
                     tool !== 'patch' &&
                     tool !== 'mask-brush' &&
                     tool !== 'mask-eraser' &&
-                    tool !== 'adjustment-brush' && (
+                    tool !== 'adjustment-brush' &&
+                    tool !== 'quick-selection' && (
                       <>
                         <label className="check-row">
                           <input
@@ -10845,7 +10994,8 @@ export default function Home() {
                     )}
                   {(tool === 'color-replace' ||
                     tool === 'background-eraser' ||
-                    tool === 'magic-eraser') && (
+                    tool === 'magic-eraser' ||
+                    tool === 'quick-selection') && (
                     <Slider
                       label="Color tolerance"
                       value={colorTolerance}
@@ -10975,6 +11125,12 @@ export default function Home() {
                       Paint an editable alpha selection. Use Selection mode in
                       the Layers panel for replace, add, subtract or intersect;
                       the source pixels remain unchanged.
+                    </p>
+                  )}
+                  {tool === 'quick-selection' && (
+                    <p className="adjust-note">
+                      Grows a local connected colour selection from brush samples.
+                      Strong colour edges stop the flood; no semantic object model or upload is used.
                     </p>
                   )}
                   {tool === 'red-eye' && (
