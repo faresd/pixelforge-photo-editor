@@ -406,6 +406,7 @@ type Command =
   | 'filter-tilt-shift'
   | 'filter-mosaic'
   | 'filter-color-halftone'
+  | 'filter-displace'
   | 'filter-pinch'
   | 'filter-polar-coordinates'
   | 'filter-ripple'
@@ -811,7 +812,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Blur Gallery', command: 'noop', disabled: true },
     { label: 'Iris Blur…', command: 'filter-iris-blur' },
     { label: 'Distort', command: 'noop', disabled: true },
-    { label: 'Displace…', command: 'noop', disabled: true },
+    { label: 'Displace…', command: 'filter-displace' },
     { label: 'Pinch…', command: 'filter-pinch' },
     { label: 'Polar Coordinates…', command: 'filter-polar-coordinates' },
     { label: 'Ripple…', command: 'filter-ripple' },
@@ -8193,6 +8194,8 @@ export default function Home() {
       chooseFilterEffect('mosaic', 'Mosaic');
     else if (command === 'filter-color-halftone')
       chooseFilterEffect('color-halftone', 'Color Halftone');
+    else if (command === 'filter-displace')
+      chooseFilterEffect('displace', 'Displace (procedural local approximation)');
     else if (command === 'filter-ripple')
       chooseFilterEffect('ripple', 'Ripple');
     else if (command === 'filter-pinch')
@@ -8377,6 +8380,7 @@ export default function Home() {
       case 'filter-tilt-shift':
       case 'filter-mosaic':
       case 'filter-color-halftone':
+      case 'filter-displace':
       case 'filter-ripple':
       case 'filter-polar-coordinates':
       case 'filter-spherize':
@@ -10343,6 +10347,9 @@ export default function Home() {
             {filterEffects.type === 'zigzag' && (
               <p>Bounded radial zigzag displacement with clamped edges and unchanged alpha. Editable amplitude profiles and geometric canvas expansion remain planned.</p>
             )}
+            {filterEffects.type === 'displace' && (
+              <p>Bounded procedural displacement field with clamped edges and unchanged alpha. User-supplied displacement maps and geometric expansion remain planned.</p>
+            )}
             {filterEffects.type !== 'none' && (
               <>
                 <Slider
@@ -10380,6 +10387,8 @@ export default function Home() {
                           ? 'Polar radius'
                       : filterEffects.type === 'zigzag'
                           ? 'ZigZag wavelength'
+                      : filterEffects.type === 'displace'
+                          ? 'Displace wavelength'
                       : 'Radius'
                   }
                   value={filterEffects.radius}
@@ -10398,9 +10407,9 @@ export default function Home() {
                     suffix="°"
                   />
                 )}
-                {(filterEffects.type === 'wave' || filterEffects.type === 'shear') && (
+                {(filterEffects.type === 'wave' || filterEffects.type === 'shear' || filterEffects.type === 'displace') && (
                   <Slider
-                    label={filterEffects.type === 'shear' ? 'Shear direction' : 'Wave angle'}
+                    label={filterEffects.type === 'shear' ? 'Shear direction' : filterEffects.type === 'displace' ? 'Displace direction' : 'Wave angle'}
                     value={filterEffects.angle}
                     min={-180}
                     max={180}

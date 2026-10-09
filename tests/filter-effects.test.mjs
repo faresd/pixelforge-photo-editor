@@ -123,6 +123,36 @@ test('zigzag identities and transparent source edges remain safe', () => {
   assert.equal(isNeutralFilterEffects({ type: 'zigzag', amount: 100, radius: 0 }), true);
 });
 
+test('displace uses a deterministic rotated field and preserves source buffers', () => {
+  const source = rgba(9, 9, (x, y) => [x * 20, y * 20, 70, 255]);
+  const original = source.slice();
+  const horizontal = applyFilterEffectsPixels(source, 9, 9, {
+    type: 'displace', amount: 80, radius: 5, angle: 0,
+  });
+  const rotated = applyFilterEffectsPixels(source, 9, 9, {
+    type: 'displace', amount: 80, radius: 5, angle: 90,
+  });
+  assert.deepEqual(horizontal, applyFilterEffectsPixels(source, 9, 9, {
+    type: 'displace', amount: 80, radius: 5, angle: 0,
+  }));
+  assert.notDeepEqual(horizontal, rotated);
+  assert.deepEqual(source, original);
+  assert.notEqual(horizontal, source);
+});
+
+test('displace identity and transparent source edges remain safe', () => {
+  const source = rgba(5, 5, (x, y) => x === 0 && y === 0 ? [255, 0, 255, 0] : [x * 30, y * 30, 12, 255]);
+  assert.deepEqual(applyFilterEffectsPixels(source, 5, 5, {
+    type: 'displace', amount: 0, radius: 6,
+  }), source);
+  const output = applyFilterEffectsPixels(source, 5, 5, {
+    type: 'displace', amount: 100, radius: 6,
+  });
+  assert.equal(pixel(output, 5, 0, 0)[3], 0);
+  assert.deepEqual(pixel(output, 5, 0, 0).slice(0, 3), [255, 0, 255]);
+  assert.equal(isNeutralFilterEffects({ type: 'displace', amount: 100, radius: 0 }), true);
+});
+
 test('Filter effect metadata is bounded and legacy/empty values normalize safely', () => {
   const value = effectiveFilterEffects({ type: 'mosaic', amount: 200, radius: -4, centerX: 4, seed: -1 });
   assert.equal(value.type, 'mosaic');
