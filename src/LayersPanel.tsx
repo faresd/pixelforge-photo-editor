@@ -25,6 +25,7 @@ type Props = {
   isolateLayers: () => void;
   edit: (patch: Partial<Layer>) => void;
   add: () => void;
+  addAdjustment: () => void;
   duplicate: () => void;
   remove: () => void;
   reorder: (direction: number) => void;
@@ -53,6 +54,7 @@ export default function LayersPanel({
   isolateLayers,
   edit,
   add,
+  addAdjustment,
   duplicate,
   remove,
   reorder,
@@ -148,6 +150,8 @@ export default function LayersPanel({
               ? 'T'
               : item.kind === 'raster'
                 ? '▧'
+                : item.kind === 'adjustment'
+                  ? '◐'
                 : item.kind === 'line'
                   ? '╱'
                   : item.kind === 'polygon'
@@ -188,6 +192,9 @@ export default function LayersPanel({
       <div className="layer-actions">
         <button onClick={add} disabled={frame.layers.length >= 32}>
           Add paint layer
+        </button>
+        <button onClick={addAdjustment} disabled={frame.layers.length >= 32}>
+          Add adjustment layer
         </button>
         <button onClick={importImage} disabled={frame.layers.length >= 32}>
           Add image layer
@@ -899,7 +906,7 @@ export default function LayersPanel({
         >
           Delete layer
         </button>
-        {layer.kind !== 'raster' && (
+        {layer.kind !== 'raster' && layer.kind !== 'adjustment' && (
           <button onClick={rasterize} disabled={layerLocked}>
             Rasterize layer
           </button>

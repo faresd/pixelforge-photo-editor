@@ -328,6 +328,7 @@ type Command =
   | 'fill-layer'
   | 'new-layer'
   | 'new-fill-layer'
+  | 'new-adjustment-layer'
   | 'duplicate-layer'
   | 'delete-layer'
   | 'group-layer'
@@ -710,7 +711,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Layer Style', command: 'noop', disabled: true },
     { label: 'Smart Filter', command: 'noop', disabled: true },
     { label: 'New Fill Layer…', command: 'new-fill-layer' },
-    { label: 'New Adjustment Layer', command: 'noop', disabled: true },
+    { label: 'New Adjustment Layer', command: 'new-adjustment-layer' },
     { label: 'Layer Mask', command: 'mask-selection' },
     { label: 'Invert Layer Mask', command: 'invert-layer-mask' },
     { label: 'Disable Layer Mask', command: 'toggle-layer-mask' },
@@ -4364,6 +4365,16 @@ export default function Home() {
       asset: addAsset(assets.current, surface(f.w, f.h)),
       fillColor,
     })) setNotice(`Solid fill layer added (${fillColor})`);
+  };
+  const addAdjustmentLayer = () => {
+    const f = current();
+    if (
+      addLayer({
+        ...commonLayer(`Adjustment ${f.layers.length}`),
+        kind: 'adjustment',
+      })
+    )
+      setNotice('Adjustment layer added; edit its nondestructive controls below');
   };
   const addPaint = () => {
     const f = current();
@@ -8311,6 +8322,7 @@ export default function Home() {
     else if (command === 'fill-layer') return fillActiveLayer();
     else if (command === 'new-layer') addPaint();
     else if (command === 'new-fill-layer') setFillLayerDialog(true);
+    else if (command === 'new-adjustment-layer') addAdjustmentLayer();
     else if (command === 'duplicate-layer') duplicate();
     else if (command === 'delete-layer') remove();
     else if (command === 'group-layer') groupActiveLayer();
@@ -9892,6 +9904,7 @@ export default function Home() {
               isolateLayers={isolateLayers}
               edit={editLayer}
               add={addPaint}
+              addAdjustment={addAdjustmentLayer}
               duplicate={duplicate}
               remove={remove}
               reorder={reorder}
