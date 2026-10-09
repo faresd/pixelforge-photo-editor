@@ -24,6 +24,7 @@ export const FILTER_EFFECT_TYPES = [
   'tilt-shift',
   'mosaic',
   'color-halftone',
+  'pointillize',
   'displace',
   'pinch',
   'polar-coordinates',
@@ -1096,6 +1097,36 @@ function applyDisplace(
   }
 }
 
+/** Apply a bounded stipple-cell approximation without mutating the source. */
+function applyPointillize(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+): void {
+  const cellSize = Math.max(1, effect.radius);
+  const strength = effect.amount / 100;
+  const dotRadius = Math.max(0.5, cellSize * 0.5 * strength);
+  for (let y = 0; y < height; y += 1) {
+    const cellY = Math.min(height - 1, Math.floor(y / cellSize) * cellSize + (cellSize - 1) * 0.5);
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      if (!source[destination + 3]) continue;
+      const cellX = Math.min(width - 1, Math.floor(x / cellSize) * cellSize + (cellSize - 1) * 0.5);
+      const distance = Math.hypot(x - cellX, y - cellY);
+      const coverage = clamp(dotRadius - distance + 1, 0, 1);
+      if (coverage <= 0) continue;
+      const sample = sourcePixel(source, width, height, cellX, cellY);
+      if (!sample[3]) continue;
+      output[destination] = clampByte(source[destination] * (1 - coverage) + sample[0] * coverage);
+      output[destination + 1] = clampByte(source[destination + 1] * (1 - coverage) + sample[1] * coverage);
+      output[destination + 2] = clampByte(source[destination + 2] * (1 - coverage) + sample[2] * coverage);
+      output[destination + 3] = source[destination + 3];
+    }
+  }
+}
+
 export function applyFilterEffectsPixels(
   data: Uint8ClampedArray,
   width: number,
@@ -1170,6 +1201,8 @@ export function applyFilterEffectsPixels(
     applyZigZag(data, width, height, effect, output);
   } else if (effect.type === 'displace') {
     applyDisplace(data, width, height, effect, output);
+  } else if (effect.type === 'pointillize') {
+    applyPointillize(data, width, height, effect, output);
   } else {
     applyDistort(data, width, height, effect, output);
   }
