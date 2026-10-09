@@ -6,6 +6,10 @@ import {
   type Frame,
 } from './document.ts';
 import type { TileCache } from './tilePlan.ts';
+import {
+  validTiledRenderTelemetry,
+  type TiledRenderTelemetry,
+} from './tiledDocument.ts';
 
 export type WorkerRenderOptions = {
   signal?: AbortSignal;
@@ -20,6 +24,8 @@ export type WorkerRenderOptions = {
   tiledRevision?: string | number;
   tiledCache?: TileCache<Uint8ClampedArray>;
   tiledMaxWorkingBytes?: number;
+  /** Privacy-safe diagnostics for the latest eligible tiled effect. */
+  onTiledTelemetry?: (telemetry: TiledRenderTelemetry) => void;
 };
 
 const RENDER_TIMEOUT_MS = 30_000;
@@ -77,6 +83,11 @@ export async function renderFrameWithWorker(
       tiledRevision: options.tiledRevision,
       tiledCache: options.tiledCache,
       tiledMaxWorkingBytes: options.tiledMaxWorkingBytes,
+      onTiledTelemetry: (telemetry) => {
+        if (!validTiledRenderTelemetry(telemetry))
+          throw new Error('Invalid tiled telemetry from the fallback renderer.');
+        options.onTiledTelemetry?.(telemetry);
+      },
     });
     if (isCancelled()) throw abortError();
     return image;
@@ -182,6 +193,16 @@ export async function renderFrameWithWorker(
         lastCompleted = completed;
         try {
           options.onProgress?.(completed, total);
+        } catch (error) {
+          finish(() => reject(error));
+        }
+      } else if (value.kind === 'tiled-telemetry') {
+        if (!validTiledRenderTelemetry(value.telemetry)) {
+          finish(() => reject(new Error('Worker returned invalid tiled telemetry.')));
+          return;
+        }
+        try {
+          options.onTiledTelemetry?.(value.telemetry);
         } catch (error) {
           finish(() => reject(error));
         }
@@ -363,6 +384,12 @@ class PersistentWorkerSession {
         assets: referencedAssets([task.frame], task.assets),
       });
     } catch {
+      // A constructor or postMessage failure can leave the worker unusable or
+      // still busy. Retire it before falling back and servicing a queued
+      // latest-wins request so that request gets a fresh worker session.
+      const worker = this.worker;
+      this.worker = undefined;
+      try { worker?.terminate(); } catch { /* already unavailable */ }
       this.finish(task, () => {
         void task.fallback().then(task.resolve, task.reject);
       });
@@ -440,10 +467,24 @@ class PersistentWorkerSession {
       try {
         task.options.onProgress?.(completed, total);
       } catch (error) {
-        this.finish(task, () => {
-          if (!task.settled) task.reject(error);
-        });
-        void this.startNext();
+        // A consumer callback can throw while the worker is still rendering.
+        // Retire the worker before starting a queued latest-wins task so the
+        // new request cannot race the old worker's active render.
+        this.onWorkerFailure(error instanceof Error ? error : new Error(String(error)));
+      }
+      return;
+    }
+    if (value.kind === 'tiled-telemetry') {
+      if (!validTiledRenderTelemetry(value.telemetry)) {
+        this.onWorkerFailure(new Error('Worker returned invalid tiled telemetry.'));
+        return;
+      }
+      try {
+        task.options.onTiledTelemetry?.(value.telemetry);
+      } catch (error) {
+        // Telemetry is advisory, but a throwing consumer still invalidates
+        // this worker session. Terminate it before servicing the queue.
+        this.onWorkerFailure(error instanceof Error ? error : new Error(String(error)));
       }
       return;
     }

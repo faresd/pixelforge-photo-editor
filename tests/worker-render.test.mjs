@@ -203,6 +203,57 @@ test('worker renderer forwards monotonic bounded layer progress', async () => {
   }
 });
 
+test('worker callback failures retire the session before starting a queued render', async () => {
+  const workers = [];
+  let secondPromise;
+  class FakeCanvas { getContext() { return {}; } transferToImageBitmap() { return {}; } }
+  class FakeWorker {
+    constructor() { this.terminated = false; workers.push(this); }
+    postMessage(message) {
+      if (message.kind !== 'render') return;
+      if (workers.length === 1) {
+        queueMicrotask(() => this.onmessage?.({ data: {
+          kind: 'progress', id: message.id, completed: 1, total: 1,
+        } }));
+      } else {
+        queueMicrotask(() => this.onmessage?.({ data: {
+          kind: 'result', id: message.id, width: 1, height: 1,
+          image: { width: 1, height: 1, close() {} },
+        } }));
+      }
+    }
+    terminate() { this.terminated = true; }
+  }
+  setGlobal('Worker', FakeWorker);
+  setGlobal('OffscreenCanvas', FakeCanvas);
+  setGlobal('createImageBitmap', async () => ({}));
+  try {
+    const first = renderFrameWithWorker(rectangleFrame(), {}, undefined, {
+      forceWorker: true,
+      reuseWorker: true,
+      onProgress: () => {
+        secondPromise = renderFrameWithWorker(rectangleFrame(), {}, undefined, {
+          forceWorker: true,
+          reuseWorker: true,
+        });
+        throw new Error('progress consumer failed');
+      },
+    });
+    // Queuing the replacement cancels the superseded promise; the callback
+    // failure still has to retire the first worker before the replacement can
+    // run on a fresh session.
+    await assert.rejects(first, (error) => error?.name === 'AbortError');
+    assert.ok(secondPromise);
+    const image = await Promise.resolve(secondPromise);
+    assert.equal(image.width, 1);
+    assert.equal(workers.length, 2);
+    assert.equal(workers[0].terminated, true);
+  } finally {
+    resetPersistentWorkerForTests();
+    restoreGlobals();
+  }
+});
+
 test('worker renderer rejects forged or regressing progress before accepting output', async () => {
   let worker;
   class FakeOffscreenCanvas {
@@ -523,4 +574,81 @@ test('persistent worker session reuses one worker and latest-wins cancellation',
     resetPersistentWorkerForTests();
     restoreGlobals();
   }
+});
+
+test('worker forwards bounded tiled telemetry before publishing its owned result', async () => {
+  let worker;
+  const telemetry = {
+    kind: 'tiled-neighborhood',
+    effect: 'gaussian-blur',
+    layerId: 'layer-1',
+    width: 520,
+    height: 300,
+    tileSize: 256,
+    tileCount: 6,
+    destinationBytes: 520 * 300 * 4,
+    peakWorkingBytes: 2 * 512 * 512 * 4,
+    cacheBytes: 0,
+    peakBytes: 520 * 300 * 4 + 2 * 512 * 512 * 4,
+    maxWorkingBytes: 16 * 1024 * 1024,
+    maxCacheBytes: 0,
+  };
+  class FakeCanvas { getContext() { return {}; } transferToImageBitmap() { return {}; } }
+  class FakeWorker {
+    constructor() { worker = this; }
+    postMessage(message) {
+      if (message.kind === 'render') queueMicrotask(() => {
+        this.onmessage?.({ data: { kind: 'tiled-telemetry', id: message.id, telemetry } });
+        this.onmessage?.({ data: {
+          kind: 'result', id: message.id, width: 1, height: 1,
+          image: { width: 1, height: 1, close() {} },
+        } });
+      });
+    }
+    terminate() {}
+  }
+  setGlobal('Worker', FakeWorker);
+  setGlobal('OffscreenCanvas', FakeCanvas);
+  setGlobal('createImageBitmap', async () => ({}));
+  try {
+    const events = [];
+    const image = await renderFrameWithWorker(rectangleFrame(), {}, undefined, {
+      forceWorker: true,
+      onTiledTelemetry: (event) => events.push(event),
+    });
+    assert.equal(image.width, 1);
+    assert.deepEqual(events, [telemetry]);
+    assert.ok(worker);
+  } finally { restoreGlobals(); }
+});
+
+test('worker rejects forged tiled telemetry before accepting a result', async () => {
+  let worker;
+  class FakeCanvas { getContext() { return {}; } transferToImageBitmap() { return {}; } }
+  class FakeWorker {
+    constructor() { worker = this; }
+    postMessage(message) {
+      if (message.kind === 'render') queueMicrotask(() => {
+        this.onmessage?.({ data: {
+          kind: 'tiled-telemetry', id: message.id,
+          telemetry: { kind: 'tiled-neighborhood', effect: 'box-blur', width: -1 },
+        } });
+        this.onmessage?.({ data: {
+          kind: 'result', id: message.id, width: 1, height: 1,
+          image: { width: 1, height: 1, close() {} },
+        } });
+      });
+    }
+    terminate() { this.terminated = true; }
+  }
+  setGlobal('Worker', FakeWorker);
+  setGlobal('OffscreenCanvas', FakeCanvas);
+  setGlobal('createImageBitmap', async () => ({}));
+  try {
+    await assert.rejects(
+      renderFrameWithWorker(rectangleFrame(), {}, undefined, { forceWorker: true }),
+      /invalid tiled telemetry/,
+    );
+    assert.equal(worker.terminated, true);
+  } finally { restoreGlobals(); }
 });

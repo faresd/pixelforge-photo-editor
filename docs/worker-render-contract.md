@@ -162,6 +162,20 @@ limits. Desktop/mobile browser acceptance covers the visible blur adapter and
 the full-frame fallback. Its memory ledger reports the destination surface and
 bounded tile working set; it does not raise the 16 MP safety limit.
 
+The document path now carries one validated `tiled-telemetry` message for each
+eligible blur layer. It reports only effect kind, layer-local dimensions,
+tile count/size, destination bytes, peak tile working bytes, cache bytes and
+bounded cache counters; it never includes pixels, asset URLs or user content.
+The committed editor currently uses the adapter without a retained `TileCache`,
+so its live cache counters remain zero; cache reuse is an explicit opt-in for
+future bounded sessions rather than a claim of cross-render cache persistence.
+The worker validates this envelope before invoking the UI callback, drops
+telemetry from superseded request IDs, and publishes it before the owned image
+result. The editor exposes the latest values as render-status data attributes
+for local diagnostics and acceptance tests. A cancelled or failed render does
+not publish telemetry as a completed frame, and unsupported/global effects keep
+the full-frame fallback with `data-tiled-effect="none"`.
+
 ## Fallback and interactive edits
 
 The renderer uses the existing main-thread `renderFrame` path when worker

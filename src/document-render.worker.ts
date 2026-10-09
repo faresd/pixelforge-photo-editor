@@ -5,6 +5,7 @@ import {
   type Assets,
   type Frame,
 } from './document.ts';
+import type { TiledRenderTelemetry } from './tiledDocument.ts';
 
 type RenderRequest = {
   kind: 'render';
@@ -16,6 +17,7 @@ type CancelRequest = { kind: 'cancel'; id: number };
 type Request = RenderRequest | CancelRequest;
 type Response =
   | { kind: 'progress'; id: number; completed: number; total: number }
+  | { kind: 'tiled-telemetry'; id: number; telemetry: TiledRenderTelemetry }
   | { kind: 'cancelled'; id: number }
   | {
       kind: 'result';
@@ -115,6 +117,10 @@ scope.onmessage = (event: MessageEvent<Request>) => {
               completed,
               total,
             });
+          },
+          onTiledTelemetry: (telemetry) => {
+            if (!cancelled.has(request.id))
+              scope.postMessage({ kind: 'tiled-telemetry', id: request.id, telemetry });
           },
         },
       )) as unknown as OffscreenCanvas;

@@ -1,9 +1,12 @@
 import {
   DEFAULT_TILE_BATCH_BYTES,
   TILE_MAX_BATCH_BYTES,
+  TILE_MAX_DIMENSION,
+  TILE_MAX_PIXELS,
   type Tile,
   type TileSchedule,
   TileCache,
+  type TileCacheStats,
 } from './tilePlan.ts';
 import {
   createTiledRenderPlan,
@@ -51,6 +54,106 @@ export type TiledMemoryLedger = {
   maxCacheBytes: number;
 };
 
+/** Privacy-safe diagnostics emitted after one eligible tiled effect completes. */
+export type TiledRenderTelemetry = {
+  kind: 'tiled-neighborhood';
+  effect: 'box-blur' | 'gaussian-blur';
+  layerId?: string;
+  width: number;
+  height: number;
+  tileSize: TiledRenderTileSize;
+  tileCount: number;
+  destinationBytes: number;
+  peakWorkingBytes: number;
+  cacheBytes: number;
+  peakBytes: number;
+  maxWorkingBytes: number;
+  maxCacheBytes: number;
+  cacheStats?: TileCacheStats;
+};
+
+function validTileCacheStats(value: unknown): value is TileCacheStats {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const stats = value as Partial<TileCacheStats>;
+  const bytes = [
+    stats.bytes,
+    stats.maxBytes,
+    stats.peakBytes,
+    stats.evictedBytes,
+  ];
+  const counters = [
+    stats.size,
+    stats.hits,
+    stats.misses,
+    stats.evictions,
+    stats.rejected,
+  ];
+  return (
+    bytes.every((item) => Number.isSafeInteger(item) && (item as number) >= 0) &&
+    counters.every((item) => Number.isSafeInteger(item) && (item as number) >= 0) &&
+    (stats.maxBytes as number) > 0 &&
+    (stats.maxBytes as number) <= TILE_MAX_BATCH_BYTES &&
+    (stats.bytes as number) <= (stats.maxBytes as number) &&
+    (stats.peakBytes as number) >= (stats.bytes as number) &&
+    (stats.peakBytes as number) <= (stats.maxBytes as number) &&
+    (stats.size as number) <= (stats.hits as number) + (stats.misses as number)
+  );
+}
+
+/** Validate telemetry at worker/UI boundaries before exposing diagnostics. */
+export function validTiledRenderTelemetry(value: unknown): value is TiledRenderTelemetry {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as Partial<TiledRenderTelemetry>;
+  const integers = [
+    candidate.width,
+    candidate.height,
+    candidate.tileSize,
+    candidate.tileCount,
+    candidate.destinationBytes,
+    candidate.peakWorkingBytes,
+    candidate.cacheBytes,
+    candidate.peakBytes,
+    candidate.maxWorkingBytes,
+    candidate.maxCacheBytes,
+  ];
+  const cacheStatsValid =
+    candidate.cacheStats === undefined || validTileCacheStats(candidate.cacheStats);
+  const allowedKeys = new Set([
+    'kind', 'effect', 'layerId', 'width', 'height', 'tileSize', 'tileCount',
+    'destinationBytes', 'peakWorkingBytes', 'cacheBytes', 'peakBytes',
+    'maxWorkingBytes', 'maxCacheBytes', 'cacheStats',
+  ]);
+  return candidate.kind === 'tiled-neighborhood' &&
+    Object.keys(candidate).every((key) => allowedKeys.has(key)) &&
+    (candidate.effect === 'box-blur' || candidate.effect === 'gaussian-blur') &&
+    (candidate.tileSize === 256 || candidate.tileSize === 512) &&
+    integers.every((item) => Number.isSafeInteger(item) && (item as number) >= 0) &&
+    (candidate.width as number) > 0 && (candidate.height as number) > 0 &&
+    (candidate.width as number) <= TILE_MAX_DIMENSION &&
+    (candidate.height as number) <= TILE_MAX_DIMENSION &&
+    (candidate.width as number) * (candidate.height as number) <= TILE_MAX_PIXELS &&
+    candidate.tileCount === Math.ceil((candidate.width as number) / (candidate.tileSize as number)) *
+      Math.ceil((candidate.height as number) / (candidate.tileSize as number)) &&
+    (candidate.maxWorkingBytes as number) > 0 &&
+    (candidate.maxWorkingBytes as number) <= TILE_MAX_BATCH_BYTES &&
+    (candidate.maxCacheBytes as number) >= 0 &&
+    (candidate.maxCacheBytes as number) <= TILE_MAX_BATCH_BYTES &&
+    (candidate.peakWorkingBytes as number) <= (candidate.maxWorkingBytes as number) &&
+    (candidate.cacheBytes as number) <= (candidate.maxCacheBytes as number) &&
+    (candidate.destinationBytes as number) ===
+      (candidate.width as number) * (candidate.height as number) * 4 &&
+    (candidate.peakBytes as number) >= (candidate.destinationBytes as number) +
+      (candidate.peakWorkingBytes as number) + (candidate.cacheBytes as number) &&
+    (candidate.peakBytes as number) <= (candidate.destinationBytes as number) +
+      (candidate.maxWorkingBytes as number) + (candidate.maxCacheBytes as number) &&
+    cacheStatsValid &&
+    (!candidate.cacheStats ||
+      (candidate.cacheStats.bytes === candidate.cacheBytes &&
+        candidate.cacheStats.maxBytes === candidate.maxCacheBytes)) &&
+    (candidate.layerId === undefined || (typeof candidate.layerId === 'string' &&
+      candidate.layerId.length > 0 && candidate.layerId.length <= 128));
+}
+
 export type TiledDocumentOptions = {
   tileSize?: TiledRenderTileSize;
   maxBatchBytes?: number;
@@ -61,6 +164,7 @@ export type TiledDocumentOptions = {
   onProgress?: (completed: number, total: number) => void;
   signal?: AbortSignal;
   isCancelled?: () => boolean;
+  onTelemetry?: (telemetry: TiledRenderTelemetry) => void;
 };
 
 export type TiledDocumentResult = {
@@ -227,6 +331,17 @@ export async function renderTiledNeighborhoodEffect(
       options.onProgress?.(completed, plan.schedule.tileCount);
     }
   }
+  assertAbort(options.signal, options.isCancelled);
+  options.onTelemetry?.({
+    kind: 'tiled-neighborhood',
+    effect: effect.type as 'box-blur' | 'gaussian-blur',
+    width,
+    height,
+    tileSize: plan.request.tileSize,
+    tileCount: plan.schedule.tileCount,
+    ...ledger,
+    ...(cache ? { cacheStats: { ...cache.stats } } : {}),
+  });
   return { plan, schedule: plan.schedule, ledger };
 }
 
