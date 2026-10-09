@@ -24,6 +24,7 @@ export const FILTER_EFFECT_TYPES = [
   'tilt-shift',
   'mosaic',
   'color-halftone',
+  'displace',
   'pinch',
   'polar-coordinates',
   'ripple',
@@ -1059,6 +1060,42 @@ function applyZigZag(
   }
 }
 
+/** Apply a bounded procedural displacement field without mutating the source. */
+function applyDisplace(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+): void {
+  const strength = effect.amount / 100;
+  const centreX = effect.centerX * (width - 1);
+  const centreY = effect.centerY * (height - 1);
+  const wavelength = Math.max(1, effect.radius);
+  const radians = (effect.angle * Math.PI) / 180;
+  const axisX = Math.cos(radians);
+  const axisY = Math.sin(radians);
+  const maxDisplacement = Math.min(Math.min(width, height) * 0.35, wavelength);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      if (!source[destination + 3]) continue;
+      const dx = x - centreX;
+      const dy = y - centreY;
+      const along = dx * axisX + dy * axisY;
+      const across = -dx * axisY + dy * axisX;
+      const fieldX = Math.sin((across / wavelength) * Math.PI * 2) * strength * maxDisplacement;
+      const fieldY = Math.cos((along / wavelength) * Math.PI * 2) * strength * maxDisplacement;
+      const sample = sourcePixelBilinear(source, width, height, x - fieldX, y - fieldY);
+      if (!sample[3]) continue;
+      output[destination] = sample[0];
+      output[destination + 1] = sample[1];
+      output[destination + 2] = sample[2];
+      output[destination + 3] = source[destination + 3];
+    }
+  }
+}
+
 export function applyFilterEffectsPixels(
   data: Uint8ClampedArray,
   width: number,
@@ -1131,6 +1168,8 @@ export function applyFilterEffectsPixels(
     applyShear(data, width, height, effect, output);
   } else if (effect.type === 'zigzag') {
     applyZigZag(data, width, height, effect, output);
+  } else if (effect.type === 'displace') {
+    applyDisplace(data, width, height, effect, output);
   } else {
     applyDistort(data, width, height, effect, output);
   }
