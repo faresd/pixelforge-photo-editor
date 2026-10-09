@@ -203,6 +203,19 @@ test('lens correction identities and transparent source edges remain safe', () =
   assert.equal(isNeutralFilterEffects({ type: 'lens-correction', amount: 100, radius: 0 }), true);
 });
 
+test('lens correction supports inward and outward directions with a legacy inward default', () => {
+  const source = rgba(9, 9, (x, y) => [x * 20, y * 20, 70, 255]);
+  const settings = { type: 'lens-correction', amount: 75, radius: 64, centerX: 0.5, centerY: 0.5 };
+  const inward = applyFilterEffectsPixels(source, 9, 9, { ...settings, lensDirection: 'inward' });
+  const outward = applyFilterEffectsPixels(source, 9, 9, { ...settings, lensDirection: 'outward' });
+  assert.notDeepEqual(inward, outward);
+  assert.deepEqual(inward, applyFilterEffectsPixels(source, 9, 9, settings));
+  assert.equal(effectiveFilterEffects(settings).lensDirection, 'inward');
+  assert.equal(effectiveFilterEffects({ ...settings, lensDirection: 'outward' }).lensDirection, 'outward');
+  assert.equal(validFilterEffects(effectiveFilterEffects({ ...settings, lensDirection: 'outward' })), true);
+  assert.equal(validFilterEffects({ ...effectiveFilterEffects(settings), lensDirection: 'sideways' }), false);
+});
+
 test('Filter effect metadata is bounded and legacy/empty values normalize safely', () => {
   const value = effectiveFilterEffects({ type: 'mosaic', amount: 200, radius: -4, centerX: 4, seed: -1 });
   assert.equal(value.type, 'mosaic');
