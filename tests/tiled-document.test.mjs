@@ -1,0 +1,129 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { applyFilterEffectsPixels } from '../src/filterEffects.ts';
+import {
+  isTiledNeighborhoodBlur,
+  renderTiledNeighborhoodEffect,
+} from '../src/tiledDocument.ts';
+import { TileCache, readTile } from '../src/tilePlan.ts';
+
+function pixels(width, height) {
+  const output = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y += 1)
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      output[offset] = (x * 21 + y * 5) % 256;
+      output[offset + 1] = (x * 9 + y * 17) % 256;
+      output[offset + 2] = (x * 3 + y * 29) % 256;
+      output[offset + 3] = x === 0 && y === 0 ? 0 : 255;
+    }
+  return output;
+}
+
+function writeInner(destination, width, pixels, tile) {
+  for (let row = 0; row < tile.height; row += 1) {
+    const sourceOffset =
+      ((tile.y - tile.readY + row) * tile.readWidth + (tile.x - tile.readX)) * 4;
+    const destinationOffset = ((tile.y + row) * width + tile.x) * 4;
+    destination.set(
+      pixels.subarray(sourceOffset, sourceOffset + tile.width * 4),
+      destinationOffset,
+    );
+  }
+}
+
+for (const type of ['box-blur', 'gaussian-blur']) {
+  test(`tiled ${type} matches the full-frame pixel oracle at seams`, async () => {
+    const width = 520;
+    const height = 300;
+    const sourcePixels = pixels(width, height);
+    const destination = new Uint8ClampedArray(sourcePixels.length);
+    const effect = { type, amount: 100, radius: 8 };
+    const expected = applyFilterEffectsPixels(sourcePixels, width, height, effect);
+    const result = await renderTiledNeighborhoodEffect(
+      width,
+      height,
+      effect,
+      (tile) => readTile(sourcePixels, width, height, tile),
+      (output, tile) => writeInner(destination, width, output, tile),
+      { revision: 'fixture-1', tileSize: 256, maxWorkingBytes: 2 * 512 * 512 * 4 },
+    );
+    assert.deepEqual(destination, expected);
+    assert.equal(result.ledger.peakWorkingBytes <= 2 * 512 * 512 * 4, true);
+    assert.equal(result.ledger.destinationBytes, width * height * 4);
+  });
+}
+
+test('only bounded local blur families enter the visible tiled path', () => {
+  assert.equal(isTiledNeighborhoodBlur({ type: 'box-blur', amount: 100, radius: 64 }), true);
+  assert.equal(isTiledNeighborhoodBlur({ type: 'gaussian-blur', amount: 100, radius: 64 }), true);
+  assert.equal(isTiledNeighborhoodBlur({ type: 'gaussian-blur', amount: 100, radius: 65 }), false);
+  assert.equal(isTiledNeighborhoodBlur({ type: 'average-blur', amount: 100, radius: 4 }), false);
+  assert.equal(isTiledNeighborhoodBlur({ type: 'mosaic', amount: 100, radius: 4 }), false);
+});
+
+test('tiled cache keys include revision/effect and cached output is cloned', async () => {
+  const sourcePixels = pixels(520, 300);
+  const cache = new TileCache(4 * 512 * 512 * 4);
+  let sourceCalls = 0;
+  const source = async (tile) => {
+    sourceCalls += 1;
+    return readTile(sourcePixels, 520, 300, tile);
+  };
+  const sink = () => {};
+  const effect = { type: 'box-blur', amount: 100, radius: 2 };
+  await renderTiledNeighborhoodEffect(520, 300, effect, source, sink, {
+    revision: 'a', cache, tileSize: 256,
+  });
+  const firstCalls = sourceCalls;
+  await renderTiledNeighborhoodEffect(520, 300, effect, source, sink, {
+    revision: 'a', cache, tileSize: 256,
+  });
+  assert.equal(sourceCalls, firstCalls);
+  await renderTiledNeighborhoodEffect(520, 300, { ...effect, radius: 3 }, source, sink, {
+    revision: 'a', cache, tileSize: 256,
+  });
+  assert.ok(sourceCalls > firstCalls);
+  await renderTiledNeighborhoodEffect(520, 300, effect, source, sink, {
+    revision: 'b', cache, tileSize: 256,
+  });
+  assert.ok(sourceCalls > firstCalls + 6);
+});
+
+test('abort after a source callback prevents sink/progress and preserves cache', async () => {
+  const controller = new AbortController();
+  const cache = new TileCache(4 * 512 * 512 * 4);
+  let sinks = 0;
+  await assert.rejects(
+    renderTiledNeighborhoodEffect(
+      520,
+      300,
+      { type: 'gaussian-blur', amount: 100, radius: 2 },
+      async (tile) => {
+        const value = readTile(pixels(520, 300), 520, 300, tile);
+        controller.abort();
+        return value;
+      },
+      () => { sinks += 1; },
+      { revision: 1, cache, signal: controller.signal },
+    ),
+    (error) => error?.name === 'AbortError',
+  );
+  assert.equal(sinks, 0);
+  assert.equal(cache.size, 0);
+});
+
+test('16MP synthetic run stays within the bounded destination plus tile ledger', async () => {
+  const width = 4000;
+  const height = 4000;
+  const result = await renderTiledNeighborhoodEffect(
+    width,
+    height,
+    { type: 'box-blur', amount: 1, radius: 1 },
+    (tile) => new Uint8ClampedArray(tile.readWidth * tile.readHeight * 4),
+    () => {},
+    { revision: '16mp', tileSize: 512, maxWorkingBytes: 4 * 1024 * 1024 },
+  );
+  assert.ok(result.ledger.peakWorkingBytes <= 4 * 1024 * 1024);
+  assert.ok(result.ledger.peakBytes <= width * height * 4 + 4 * 1024 * 1024);
+});

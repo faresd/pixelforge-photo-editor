@@ -123,16 +123,20 @@ limits. `runTiledRender` is a cancellable callback runner for pure effects and
 future worker adapters. It checks the abort signal before every tile and emits
 monotonic completed-tile progress only after a callback resolves.
 
-The planning module does not change the editor's current render path. An
-isolated [`tiledCompositor.ts`](../src/tiledCompositor.ts) slice now assembles
+The planning module now feeds a bounded visible adapter for box and Gaussian
+blur (radius 1–64) when a render revision is supplied. The adapter reads each
+expanded region through a source provider and writes only the inner rectangle
+through a destination sink, so it does not create a full-frame RGBA source
+readback. Unsupported or global effects continue to use the existing
+full-frame renderer. Allocation failures fall back without replacing the prior
+canvas. An isolated [`tiledCompositor.ts`](../src/tiledCompositor.ts) slice now assembles
 RGBA pixels serially from expanded tiles: a callback receives the overlap read
 rectangle, and only its inner write rectangle is copied into the destination.
 Its `maxWorkingBytes` guard accounts for the retained input/output pair, and
 its `compareTiledWithFullFrame` oracle reports exact byte parity, first mismatch
-coordinates and maximum channel delta. The compositor is deliberately not
-wired into the visible document renderer yet; a future document adapter must
-use the expanded read rectangle for neighbourhood effects and pass this oracle
-before enabling a visible path. The byte-bounded `TileCache` now exposes
+coordinates and maximum channel delta. The visible adapter uses the same
+expanded-read/inner-write ownership and passes representative full-frame
+parity fixtures before promotion. The byte-bounded `TileCache` now exposes
 cumulative hit/miss, rejection, eviction and peak-byte counters, plus an
 explicit `delete` operation for releasing a tile before the whole cache is
 cleared. `runTiledRender` accepts that cache as an opt-in callback cache: its
@@ -147,9 +151,9 @@ The compositor's pure contract covers edge-clipped overlap, inner-rectangle
 ownership, source immutability, exact parity for a neighbourhood blur,
 intentional seam detection when overlap is too small, callback shape/error
 validation, cancellation before and after callbacks, and retained tile-byte
-limits. Desktop/mobile browser acceptance remains deferred until a visible
-render path consumes the compositor; the current full-frame browser suite still
-guards the production path.
+limits. Desktop/mobile browser acceptance covers the visible blur adapter and
+the full-frame fallback. Its memory ledger reports the destination surface and
+bounded tile working set; it does not raise the 16 MP safety limit.
 
 ## Fallback and interactive edits
 
@@ -170,11 +174,11 @@ rendering:
 * The worker allocates a full output surface and may allocate additional
   full-frame surfaces for masks, levels, curves and other effects. Peak memory
   therefore remains bounded by the existing document limits, not by tiles.
-* The worker is created per render. A persistent worker pool and prioritisation
-  are future work. Tile overlap scheduling, the byte-bounded cache primitive,
-  cancellable planning runner and serial overlap-aware compositor now have pure
-  coverage, but document integration, worker compositing and device-level
-  memory-pressure eviction measurements remain pending.
+* The committed editor path reuses one module worker between sequential renders,
+  queues only the newest request, posts cooperative cancellation for the active
+  request and tears the worker down after an idle timeout. The worker clears its
+  decoded-asset cache and output surface between requests. A multi-worker pool
+  and prioritisation remain future work.
 * Progress currently counts full-frame layer passes. It is not a pixel or tile
   percentage and does not imply that the worker is streaming a partial canvas.
 * Interactive override canvases stay on the main-thread fallback. A full
@@ -187,9 +191,11 @@ rendering:
   low-memory recovery are release gates still pending. Current CI timings are
   diagnostic and do not define a supported device profile.
 
-The visible tiled document compositor, persistent worker reuse and
-neighborhood-effect parity gates remain a separate Phase 6 scale milestone.
-Until those gates pass, large-image work remains opt-in and the 16 MP,
+The visible tiled document adapter, persistent worker reuse and
+neighborhood-effect parity gates now cover only bounded box/Gaussian blur.
+Other effects, full-frame adjustments, device-specific cache policy and
+low-memory physical traces remain separate Phase 6 gates. Until those gates
+pass, large-image work remains opt-in and the 16 MP,
 16,000-pixel-edge and layer/history limits stay in force.
 
 ## Cancellation and decoded bitmap ownership

@@ -40,12 +40,12 @@ megapixel canvas, 64 megapixel raster-frame, 64 MiB portable project, and 64
 megapixel decoded-cache limits are safety budgets. Worker image encoding now
 uses the shared bounded row-major tile schedule (16 MiB expanded-RGBA batch
 budget, 64 MiB hard ceiling), while document rendering still publishes a
-full-frame result. An isolated overlap-aware compositor now assembles one tile
-at a time under a retained-byte budget and proves neighbourhood pixel parity
-against a full-frame oracle; it is not connected to visible document rendering
-yet. Persistent worker reuse, eviction policy, partial-pixel streaming and
-device-specific telemetry remain planned follow-up work and are not implied by
-this contract.
+full-frame result for unsupported effects. The visible adapter routes bounded
+box/Gaussian blur through one expanded tile at a time under a retained-byte
+ledger and proves neighbourhood pixel parity against a full-frame oracle.
+Committed renders reuse one worker with latest-wins cancellation and idle
+teardown; partial-pixel streaming, device cache policy and physical telemetry
+remain planned follow-up work and are not implied by this contract.
 
 ## Verification
 

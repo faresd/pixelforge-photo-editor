@@ -62,6 +62,11 @@ import {
   type FilterEffects,
 } from './filterEffects.ts';
 import {
+  applyTiledNeighborhoodBlur,
+  isTiledNeighborhoodBlur,
+} from './tiledDocument.ts';
+import type { TileCache } from './tilePlan.ts';
+import {
   transformArtboard,
   validArtboards,
   type Artboard,
@@ -1422,6 +1427,10 @@ export function rasterFrame(
   };
 }
 const decoded = new Map<Asset, Promise<HTMLImageElement>>();
+/** Release decoded assets before a persistent worker accepts a new document. */
+export function clearDecodedAssetCache(): void {
+  decoded.clear();
+}
 export function decodeAsset(asset: Asset): Promise<HTMLImageElement> {
   const cached = decoded.get(asset);
   if (cached) {
@@ -1644,12 +1653,17 @@ export function colorSelectMask(
 }
 /** Render into an isolated surface. Callers publish only the newest completed render. */
 export type RenderOptions = {
+  signal?: AbortSignal;
   /** Return true between layers to cancel a worker render without publishing it. */
   isCancelled?: () => boolean;
   /** Yield to the worker event loop every N layers so cancellation is observable. */
   yieldEveryLayers?: number;
   /** Report completed top-level layer passes. Progress is monotonic and bounded. */
   onProgress?: (completed: number, total: number) => void;
+  /** Opt into the bounded visible tiled adapter for local neighbourhood blurs. */
+  tiledRevision?: string | number;
+  tiledCache?: TileCache<Uint8ClampedArray>;
+  tiledMaxWorkingBytes?: number;
 };
 
 /** Render a raster layer's bounded style stack in local coordinates. */
@@ -1846,13 +1860,39 @@ export async function renderFrame(
       // Filter geometry is layer-local, so moving/resizing a layer never bakes
       // the effect into frame coordinates. Masks are still applied afterward.
       const asset = assets[layer.asset],
-        filtered = surface(
-          override?.width ?? asset.w,
-          override?.height ?? asset.h,
-        );
-      filtered.getContext('2d')!.drawImage(rasterSource, 0, 0);
-      applyFilterEffects(filtered, filterEffect);
-      rasterSource = filtered;
+        filteredWidth = override?.width ?? asset.w,
+        filteredHeight = override?.height ?? asset.h;
+      if (options?.tiledRevision !== undefined && isTiledNeighborhoodBlur(filterEffect)) {
+        try {
+          const tiled = await applyTiledNeighborhoodBlur(
+            rasterSource,
+            filteredWidth,
+            filteredHeight,
+            filterEffect,
+            {
+              revision: options.tiledRevision,
+              cache: options.tiledCache,
+              maxWorkingBytes: options.tiledMaxWorkingBytes,
+              signal: options.signal,
+              isCancelled: options.isCancelled,
+            },
+          );
+          rasterSource = tiled.canvas;
+        } catch (error) {
+          if (error instanceof Error && error.name === 'AbortError') throw error;
+          // A tile allocation or browser Canvas2D failure must not discard the
+          // draft. Fall back to the existing full-frame path for this render.
+          const fallback = surface(filteredWidth, filteredHeight);
+          fallback.getContext('2d')!.drawImage(rasterSource, 0, 0);
+          applyFilterEffects(fallback, filterEffect);
+          rasterSource = fallback;
+        }
+      } else {
+        const filtered = surface(filteredWidth, filteredHeight);
+        filtered.getContext('2d')!.drawImage(rasterSource, 0, 0);
+        applyFilterEffects(filtered, filterEffect);
+        rasterSource = filtered;
+      }
     }
     if (
       layer.kind !== 'raster' &&

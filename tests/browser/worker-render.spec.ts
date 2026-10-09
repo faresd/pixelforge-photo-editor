@@ -154,6 +154,46 @@ test('render status exposes bounded layer progress after a worker render', async
   await expect(status).toHaveText('Render ready');
 });
 
+test('committed worker session reuses one worker across latest-wins edits', async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as Window & { __PIXELFORGE_FORCE_WORKER__?: boolean }).__PIXELFORGE_FORCE_WORKER__ = true;
+    const NativeWorker = window.Worker;
+    const state = window as Window & { __workerCreates?: number; __workerRenders?: number };
+    state.__workerCreates = 0;
+    state.__workerRenders = 0;
+    window.Worker = class extends NativeWorker {
+      constructor(...args: ConstructorParameters<typeof Worker>) {
+        super(...args);
+        state.__workerCreates = (state.__workerCreates || 0) + 1;
+        const original = this.postMessage.bind(this);
+        this.postMessage = ((message: unknown, transfer?: Transferable[]) => {
+          if (message && typeof message === 'object' && (message as { kind?: unknown }).kind === 'render')
+            state.__workerRenders = (state.__workerRenders || 0) + 1;
+          return original(message, transfer as Transferable[]);
+        }) as typeof this.postMessage;
+      }
+    } as typeof Worker;
+  });
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  const supported = await page.evaluate(() =>
+    typeof Worker === 'function' && typeof OffscreenCanvas === 'function' &&
+    typeof createImageBitmap === 'function' && Boolean(new OffscreenCanvas(1, 1).getContext('2d')),
+  );
+  test.skip(!supported, 'OffscreenCanvas document rendering is unavailable in this browser');
+  const brightness = page.getByLabel('Brightness', { exact: true });
+  await brightness.press('Home');
+  await brightness.press('End');
+  await brightness.press('Home');
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
+  const counts = await page.evaluate(() => {
+    const state = window as Window & { __workerCreates?: number; __workerRenders?: number };
+    return { creates: state.__workerCreates || 0, renders: state.__workerRenders || 0 };
+  });
+  expect(counts.renders).toBeGreaterThanOrEqual(2);
+  expect(counts.creates).toBe(1);
+});
+
 test('fallback renders the latest adjustment and preserves it through reload after rapid changes', async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(window, 'Worker', { configurable: true, value: undefined });

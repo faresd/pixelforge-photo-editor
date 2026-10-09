@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   canRenderInWorker,
   renderFrameWithWorker,
+  resetPersistentWorkerForTests,
 } from '../src/workerRender.ts';
 import { neutral } from '../src/document.ts';
 
@@ -477,4 +478,49 @@ test('unrelated bitmap response is released without settling the active request'
     result.close();
     assert.equal(acceptedClosed, 1);
   } finally { restoreGlobals(); }
+});
+
+test('persistent worker session reuses one worker and latest-wins cancellation', async () => {
+  const workers = [];
+  let renderCount = 0;
+  class FakeCanvas {
+    getContext() { return {}; }
+    transferToImageBitmap() { return {}; }
+  }
+  class FakeWorker {
+    constructor() { this.terminated = false; workers.push(this); }
+    postMessage(message) {
+      if (message.kind === 'cancel') {
+        queueMicrotask(() => this.onmessage?.({ data: { kind: 'cancelled', id: message.id } }));
+        return;
+      }
+      if (message.kind !== 'render') return;
+      renderCount += 1;
+      if (renderCount === 1) return; // held until latest-wins cancel
+      queueMicrotask(() => this.onmessage?.({ data: {
+        kind: 'result', id: message.id, width: 1, height: 1,
+        image: { width: 1, height: 1, close() {} },
+      } }));
+    }
+    terminate() { this.terminated = true; }
+  }
+  setGlobal('Worker', FakeWorker);
+  setGlobal('OffscreenCanvas', FakeCanvas);
+  setGlobal('createImageBitmap', async () => ({}));
+  try {
+    const first = renderFrameWithWorker(rectangleFrame(), {}, undefined, {
+      forceWorker: true, reuseWorker: true,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const second = renderFrameWithWorker(rectangleFrame(), {}, undefined, {
+      forceWorker: true, reuseWorker: true,
+    });
+    await assert.rejects(first, (error) => error?.name === 'AbortError');
+    const image = await second;
+    assert.equal(image.width, 1);
+    assert.equal(workers.length, 1);
+  } finally {
+    resetPersistentWorkerForTests();
+    restoreGlobals();
+  }
 });

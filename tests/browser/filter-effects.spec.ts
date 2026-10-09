@@ -105,6 +105,33 @@ test('linear Shear retains source assets, supports undo and round-trips editable
   await expect.poll(() => pixel(page, 4, 0)).toEqual(original);
 });
 
+test('Gaussian Blur uses bounded tiled rendering and preserves the editable source', async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as Window & { __PIXELFORGE_FORCE_WORKER__?: boolean }).__PIXELFORGE_FORCE_WORKER__ = true;
+  });
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Gaussian Blur…', exact: true }).click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('gaussian-blur');
+  await page.getByLabel('Blur radius', { exact: true }).press('ArrowRight');
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
+  const changed = await pixels(page);
+  expect(changed).not.toEqual(original);
+  const after = await downloadProject(page);
+  const layer = after.history[after.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(after.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'gaussian-blur', radius: 7 });
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Blur radius', { exact: true })).toHaveValue('7');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+});
+
 test('Polar Coordinates is enabled, editable and round-trips nondestructively', async ({ page }) => {
   await importPixels(page);
   const before = await downloadProject(page);
