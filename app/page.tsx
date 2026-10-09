@@ -179,7 +179,12 @@ import { appendFreeformPoint, buildFreeformPath } from '../src/freeformPen';
 import { colorRangeMask } from '../src/colorRange';
 import { focusAreaMask } from '../src/focusArea';
 import { similarColorMask } from '../src/similarSelection';
-import { canvasPointFromClient, normalizeViewRotation, rotationDelta } from '../src/viewRotation';
+import {
+  canvasPointFromClient,
+  normalizeViewRotation,
+  rotationDelta,
+  screenPanDelta,
+} from '../src/viewRotation';
 import { quickSelectionMask } from '../src/quickSelection';
 import { composeSelectionAlpha } from '../src/selectionComposition';
 import {
@@ -922,6 +927,8 @@ type Gesture = {
   viewRotationStart?: number;
   viewRotationCenter?: { x: number; y: number };
   viewRotationPointerAngle?: number;
+  lastClientX?: number;
+  lastClientY?: number;
   brushPoints?: BrushStrokePoint[];
   /** Canvas-sized mask buffer used while a refinement stroke is in flight. */
   maskBuffer?: HTMLCanvasElement;
@@ -5829,7 +5836,15 @@ export default function Home() {
       return;
     }
     if (tool === 'hand') {
-      gesture.current = { tool, start: p, last: p, frame: f, moved: false };
+      gesture.current = {
+        tool,
+        start: p,
+        last: p,
+        frame: f,
+        moved: false,
+        lastClientX: e.clientX,
+        lastClientY: e.clientY,
+      };
       return;
     }
     if (tool === 'fill') {
@@ -6929,9 +6944,17 @@ export default function Home() {
     }
     if (g.tool === 'hand') {
       if (stage.current) {
-        stage.current.scrollLeft -= p.x - g.last.x;
-        stage.current.scrollTop -= p.y - g.last.y;
+        const delta = screenPanDelta(
+          g.lastClientX ?? e.clientX,
+          g.lastClientY ?? e.clientY,
+          e.clientX,
+          e.clientY,
+        );
+        stage.current.scrollLeft -= delta.x;
+        stage.current.scrollTop -= delta.y;
       }
+      g.lastClientX = e.clientX;
+      g.lastClientY = e.clientY;
       g.last = p;
       return;
     }
@@ -8567,6 +8590,13 @@ export default function Home() {
                 ? 'Frame drag cancelled; document unchanged'
                 : 'Crop drag cancelled; document unchanged',
         );
+        return;
+      }
+      if (e.key === 'Escape' && gesture.current?.tool === 'rotate-view') {
+        e.preventDefault();
+        setViewRotation(normalizeViewRotation(gesture.current.viewRotationStart ?? 0));
+        gesture.current = null;
+        setNotice('Rotate View cancelled');
         return;
       }
       if (e.key === 'Enter' && perspectiveCropPreview && !typing) {

@@ -17,6 +17,7 @@ const project = async (page: Page) => {
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
   const download = await pending;
   return JSON.parse(await readFile((await download.path())!, 'utf8')) as {
+    index: number;
     settings: { viewRotation?: number };
   };
 };
@@ -27,6 +28,7 @@ const pixels = async (page: Page) =>
 test('Rotate View changes only the viewport and persists safely', async ({ page }) => {
   const canvas = page.getByTestId('editor-canvas');
   const before = await pixels(page);
+  const beforeProject = await project(page);
   await selectTool(page, 'Rotate View');
   await expect(page.getByTestId('view-rotation-controls')).toBeVisible();
   await expect(page.getByTestId('view-rotation-value')).toHaveText('0°');
@@ -42,12 +44,29 @@ test('Rotate View changes only the viewport and persists safely', async ({ page 
   expect(await pixels(page)).toBe(before);
   const saved = await project(page);
   expect(saved.settings.viewRotation).toBe(Number(rotated));
+  expect(saved.index).toBe(beforeProject.index);
   await page.reload();
   await expect(page.getByTestId('canvas-wrap')).toHaveAttribute('data-view-rotation', rotated!);
   await expect(page.getByTestId('view-rotation-value')).toHaveText(`${rotated}°`);
   await page.getByRole('button', { name: 'Reset view rotation', exact: true }).click();
   await expect(page.getByTestId('canvas-wrap')).toHaveAttribute('data-view-rotation', '0');
   expect(await pixels(page)).toBe(before);
+});
+
+test('Escape cancels a Rotate View drag without adding history', async ({ page }) => {
+  const canvas = page.getByTestId('editor-canvas');
+  const before = await project(page);
+  await selectTool(page, 'Rotate View');
+  const box = (await canvas.boundingBox())!;
+  const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  await page.mouse.move(center.x + Math.min(60, box.width / 5), center.y);
+  await page.mouse.down();
+  await page.mouse.move(center.x, center.y - Math.min(60, box.height / 5), { steps: 4 });
+  await expect(page.getByTestId('canvas-wrap')).not.toHaveAttribute('data-view-rotation', '0');
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('canvas-wrap')).toHaveAttribute('data-view-rotation', '0');
+  await page.mouse.up();
+  expect((await project(page)).index).toBe(before.index);
 });
 
 test('View menu rotates and resets the viewport without creating history', async ({ page }) => {

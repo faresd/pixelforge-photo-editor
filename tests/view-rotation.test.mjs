@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canvasPointFromClient, normalizeViewRotation, rotationDelta } from '../src/viewRotation.ts';
+import { canvasPointFromClient, normalizeViewRotation, rotationDelta, screenPanDelta } from '../src/viewRotation.ts';
 
 test('view rotation normalizes angles and shortest pointer deltas', () => {
   assert.equal(normalizeViewRotation(0), 0);
@@ -24,4 +24,9 @@ test('view rotation rejects malformed geometry and bearings', () => {
   assert.throws(() => normalizeViewRotation(Number.NaN), /finite/);
   assert.throws(() => rotationDelta(Number.NaN, 0), /finite/);
   assert.throws(() => canvasPointFromClient(0, 0, { left: 0, top: 0, width: 0, height: 1 }, 1, 1, 1, 1, 0), /dimensions/);
+});
+
+test('hand panning remains in screen space while the canvas is rotated', () => {
+  assert.deepEqual(screenPanDelta(100, 200, 70, 145), { x: -30, y: -55 });
+  assert.throws(() => screenPanDelta(Number.NaN, 0, 1, 1), /finite/);
 });

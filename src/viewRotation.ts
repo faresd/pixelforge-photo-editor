@@ -20,6 +20,18 @@ export function rotationDelta(startRadians: number, currentRadians: number): num
   return normalizeViewRotation(((currentRadians - startRadians) * 180) / Math.PI);
 }
 
+/** Return a screen-space pan delta, independent of the rotated canvas mapping. */
+export function screenPanDelta(
+  previousX: number,
+  previousY: number,
+  currentX: number,
+  currentY: number,
+): { x: number; y: number } {
+  if (![previousX, previousY, currentX, currentY].every(finite))
+    throw new Error('Pan coordinates must be finite');
+  return { x: currentX - previousX, y: currentY - previousY };
+}
+
 export type ViewRect = { left: number; top: number; width: number; height: number };
 
 /**
