@@ -454,6 +454,11 @@ function transformedCorners(local: PixelBounds, matrix: Matrix): PixelBounds {
 
 /** Return the local painted bounds of a layer before its affine matrix. */
 export function layerLocalBounds(layer: Layer, assets: Assets): PixelBounds {
+  if (layer.kind === 'adjustment') {
+    // Source-free correction nodes affect the frame composite and never
+    // expand Reveal All bounds.
+    return { x: 0, y: 0, width: 0, height: 0 };
+  }
   if (layer.kind === 'raster') {
     const asset = assets[layer.asset];
     if (!asset) throw new Error(`Raster asset ${layer.asset} is missing`);
@@ -486,6 +491,7 @@ export function layerLocalBounds(layer: Layer, assets: Assets): PixelBounds {
 
 /** Return transformed painted bounds for one layer. */
 export function layerBounds(layer: Layer, assets: Assets): PixelBounds {
+  if (layer.kind === 'adjustment') return { x: 0, y: 0, width: 0, height: 0 };
   const local = layerLocalBounds(layer, assets),
     // CSS blur tails extend beyond the geometric source; 3 sigma is a bounded conservative edge.
     tail = Math.ceil(Math.max(0, layer.adjustments?.blur || 0) * 3);

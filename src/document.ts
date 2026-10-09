@@ -209,6 +209,10 @@ export type Layer = Common &
   (
     | { kind: 'raster'; asset: string; /** Optional editable solid-fill source color. */ fillColor?: string }
     | {
+        /** A source-free, nondestructive correction applied to the composite below this layer. */
+        kind: 'adjustment';
+      }
+    | {
         kind: 'text';
         text: string;
         color: string;
@@ -937,6 +941,32 @@ export function applyAutoAdjustments(
   return canvas;
 }
 
+/** Apply the complete nondestructive correction stack to a frame-space surface. */
+export function applyAdjustmentLayerCorrections(
+  canvas: HTMLCanvasElement,
+  adjustments: Partial<Adjustments>,
+): HTMLCanvasElement {
+  const value = effectiveAdjustments(adjustments),
+    source = surface(canvas.width, canvas.height),
+    sourceContext = source.getContext('2d')!,
+    context = canvas.getContext('2d')!;
+  sourceContext.drawImage(canvas, 0, 0);
+  context.save();
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.filter = filterCSS(value);
+  context.drawImage(source, 0, 0);
+  context.restore();
+  applyHue(canvas, value);
+  applyLevels(canvas, value);
+  applyColorBalance(canvas, value);
+  applySharpenNoise(canvas, value);
+  applyCurves(canvas, value);
+  applyAutoAdjustments(canvas, value);
+  applyFilterEffects(canvas, value.filterEffects);
+  applyPhotoAdjustments(canvas, value.photoAdjustments);
+  return canvas;
+}
+
 /** Measure one text line including custom tracking in canvas pixels. */
 export function trackedTextWidth(
   context: CanvasRenderingContext2D,
@@ -1236,6 +1266,12 @@ export function validateFrame(
         }
       }
       pixels += assets[layer.asset].w * assets[layer.asset].h;
+    } else if (layer.kind === 'adjustment') {
+      // Adjustment nodes are source-free and operate on the composite below;
+      // their shared metadata is validated above and they cannot carry a
+      // raster mask or asset reference.
+      if (Object.hasOwn(layer, 'asset')) return fail();
+      continue;
     } else if (layer.kind === 'text') {
       if (
         !short(layer.text, 10000) ||
@@ -1745,6 +1781,25 @@ export async function renderFrame(
       continue;
     }
     if (!layer.visible) {
+      reportProgress(layerIndex);
+      continue;
+    }
+    if (layer.kind === 'adjustment') {
+      // Adjustment layers are source-free correction nodes. The stack is
+      // ordered bottom-to-top, so the current output contains exactly the
+      // pixels below this node; keep those pixels immutable and publish a
+      // corrected frame-space copy with this layer's opacity/blend settings.
+      const corrected = surface(frame.w, frame.h),
+        correctedContext = corrected.getContext('2d')!;
+      correctedContext.drawImage(out, 0, 0);
+      applyAdjustmentLayerCorrections(corrected, layer.adjustments);
+      context.save();
+      context.setTransform(1, 0, 0, 1, 0, 0);
+      context.globalAlpha = layer.opacity;
+      context.globalCompositeOperation = layer.blend;
+      context.filter = 'none';
+      context.drawImage(corrected, 0, 0);
+      context.restore();
       reportProgress(layerIndex);
       continue;
     }
