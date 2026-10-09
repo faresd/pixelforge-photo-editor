@@ -524,3 +524,80 @@ test('persistent worker session reuses one worker and latest-wins cancellation',
     restoreGlobals();
   }
 });
+
+test('worker forwards bounded tiled telemetry before publishing its owned result', async () => {
+  let worker;
+  const telemetry = {
+    kind: 'tiled-neighborhood',
+    effect: 'gaussian-blur',
+    layerId: 'layer-1',
+    width: 520,
+    height: 300,
+    tileSize: 256,
+    tileCount: 6,
+    destinationBytes: 520 * 300 * 4,
+    peakWorkingBytes: 2 * 512 * 512 * 4,
+    cacheBytes: 0,
+    peakBytes: 520 * 300 * 4 + 2 * 512 * 512 * 4,
+    maxWorkingBytes: 16 * 1024 * 1024,
+    maxCacheBytes: 0,
+  };
+  class FakeCanvas { getContext() { return {}; } transferToImageBitmap() { return {}; } }
+  class FakeWorker {
+    constructor() { worker = this; }
+    postMessage(message) {
+      if (message.kind === 'render') queueMicrotask(() => {
+        this.onmessage?.({ data: { kind: 'tiled-telemetry', id: message.id, telemetry } });
+        this.onmessage?.({ data: {
+          kind: 'result', id: message.id, width: 1, height: 1,
+          image: { width: 1, height: 1, close() {} },
+        } });
+      });
+    }
+    terminate() {}
+  }
+  setGlobal('Worker', FakeWorker);
+  setGlobal('OffscreenCanvas', FakeCanvas);
+  setGlobal('createImageBitmap', async () => ({}));
+  try {
+    const events = [];
+    const image = await renderFrameWithWorker(rectangleFrame(), {}, undefined, {
+      forceWorker: true,
+      onTiledTelemetry: (event) => events.push(event),
+    });
+    assert.equal(image.width, 1);
+    assert.deepEqual(events, [telemetry]);
+    assert.ok(worker);
+  } finally { restoreGlobals(); }
+});
+
+test('worker rejects forged tiled telemetry before accepting a result', async () => {
+  let worker;
+  class FakeCanvas { getContext() { return {}; } transferToImageBitmap() { return {}; } }
+  class FakeWorker {
+    constructor() { worker = this; }
+    postMessage(message) {
+      if (message.kind === 'render') queueMicrotask(() => {
+        this.onmessage?.({ data: {
+          kind: 'tiled-telemetry', id: message.id,
+          telemetry: { kind: 'tiled-neighborhood', effect: 'box-blur', width: -1 },
+        } });
+        this.onmessage?.({ data: {
+          kind: 'result', id: message.id, width: 1, height: 1,
+          image: { width: 1, height: 1, close() {} },
+        } });
+      });
+    }
+    terminate() { this.terminated = true; }
+  }
+  setGlobal('Worker', FakeWorker);
+  setGlobal('OffscreenCanvas', FakeCanvas);
+  setGlobal('createImageBitmap', async () => ({}));
+  try {
+    await assert.rejects(
+      renderFrameWithWorker(rectangleFrame(), {}, undefined, { forceWorker: true }),
+      /invalid tiled telemetry/,
+    );
+    assert.equal(worker.terminated, true);
+  } finally { restoreGlobals(); }
+});

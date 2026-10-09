@@ -1445,6 +1445,7 @@ export default function Home() {
       frame,
       revision,
       renderProgress,
+      tiledTelemetry,
       commit,
       install,
       select,
@@ -11361,6 +11362,12 @@ export default function Home() {
           data-testid="render-status"
           data-render-completed={renderProgress?.completed ?? 0}
           data-render-total={renderProgress?.total ?? 0}
+          data-tiled-effect={tiledTelemetry?.effect ?? 'none'}
+          data-tiled-layer={tiledTelemetry?.layerId ?? ''}
+          data-tiled-tile-count={tiledTelemetry?.tileCount ?? 0}
+          data-tiled-peak-bytes={tiledTelemetry?.peakBytes ?? 0}
+          data-tiled-working-bytes={tiledTelemetry?.peakWorkingBytes ?? 0}
+          data-tiled-destination-bytes={tiledTelemetry?.destinationBytes ?? 0}
           aria-live="polite"
         >
           {doc.rendering

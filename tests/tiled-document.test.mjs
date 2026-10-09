@@ -127,3 +127,46 @@ test('16MP synthetic run stays within the bounded destination plus tile ledger',
   assert.ok(result.ledger.peakWorkingBytes <= 4 * 1024 * 1024);
   assert.ok(result.ledger.peakBytes <= width * height * 4 + 4 * 1024 * 1024);
 });
+
+test('tiled blur emits privacy-safe telemetry with bounded cache accounting', async () => {
+  const events = [];
+  const cache = new TileCache(2 * 512 * 512 * 4);
+  const width = 520;
+  const height = 300;
+  const sourcePixels = pixels(width, height);
+  await renderTiledNeighborhoodEffect(
+    width,
+    height,
+    { type: 'gaussian-blur', amount: 100, radius: 4 },
+    (tile) => readTile(sourcePixels, width, height, tile),
+    () => {},
+    {
+      revision: 'telemetry-fixture',
+      cache,
+      tileSize: 256,
+      onTelemetry: (event) => events.push(event),
+    },
+  );
+  assert.equal(events.length, 1);
+  assert.deepEqual(
+    {
+      kind: events[0].kind,
+      effect: events[0].effect,
+      width: events[0].width,
+      height: events[0].height,
+      tileSize: events[0].tileSize,
+      tileCount: events[0].tileCount,
+    },
+    {
+      kind: 'tiled-neighborhood',
+      effect: 'gaussian-blur',
+      width,
+      height,
+      tileSize: 256,
+      tileCount: 6,
+    },
+  );
+  assert.ok(events[0].peakWorkingBytes <= events[0].maxWorkingBytes);
+  assert.ok(events[0].cacheBytes <= events[0].maxCacheBytes);
+  assert.equal(events[0].cacheStats.maxBytes, cache.maxBytes);
+});

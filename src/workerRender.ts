@@ -6,6 +6,10 @@ import {
   type Frame,
 } from './document.ts';
 import type { TileCache } from './tilePlan.ts';
+import {
+  validTiledRenderTelemetry,
+  type TiledRenderTelemetry,
+} from './tiledDocument.ts';
 
 export type WorkerRenderOptions = {
   signal?: AbortSignal;
@@ -20,6 +24,8 @@ export type WorkerRenderOptions = {
   tiledRevision?: string | number;
   tiledCache?: TileCache<Uint8ClampedArray>;
   tiledMaxWorkingBytes?: number;
+  /** Privacy-safe diagnostics for the latest eligible tiled effect. */
+  onTiledTelemetry?: (telemetry: TiledRenderTelemetry) => void;
 };
 
 const RENDER_TIMEOUT_MS = 30_000;
@@ -77,6 +83,7 @@ export async function renderFrameWithWorker(
       tiledRevision: options.tiledRevision,
       tiledCache: options.tiledCache,
       tiledMaxWorkingBytes: options.tiledMaxWorkingBytes,
+      onTiledTelemetry: options.onTiledTelemetry,
     });
     if (isCancelled()) throw abortError();
     return image;
@@ -182,6 +189,16 @@ export async function renderFrameWithWorker(
         lastCompleted = completed;
         try {
           options.onProgress?.(completed, total);
+        } catch (error) {
+          finish(() => reject(error));
+        }
+      } else if (value.kind === 'tiled-telemetry') {
+        if (!validTiledRenderTelemetry(value.telemetry)) {
+          finish(() => reject(new Error('Worker returned invalid tiled telemetry.')));
+          return;
+        }
+        try {
+          options.onTiledTelemetry?.(value.telemetry);
         } catch (error) {
           finish(() => reject(error));
         }
@@ -439,6 +456,21 @@ class PersistentWorkerSession {
       task.lastCompleted = completed;
       try {
         task.options.onProgress?.(completed, total);
+      } catch (error) {
+        this.finish(task, () => {
+          if (!task.settled) task.reject(error);
+        });
+        void this.startNext();
+      }
+      return;
+    }
+    if (value.kind === 'tiled-telemetry') {
+      if (!validTiledRenderTelemetry(value.telemetry)) {
+        this.onWorkerFailure(new Error('Worker returned invalid tiled telemetry.'));
+        return;
+      }
+      try {
+        task.options.onTiledTelemetry?.(value.telemetry);
       } catch (error) {
         this.finish(task, () => {
           if (!task.settled) task.reject(error);

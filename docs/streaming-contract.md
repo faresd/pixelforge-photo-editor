@@ -15,6 +15,10 @@ worker capability is available, the committed visible adapter uses a worker,
 OffscreenCanvas and bounded tiles internally for Box and Gaussian Blur, but the
 worker still publishes a full-frame result; it does not stream partial pixels
 or remove every full-frame allocation.
+For eligible blur renders the worker/document path also sends one validated
+`tiled-telemetry` envelope before the owned result. It contains only effect,
+tile geometry, byte-budget and cache counters, and is exposed as local render
+status diagnostics; superseded or cancelled request telemetry is dropped.
 Unsupported effects and interactive overrides remain on the full-frame or
 main-thread paths. If realtime collaboration becomes a product requirement, it
 must be an explicit opt-in for authenticated projects, send version or

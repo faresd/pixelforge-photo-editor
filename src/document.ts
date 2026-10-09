@@ -64,6 +64,7 @@ import {
 import {
   applyTiledNeighborhoodBlur,
   isTiledNeighborhoodBlur,
+  type TiledRenderTelemetry,
 } from './tiledDocument.ts';
 import type { TileCache } from './tilePlan.ts';
 import {
@@ -1726,6 +1727,8 @@ export type RenderOptions = {
   tiledRevision?: string | number;
   tiledCache?: TileCache<Uint8ClampedArray>;
   tiledMaxWorkingBytes?: number;
+  /** Report bounded tile diagnostics without exposing pixels or source URLs. */
+  onTiledTelemetry?: (telemetry: TiledRenderTelemetry) => void;
 };
 
 /** Render a raster layer's bounded style stack in local coordinates. */
@@ -1956,6 +1959,8 @@ export async function renderFrame(
               maxWorkingBytes: options.tiledMaxWorkingBytes,
               signal: options.signal,
               isCancelled: options.isCancelled,
+              onTelemetry: (telemetry) =>
+                options.onTiledTelemetry?.({ ...telemetry, layerId: layer.id }),
             },
           );
           rasterSource = tiled.canvas;

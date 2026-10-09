@@ -9,6 +9,7 @@ import {
 import { renderFrameWithWorker } from './workerRender';
 import type { Draft } from './drafts';
 import { beginPerformanceSpan } from './performanceMarks';
+import type { TiledRenderTelemetry } from './tiledDocument';
 import {
   rangeLayerSelection,
   selectedLayerIdsForFrame,
@@ -38,6 +39,7 @@ export function useDocument(onError: (message: string) => void) {
     // Keep the latest bounded sample after completion for diagnostics and
     // assistive technology. A new render resets it to zero.
     [renderProgress, setRenderProgress] = useState<RenderProgress | null>(null);
+  const [tiledTelemetry, setTiledTelemetry] = useState<TiledRenderTelemetry | null>(null);
   const renderSequence = useRef(0),
     renderAbort = useRef<AbortController | null>(null);
   const closeImageSource = (image: CanvasImageSource) => {
@@ -56,6 +58,7 @@ export function useDocument(onError: (message: string) => void) {
         completed: 0,
         total: Math.max(1, value.layers.length),
       });
+      setTiledTelemetry(null);
       try {
         const image = await renderFrameWithWorker(
           value,
@@ -69,6 +72,9 @@ export function useDocument(onError: (message: string) => void) {
             onProgress: (completed, total) => {
               if (sequence === renderSequence.current)
                 setRenderProgress({ completed, total });
+            },
+            onTiledTelemetry: (telemetry) => {
+              if (sequence === renderSequence.current) setTiledTelemetry(telemetry);
             },
           },
         );
@@ -162,6 +168,7 @@ export function useDocument(onError: (message: string) => void) {
       completed: 0,
       total: Math.max(1, draft.history[draft.index].layers.length),
     });
+    setTiledTelemetry(null);
     try {
       // Validate every history asset before switching, so undo never discovers a corrupt import.
       for (const asset of Object.values(draft.assets)) {
@@ -182,6 +189,9 @@ export function useDocument(onError: (message: string) => void) {
           onProgress: (completed, total) => {
             if (installSequence === renderSequence.current)
               setRenderProgress({ completed, total });
+          },
+          onTiledTelemetry: (telemetry) => {
+            if (installSequence === renderSequence.current) setTiledTelemetry(telemetry);
           },
         },
       );
@@ -268,6 +278,7 @@ export function useDocument(onError: (message: string) => void) {
     revision,
     rendering,
     renderProgress,
+    tiledTelemetry,
     paint,
     commit,
     install,
