@@ -107,12 +107,16 @@ that worker scheduling improves responsiveness without unacceptable memory
 pressure. Worker image encoding now consumes a shared row-major tile schedule
 with a 16 MiB expanded-RGBA batch budget and a 64 MiB hard ceiling; this is a
 safety and planning seed for document rendering, not evidence that document
-pixels are already tiled. The document path does not yet provide tiled
-rendering, a persistent worker pool or worker-aware interactive
-brush/adjustment overrides. The shared tile planner now has an opt-in
-byte-bounded LRU cache with cumulative hit/miss, peak-byte and eviction
-counters, and the cancellable tile runner can reuse outputs when a caller
-supplies a safe retained-byte estimate. This is instrumentation and a
+pixels are already tiled. The isolated `src/tiledCompositor.ts` module now
+assembles one expanded tile at a time, writes only inner rectangles, enforces a
+retained input/output byte budget, and compares its result with a full-frame
+oracle. Its pure tests cover exact neighbourhood-effect parity and deliberate
+seam detection when overlap is insufficient. The visible document path does
+not yet consume this compositor, provide a persistent worker pool or provide
+worker-aware interactive brush/adjustment overrides. The shared tile planner
+now has an opt-in byte-bounded LRU cache with cumulative hit/miss, peak-byte
+and eviction counters, and the cancellable tile runner can reuse outputs when
+a caller supplies a safe retained-byte estimate. This is instrumentation and a
 reusable cache boundary; it is not evidence that document pixels are already
 tiled, and it does not select a cache size for any device. Fonts,
 CSS filters and colour management may also vary by browser, so representative
@@ -132,11 +136,12 @@ industrial-scale, the implementation needs:
    pass indicator, not a streaming or tiled-render claim. The main thread must
    stay responsive while a large frame or adjustment renders.
 2. Extend the bounded tile plan (with explicit edge overlap for blur, healing
-   and other neighborhood operations) from the current batch-encoding seed
-   into document rendering so one edit does not allocate several full-size
-   surfaces. The scheduler now validates row-major batches and expanded-byte
-   budgets; document compositing, tile cache size and eviction still require
-   measured desktop and mobile gates.
+   and other neighborhood operations) into document rendering so one edit does
+   not allocate several full-size surfaces. The serial compositor now validates
+   expanded input/output bytes, writes each inner rectangle once and proves
+   representative neighbourhood parity against a full-frame oracle. A visible
+   document adapter, tile cache size/eviction policy and measured desktop/mobile
+   gates still require implementation.
 3. Repeat the operation-level marks for pointer-to-paint, render completion,
    export and IndexedDB save as p50/p95 reports on physical devices. The first
    local instrumentation slice is active and covered by the focused desktop
