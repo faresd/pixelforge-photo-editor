@@ -179,6 +179,7 @@ import { appendFreeformPoint, buildFreeformPath } from '../src/freeformPen';
 import { colorRangeMask } from '../src/colorRange';
 import { focusAreaMask } from '../src/focusArea';
 import { similarColorMask } from '../src/similarSelection';
+import { canvasPointFromClient, normalizeViewRotation, rotationDelta } from '../src/viewRotation';
 import { quickSelectionMask } from '../src/quickSelection';
 import { composeSelectionAlpha } from '../src/selectionComposition';
 import {
@@ -448,7 +449,10 @@ type Command =
   | 'zoom-in'
   | 'zoom-out'
   | 'fit'
-  | 'actual';
+  | 'actual'
+  | 'rotate-view-left'
+  | 'rotate-view-right'
+  | 'reset-rotate-view';
 type MenuItem = {
   label: string;
   shortcut?: string;
@@ -461,6 +465,7 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'move', label: 'Move', icon: MousePointer2, key: 'V' },
   { id: 'hand', label: 'Hand', icon: Hand, key: 'H' },
   { id: 'zoom', label: 'Zoom', icon: ZoomIn, key: 'Z' },
+  { id: 'rotate-view', label: 'Rotate View', icon: RotateCw, key: 'R' },
   { id: 'eyedropper', label: 'Eyedropper', icon: Pipette, key: 'I' },
   { id: 'color-sampler', label: 'Color Sampler', icon: Pipette, key: 'I' },
   { id: 'ruler', label: 'Ruler', icon: Ruler, key: 'I' },
@@ -589,7 +594,7 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   e: ['eraser', 'background-eraser', 'magic-eraser'],
   k: ['frame', 'mask-brush', 'mask-eraser', 'adjustment-brush'],
   o: ['dodge', 'burn', 'sponge'],
-  r: ['smudge'],
+  r: ['rotate-view', 'smudge'],
   s: ['clone', 'pattern-stamp'],
   y: ['history-brush'],
   j: ['heal', 'spot-heal', 'patch', 'red-eye'],
@@ -892,6 +897,9 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Zoom out', shortcut: '−', command: 'zoom-out' },
     { label: 'Fit to screen', shortcut: '0', command: 'fit' },
     { label: 'Actual size', shortcut: '1', command: 'actual' },
+    { label: 'Rotate View left 15°', command: 'rotate-view-left' },
+    { label: 'Rotate View right 15°', command: 'rotate-view-right' },
+    { label: 'Reset Rotate View', command: 'reset-rotate-view' },
     { label: 'Full Screen Mode', command: 'noop', disabled: true },
   ],
   Plugins: [
@@ -911,6 +919,9 @@ type Gesture = {
   /** Immutable source captured at pointer-down for Mixer/History Brush. */
   sourcePixels?: Uint8ClampedArray;
   historySourceIndex?: number;
+  viewRotationStart?: number;
+  viewRotationCenter?: { x: number; y: number };
+  viewRotationPointerAngle?: number;
   brushPoints?: BrushStrokePoint[];
   /** Canvas-sized mask buffer used while a refinement stroke is in flight. */
   maskBuffer?: HTMLCanvasElement;
@@ -1474,6 +1485,7 @@ export default function Home() {
     [selectionOperation, setSelectionOperation] =
       useState<SelectionOperation>('replace'),
     [zoom, setZoom] = useState(72),
+    [viewRotation, setViewRotation] = useState(0),
     [color, setColor] = useState('#ff5c35'),
     [backgroundColor, setBackgroundColor] = useState('#ffffff'),
     [size, setSize] = useState(18),
@@ -1774,6 +1786,7 @@ export default function Home() {
   const settings = (): Settings => ({
     tool,
     zoom,
+    viewRotation,
     color,
     backgroundColor,
     size,
@@ -1817,6 +1830,7 @@ export default function Home() {
   const restoreSettings = useCallback((s: Settings) => {
     setTool(s.tool);
     setZoom(s.zoom);
+    setViewRotation(normalizeViewRotation(s.viewRotation ?? 0));
     setColor(s.color);
     setBackgroundColor(s.backgroundColor || '#ffffff');
     setSize(s.size);
@@ -1850,6 +1864,7 @@ export default function Home() {
   }, [
     setTool,
     setZoom,
+    setViewRotation,
     setColor,
     setBackgroundColor,
     setSize,
@@ -3787,6 +3802,7 @@ export default function Home() {
         mixerBrush,
         historyBrush,
         historySourceIndex,
+        viewRotation,
         exportFormat,
         exportQuality,
         exportTargetBytes,
@@ -3860,6 +3876,7 @@ export default function Home() {
     mixerBrush,
     historyBrush,
     historySourceIndex,
+    viewRotation,
     exportFormat,
     exportQuality,
     exportTargetBytes,
@@ -5060,11 +5077,17 @@ export default function Home() {
     e: Pick<React.PointerEvent<HTMLCanvasElement>, 'clientX' | 'clientY'>,
   ) => {
     const c = canvas.current!,
-      r = c.getBoundingClientRect();
-    return {
-      x: ((e.clientX - r.left) * c.width) / r.width,
-      y: ((e.clientY - r.top) * c.height) / r.height,
-    };
+      rect = c.getBoundingClientRect();
+    return canvasPointFromClient(
+      e.clientX,
+      e.clientY,
+      rect,
+      c.offsetWidth || rect.width,
+      c.offsetHeight || rect.height,
+      c.width,
+      c.height,
+      viewRotation,
+    );
   };
   const pressure = (e: React.PointerEvent<HTMLCanvasElement>) =>
     (e.pointerType === 'pen' || e.pointerType === 'touch') &&
@@ -5714,6 +5737,23 @@ export default function Home() {
     if (tool === 'zoom') {
       setZoom((value) => Math.min(140, value + 10));
       setNotice('Zoomed in');
+      return;
+    }
+    if (tool === 'rotate-view') {
+      const rect = canvas.current!.getBoundingClientRect();
+      const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      gesture.current = {
+        tool,
+        start: p,
+        last: p,
+        frame: f,
+        moved: false,
+        viewRotationStart: viewRotation,
+        viewRotationCenter: center,
+        viewRotationPointerAngle: Math.atan2(e.clientY - center.y, e.clientX - center.x),
+      };
+      canvas.current!.setPointerCapture(e.pointerId);
+      setNotice('Rotate View: drag around the canvas; use Reset view to restore');
       return;
     }
     if (tool === 'eyedropper') {
@@ -6876,6 +6916,17 @@ export default function Home() {
       }
       return;
     }
+    if (g.tool === 'rotate-view' && g.viewRotationCenter && g.viewRotationPointerAngle !== undefined) {
+      const currentAngle = Math.atan2(
+        e.clientY - g.viewRotationCenter.y,
+        e.clientX - g.viewRotationCenter.x,
+      );
+      const delta = rotationDelta(g.viewRotationPointerAngle, currentAngle);
+      setViewRotation(normalizeViewRotation((g.viewRotationStart ?? viewRotation) + delta));
+      g.last = p;
+      g.moved = true;
+      return;
+    }
     if (g.tool === 'hand') {
       if (stage.current) {
         stage.current.scrollLeft -= p.x - g.last.x;
@@ -7591,10 +7642,16 @@ export default function Home() {
       return;
     }
     if (e.type === 'pointercancel') {
+      if (g.tool === 'rotate-view')
+        setViewRotation(normalizeViewRotation(g.viewRotationStart ?? 0));
       if (g.tool === 'ruler') setMeasurementPreview(null);
       discardPreviewAsset(assets.current, g.maskPreviewAsset);
       void paint(current());
       setNotice('Gesture cancelled');
+      return;
+    }
+    if (g.tool === 'rotate-view') {
+      setNotice(`Rotate View: ${normalizeViewRotation(viewRotation)}°`);
       return;
     }
     if (g.tool === 'quick-selection' && g.quickSelectionSource) {
@@ -8358,6 +8415,14 @@ export default function Home() {
     if (format) setExportFormat(format);
     setExporting({ frame: current(), assets: { ...assets.current }, name });
   };
+  const rotateViewBy = (degrees: number) => {
+    setViewRotation((value) => normalizeViewRotation(value + degrees));
+    setNotice(`Rotate View: ${normalizeViewRotation(viewRotation + degrees)}°`);
+  };
+  const resetViewRotation = () => {
+    setViewRotation(0);
+    setNotice('Rotate View reset');
+  };
   const fitToScreen = () => {
       setZoom(72);
       stage.current?.scrollTo({ left: 0, top: 0, behavior: 'smooth' });
@@ -8941,7 +9006,10 @@ export default function Home() {
         (f) => f[0].toLowerCase() === command.slice(7),
       );
       if (match) chooseFilter(match[1], match[0]);
-    } else if (command === 'zoom-in') setZoom((v) => Math.min(140, v + 10));
+    } else if (command === 'rotate-view-left') rotateViewBy(-15);
+    else if (command === 'rotate-view-right') rotateViewBy(15);
+    else if (command === 'reset-rotate-view') resetViewRotation();
+    else if (command === 'zoom-in') setZoom((v) => Math.min(140, v + 10));
     else if (command === 'zoom-out') setZoom((v) => Math.max(20, v - 10));
     else if (command === 'fit') fitToScreen();
     else if (command === 'actual') setZoom(100);
@@ -9977,9 +10045,15 @@ export default function Home() {
           ) : null}
           <div
             className="canvas-wrap"
-            style={{ width: `${zoom}%` }}
+            data-testid="canvas-wrap"
+            style={{
+              width: `${zoom}%`,
+              transform: `rotate(${normalizeViewRotation(viewRotation)}deg)`,
+              transformOrigin: 'center center',
+            }}
             data-artboard-count={frame?.artboards?.length ?? 0}
             data-active-artboard={frame?.activeArtboardId ?? ''}
+            data-view-rotation={normalizeViewRotation(viewRotation)}
           >
             <canvas
               ref={canvas}
@@ -10732,6 +10806,26 @@ export default function Home() {
               without changing source pixels.
             </p>
           </section>
+          {tool === 'rotate-view' && (
+            <section className="panel" data-testid="view-rotation-controls">
+              <Title icon={RotateCw} text="Rotate View" />
+              <output data-testid="view-rotation-value" aria-live="polite">
+                {normalizeViewRotation(viewRotation)}°
+              </output>
+              <div className="transform">
+                <button type="button" aria-label="Rotate view left 15 degrees" onClick={() => rotateViewBy(-15)}>
+                  <RotateCcw />
+                </button>
+                <button type="button" aria-label="Rotate view right 15 degrees" onClick={() => rotateViewBy(15)}>
+                  <RotateCw />
+                </button>
+                <button type="button" className="secondary" aria-label="Reset view rotation" onClick={resetViewRotation}>
+                  Reset view
+                </button>
+              </div>
+              <p className="adjust-note">Rotate View changes only the canvas viewport. Document pixels, layers and exports stay unchanged.</p>
+            </section>
+          )}
           <section className="panel">
             <Title icon={Crop} text="Transform" />
             <div className="transform">

@@ -37,7 +37,7 @@ Use `Cmd` on macOS and `Ctrl` on Windows/Linux.
 clicks place path nodes; click the first node after three or more points to
 close and commit the editable path layer. Escape cancels an open Pen gesture or
 a Direct Selection drag. Photoshop tools that PixelForge has not implemented
-yet (for example Freeform/Curvature Pen and Rotate View) remain planned.
+yet (for example Freeform/Curvature Pen) remain planned; **R also exposes Rotate View, with the menu and toolbar controls persisting only the viewport angle.**
 
 ## Commands and view
 

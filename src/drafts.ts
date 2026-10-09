@@ -53,6 +53,7 @@ import { normalizeLayerSelection } from './layerSelection.ts';
 export type Tool =
   | 'move'
   | 'hand'
+  | 'rotate-view'
   | 'zoom'
   | 'eyedropper'
   | 'color-sampler'
@@ -109,6 +110,8 @@ export type Shot = { url: string; w: number; h: number };
 export type Settings = {
   tool: Tool;
   zoom: number;
+  /** Ephemeral viewport rotation in degrees; it never mutates document pixels. */
+  viewRotation?: number;
   color: string;
   /** Photoshop-compatible foreground/background pair. Older drafts omit the background. */
   backgroundColor?: string;
@@ -229,6 +232,7 @@ function validSettings(settings: unknown): settings is Settings {
     ![
       'move',
       'hand',
+      'rotate-view',
       'zoom',
       'eyedropper',
       'color-sampler',
@@ -312,6 +316,7 @@ function validSettings(settings: unknown): settings is Settings {
     return false;
   const ranges: [number, number, number][] = [
     [candidate.zoom as number, 20, 140],
+    [candidate.viewRotation ?? 0, -180, 180],
     [candidate.size as number, 2, 100],
     [candidate.fontSize as number, 16, 160],
   ];

@@ -8,7 +8,7 @@
  */
 
 export type PaletteToolId =
-  | 'move' | 'hand' | 'zoom' | 'eyedropper' | 'color-sampler' | 'ruler' | 'note' | 'count'
+  | 'move' | 'hand' | 'zoom' | 'rotate-view' | 'eyedropper' | 'color-sampler' | 'ruler' | 'note' | 'count'
   | 'fill' | 'gradient' | 'clone' | 'heal' | 'spot-heal' | 'patch' | 'red-eye' | 'pattern-stamp' | 'mixer-brush' | 'history-brush'
   | 'crop' | 'perspective-crop' | 'slice' | 'slice-select' | 'frame' | 'brush' | 'pencil' | 'color-replace' | 'eraser'
   | 'background-eraser' | 'magic-eraser' | 'dodge' | 'burn' | 'sponge' | 'smudge' | 'pen'
@@ -24,7 +24,7 @@ export type ToolCategory = {
 };
 
 export const TOOL_CATEGORIES: readonly ToolCategory[] = [
-  { id: 'navigation', label: 'Navigate', tools: ['move', 'hand', 'zoom'] },
+  { id: 'navigation', label: 'Navigate', tools: ['move', 'hand', 'zoom', 'rotate-view'] },
   { id: 'measure', label: 'Measure', tools: ['eyedropper', 'color-sampler', 'ruler', 'note', 'count'] },
   { id: 'marquee', label: 'Marquee', tools: ['select', 'ellipse-select', 'row-select', 'column-select'] },
   { id: 'lasso', label: 'Lasso', tools: ['lasso', 'polygonal-lasso', 'magnetic-lasso'] },
