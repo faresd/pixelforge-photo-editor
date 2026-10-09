@@ -411,6 +411,7 @@ type Command =
   | 'filter-spherize'
   | 'filter-twirl'
   | 'filter-wave'
+  | 'filter-shear'
   | 'filter-clear-effect'
   | 'zoom-in'
   | 'zoom-out'
@@ -811,7 +812,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Displace…', command: 'noop', disabled: true },
     { label: 'Pinch…', command: 'filter-pinch' },
     { label: 'Ripple…', command: 'filter-ripple' },
-    { label: 'Shear…', command: 'noop', disabled: true },
+    { label: 'Shear…', command: 'filter-shear' },
     { label: 'Spherize…', command: 'filter-spherize' },
     { label: 'Twirl…', command: 'filter-twirl' },
     { label: 'Wave…', command: 'filter-wave' },
@@ -3402,7 +3403,7 @@ export default function Home() {
                         : type === 'wave'
                           ? 12
                         : 6,
-                angle: type === 'twirl' ? 75 : 0,
+                angle: type === 'twirl' ? 75 : type === 'shear' ? 90 : 0,
               },
       })
     )
@@ -8194,6 +8195,8 @@ export default function Home() {
       chooseFilterEffect('spherize', 'Spherize');
     else if (command === 'filter-twirl') chooseFilterEffect('twirl', 'Twirl');
     else if (command === 'filter-wave') chooseFilterEffect('wave', 'Wave');
+    else if (command === 'filter-shear')
+      chooseFilterEffect('shear', 'Shear (linear local approximation)');
     else if (command === 'crop') {
       if (slicePreview) cancelSlicePreview();
       setTool('crop');
@@ -8368,6 +8371,7 @@ export default function Home() {
       case 'filter-spherize':
       case 'filter-twirl':
       case 'filter-wave':
+      case 'filter-shear':
       case 'filter-clear-effect':
         return !layer || locked || !layer.visible;
       case 'quick-mask':
@@ -10318,6 +10322,9 @@ export default function Home() {
             {filterEffects.type === 'shape-blur' && (
               <p>Local diamond-aperture blur. The shape is deterministic and bounded; custom user-supplied kernels remain planned.</p>
             )}
+            {filterEffects.type === 'shear' && (
+              <p>Linear horizontal shear with clamped edges and unchanged alpha. Editable shear curves and wrap-around remain planned.</p>
+            )}
             {filterEffects.type !== 'none' && (
               <>
                 <Slider
@@ -10349,6 +10356,8 @@ export default function Home() {
                           ? 'Spherize radius'
                       : filterEffects.type === 'wave'
                           ? 'Wave length'
+                      : filterEffects.type === 'shear'
+                          ? 'Shear displacement'
                       : 'Radius'
                   }
                   value={filterEffects.radius}
@@ -10367,9 +10376,9 @@ export default function Home() {
                     suffix="°"
                   />
                 )}
-                {filterEffects.type === 'wave' && (
+                {(filterEffects.type === 'wave' || filterEffects.type === 'shear') && (
                   <Slider
-                    label="Wave angle"
+                    label={filterEffects.type === 'shear' ? 'Shear direction' : 'Wave angle'}
                     value={filterEffects.angle}
                     min={-180}
                     max={180}
