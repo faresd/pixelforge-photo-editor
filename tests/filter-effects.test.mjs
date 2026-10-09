@@ -99,6 +99,30 @@ test('polar coordinates blends strength, clamps radial extent and preserves tran
   assert.equal(isNeutralFilterEffects({ type: 'polar-coordinates', amount: 100, radius: 0 }), true);
 });
 
+test('zigzag performs a deterministic radial displacement with bounded falloff', () => {
+  const source = rgba(9, 9, (x, y) => [x * 20, y * 20, 70, 255]);
+  const original = source.slice();
+  const effect = { type: 'zigzag', amount: 70, radius: 6, centerX: 0.5, centerY: 0.5 };
+  const output = applyFilterEffectsPixels(source, 9, 9, effect);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 9, 9, effect));
+  assert.deepEqual(pixel(output, 9, 4, 4), pixel(source, 9, 4, 4));
+  assert.notDeepEqual(pixel(output, 9, 6, 4), pixel(source, 9, 6, 4));
+  assert.deepEqual(source, original);
+});
+
+test('zigzag identities and transparent source edges remain safe', () => {
+  const source = rgba(5, 5, (x, y) => x === 0 && y === 0 ? [255, 0, 255, 0] : [x * 30, y * 30, 12, 255]);
+  assert.deepEqual(applyFilterEffectsPixels(source, 5, 5, {
+    type: 'zigzag', amount: 0, radius: 6,
+  }), source);
+  const output = applyFilterEffectsPixels(source, 5, 5, {
+    type: 'zigzag', amount: 100, radius: 6,
+  });
+  assert.equal(pixel(output, 5, 0, 0)[3], 0);
+  assert.deepEqual(pixel(output, 5, 0, 0).slice(0, 3), [255, 0, 255]);
+  assert.equal(isNeutralFilterEffects({ type: 'zigzag', amount: 100, radius: 0 }), true);
+});
+
 test('Filter effect metadata is bounded and legacy/empty values normalize safely', () => {
   const value = effectiveFilterEffects({ type: 'mosaic', amount: 200, radius: -4, centerX: 4, seed: -1 });
   assert.equal(value.type, 'mosaic');

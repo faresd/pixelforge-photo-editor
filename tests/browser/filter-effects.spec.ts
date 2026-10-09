@@ -131,6 +131,37 @@ test('Polar Coordinates is enabled, editable and round-trips nondestructively', 
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
 });
 
+test('ZigZag is enabled, editable and round-trips nondestructively', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const beforePixel = await pixel(page, 6, 2);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'ZigZag…', exact: true }).click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('zigzag');
+  await expect(page.getByLabel('ZigZag wavelength', { exact: true })).toHaveValue('6');
+  await expect.poll(() => pixel(page, 6, 2)).not.toEqual(beforePixel);
+  await page.getByLabel('ZigZag wavelength', { exact: true }).press('ArrowRight');
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'zigzag', amount: 70, radius: 7 });
+  const changed = await pixel(page, 6, 2);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('ZigZag wavelength', { exact: true })).toHaveValue('7');
+  await expect.poll(() => pixel(page, 6, 2)).toEqual(changed);
+  await openProject(page, adjusted);
+  await expect.poll(() => pixel(page, 6, 2)).toEqual(changed);
+  for (let index = 0; index < 2; index += 1) {
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  }
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
+});
+
 test('Average Blur is a global nondestructive menu effect with alpha-safe pixels', async ({ page }) => {
   await importPixels(page);
   const before = await downloadProject(page);
