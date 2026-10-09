@@ -103,6 +103,7 @@ export type Tool =
   | 'polygonal-lasso'
   | 'magnetic-lasso'
   | 'selection-brush'
+  | 'quick-selection'
   | 'magic-wand';
 export type Shot = { url: string; w: number; h: number };
 export type Settings = {
@@ -276,6 +277,7 @@ function validSettings(settings: unknown): settings is Settings {
       'polygonal-lasso',
       'magnetic-lasso',
       'selection-brush',
+      'quick-selection',
       'magic-wand',
     ].includes(candidate.tool as Tool) ||
     typeof candidate.text !== 'string' ||

@@ -5,7 +5,7 @@ import { expect, type Page } from '@playwright/test';
 const TOOL_FAMILIES = [
   ['Select', 'Elliptical marquee', 'Single Row marquee', 'Single Column marquee'],
   ['Lasso', 'Polygonal Lasso', 'Magnetic Lasso'],
-  ['Selection Brush', 'Magic Wand'],
+  ['Selection Brush', 'Quick Selection', 'Magic Wand'],
   ['Crop', 'Perspective Crop', 'Slice', 'Slice Select', 'Frame'],
   ['Gradient', 'Fill'],
   ['Brush', 'Pencil', 'Color Replace', 'Mixer Brush'],

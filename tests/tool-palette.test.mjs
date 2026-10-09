@@ -32,8 +32,8 @@ test('categories and families resolve stable labels for common Photoshop groups'
   assert.deepEqual(familyTools('s'), ['clone', 'pattern-stamp']);
   assert.deepEqual(familyTools('clone'), ['clone', 'pattern-stamp']);
   assert.deepEqual(familyTools('move'), []);
-  assert.deepEqual(flyoutTools('selection'), ['selection-brush', 'magic-wand']);
-  assert.deepEqual(flyoutTools('magic-wand'), ['selection-brush', 'magic-wand']);
+  assert.deepEqual(flyoutTools('selection'), ['selection-brush', 'quick-selection', 'magic-wand']);
+  assert.deepEqual(flyoutTools('magic-wand'), ['selection-brush', 'quick-selection', 'magic-wand']);
 });
 
 test('family cycling wraps and supports reverse keyboard navigation', () => {
@@ -54,7 +54,7 @@ test('family definitions stay aligned with repeated-key groups', () => {
 test('selection flyouts preserve Photoshop M/L/W group membership', () => {
   assert.deepEqual(flyoutTools('marquee'), ['select', 'ellipse-select', 'row-select', 'column-select']);
   assert.deepEqual(flyoutTools('lasso'), ['lasso', 'polygonal-lasso', 'magnetic-lasso']);
-  assert.deepEqual(flyoutTools('selection'), ['selection-brush', 'magic-wand']);
+  assert.deepEqual(flyoutTools('selection'), ['selection-brush', 'quick-selection', 'magic-wand']);
 });
 
 test('compact category slots show one family representative and active variant', () => {
