@@ -406,6 +406,7 @@ type Command =
   | 'filter-tilt-shift'
   | 'filter-mosaic'
   | 'filter-color-halftone'
+  | 'filter-pointillize'
   | 'filter-displace'
   | 'filter-pinch'
   | 'filter-polar-coordinates'
@@ -826,7 +827,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Pixelate', command: 'noop', disabled: true },
     { label: 'Color Halftone…', command: 'filter-color-halftone' },
     { label: 'Mosaic…', command: 'filter-mosaic' },
-    { label: 'Pointillize…', command: 'noop', disabled: true },
+    { label: 'Pointillize…', command: 'filter-pointillize' },
     { label: 'Render', command: 'noop', disabled: true },
     { label: 'Clouds', command: 'noop', disabled: true },
     { label: 'Difference Clouds', command: 'noop', disabled: true },
@@ -3392,12 +3393,13 @@ export default function Home() {
                   type === 'average-blur' ||
                   type === 'blur-more' ||
                   type === 'mosaic' || type === 'color-halftone'
+                  || type === 'pointillize'
                     ? 85
                     : type === 'box-blur' || type === 'gaussian-blur' || type === 'lens-blur' || type === 'iris-blur' || type === 'smart-blur' || type === 'surface-blur' || type === 'shape-blur'
                       ? 85
                       : 70,
                 radius:
-                  type === 'mosaic' || type === 'color-halftone'
+                  type === 'mosaic' || type === 'color-halftone' || type === 'pointillize'
                     ? 10
                     : type === 'pinch'
                       ? 40
@@ -8194,6 +8196,8 @@ export default function Home() {
       chooseFilterEffect('mosaic', 'Mosaic');
     else if (command === 'filter-color-halftone')
       chooseFilterEffect('color-halftone', 'Color Halftone');
+    else if (command === 'filter-pointillize')
+      chooseFilterEffect('pointillize', 'Pointillize (local approximation)');
     else if (command === 'filter-displace')
       chooseFilterEffect('displace', 'Displace (procedural local approximation)');
     else if (command === 'filter-ripple')
@@ -8380,6 +8384,7 @@ export default function Home() {
       case 'filter-tilt-shift':
       case 'filter-mosaic':
       case 'filter-color-halftone':
+      case 'filter-pointillize':
       case 'filter-displace':
       case 'filter-ripple':
       case 'filter-polar-coordinates':
@@ -10350,6 +10355,9 @@ export default function Home() {
             {filterEffects.type === 'displace' && (
               <p>Bounded procedural displacement field with clamped edges and unchanged alpha. User-supplied displacement maps and geometric expansion remain planned.</p>
             )}
+            {filterEffects.type === 'pointillize' && (
+              <p>Bounded stipple-cell approximation with unchanged alpha. Density, foreground/background color and full procedural controls remain planned.</p>
+            )}
             {filterEffects.type !== 'none' && (
               <>
                 <Slider
@@ -10362,7 +10370,8 @@ export default function Home() {
                 <Slider
                   label={
                     filterEffects.type === 'mosaic' ||
-                    filterEffects.type === 'color-halftone'
+                    filterEffects.type === 'color-halftone' ||
+                    filterEffects.type === 'pointillize'
                       ? 'Cell size'
                       : filterEffects.type === 'box-blur' ||
                           filterEffects.type === 'gaussian-blur' ||
