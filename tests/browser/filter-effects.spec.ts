@@ -64,6 +64,11 @@ const pixel = (page: Page, x: number, y: number) =>
     { x, y },
   );
 
+const pixels = (page: Page) =>
+  page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) =>
+    Array.from(canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data),
+  );
+
 test('linear Shear retains source assets, supports undo and round-trips editable controls', async ({ page }) => {
   await importPixels(page);
   const before = await downloadProject(page);
@@ -255,6 +260,35 @@ test('Lens Correction is enabled, editable and round-trips nondestructively', as
     await page.getByRole('menuitem', { name: /^Undo/ }).click();
   }
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
+});
+
+test('Lens Correction direction is editable and survives reload and project round-trip', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const beforePixels = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Lens Correction…', exact: true }).click();
+  await expect(page.getByLabel('Correction direction', { exact: true })).toHaveValue('inward');
+  await page.getByLabel('Correction direction', { exact: true }).selectOption('outward');
+  await expect.poll(async () => {
+    const current = await pixels(page);
+    return current.some((value, index) => value !== beforePixels[index]);
+  }).toBe(true);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'lens-correction', lensDirection: 'outward' });
+  const changed = await pixels(page);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Correction direction', { exact: true })).toHaveValue('outward');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+  await openProject(page, adjusted);
+  await expect(page.getByLabel('Correction direction', { exact: true })).toHaveValue('outward');
+  await expect.poll(() => pixels(page)).toEqual(changed);
 });
 
 test('Average Blur is a global nondestructive menu effect with alpha-safe pixels', async ({ page }) => {

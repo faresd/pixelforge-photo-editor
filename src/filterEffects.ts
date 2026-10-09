@@ -40,6 +40,8 @@ export type FilterEffectType = (typeof FILTER_EFFECT_TYPES)[number];
 
 export type FilterEffects = {
   type: FilterEffectType;
+  /** Legacy lens corrections default to inward source sampling. */
+  lensDirection?: 'inward' | 'outward';
   /** Strength as a percentage. */
   amount: number;
   /** Blur radius, distortion wavelength, or mosaic cell size, in source pixels. */
@@ -95,7 +97,11 @@ export function effectiveFilterEffects(
   const seed = finite(source.seed)
     ? Math.trunc(source.seed) >>> 0
     : neutralFilterEffects.seed;
-  return { type, amount, radius, angle, centerX, centerY, seed };
+  const normalized = { type, amount, radius, angle, centerX, centerY, seed } as FilterEffects;
+  if (type === 'lens-correction') {
+    normalized.lensDirection = source.lensDirection === 'outward' ? 'outward' : 'inward';
+  }
+  return normalized;
 }
 
 export function validFilterEffects(value: unknown): value is FilterEffects {
@@ -103,6 +109,7 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
   const effect = value as Partial<FilterEffects>;
   return (
     FILTER_EFFECT_TYPES.includes(effect.type as FilterEffectType) &&
+    (effect.lensDirection === undefined || effect.lensDirection === 'inward' || effect.lensDirection === 'outward') &&
     finite(effect.amount) &&
     effect.amount >= 0 &&
     effect.amount <= 100 &&
@@ -1139,7 +1146,7 @@ function applyLensCorrection(
   const centreX = effect.centerX * (width - 1);
   const centreY = effect.centerY * (height - 1);
   const influenceRadius = Math.max(1, Math.min(width, height) * 0.7 * (effect.radius / 64));
-  const strength = (effect.amount / 100) * 0.45;
+  const strength = (effect.amount / 100) * 0.45 * (effect.lensDirection === 'outward' ? -1 : 1);
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const destination = (y * width + x) * 4;

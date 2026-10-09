@@ -10367,7 +10367,7 @@ export default function Home() {
               <p>Bounded stipple-cell approximation with unchanged alpha. Density, foreground/background color and full procedural controls remain planned.</p>
             )}
             {filterEffects.type === 'lens-correction' && (
-              <p>Bounded radial lens-correction approximation with unchanged alpha. Camera profiles, chromatic aberration and pincushion/barrel mode selection remain planned.</p>
+              <p>Manual radial correction with inward or outward source sampling. Camera profiles and chromatic aberration correction remain planned.</p>
             )}
             {filterEffects.type !== 'none' && (
               <>
@@ -10501,6 +10501,17 @@ export default function Home() {
                 )}
                 {filterEffects.type === 'lens-correction' && (
                   <>
+                    <label>
+                      Correction direction
+                      <select
+                        aria-label="Correction direction"
+                        value={filterEffects.lensDirection ?? 'inward'}
+                        onChange={(event) => setFilterEffects({ lensDirection: event.target.value === 'outward' ? 'outward' : 'inward' })}
+                      >
+                        <option value="inward">Sample inward</option>
+                        <option value="outward">Sample outward</option>
+                      </select>
+                    </label>
                     <Slider
                       label="Correction centre X"
                       value={Math.round(filterEffects.centerX * 100)}
