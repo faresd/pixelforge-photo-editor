@@ -1,10 +1,13 @@
 import { test, expect, type Page } from '@playwright/test';
+import { selectTool } from './tool-selection';
 
 type Project = {
   history: Array<{
     layers: Array<{
       kind?: string;
       asset?: string;
+      mask?: string;
+      maskEnabled?: boolean;
       adjustments?: { levelsBlack?: number; levelsWhite?: number };
     }>;
   }>;
@@ -107,4 +110,54 @@ test('adjustment layer undo restores the original composite while preserving the
   await expect.poll(() => pixels(page)).toEqual(baseline);
   const restored = await project(page);
   expect(restored.history[restored.index].layers).toHaveLength(before.history[before.index].layers.length);
+});
+
+test('Adjustment Brush paints a nondestructive adjustment mask and survives reload', async ({ page }) => {
+  await importFixture(page);
+  const baseline = await pixels(page);
+  const sourceProject = await project(page);
+  const sourceAsset = sourceProject.history[sourceProject.index].layers.at(-1)!.asset!;
+
+  await page.getByRole('button', { name: 'Add adjustment layer', exact: true }).click();
+  await page.getByLabel('Levels black point', { exact: true }).fill('120');
+  await expect.poll(() => pixels(page)).not.toEqual(baseline);
+  const fullyAdjusted = await pixels(page);
+
+  await selectTool(page, 'Select');
+  const canvas = page.getByTestId('editor-canvas');
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.08, box.y + box.height * 0.08);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.52, box.y + box.height * 0.92, { steps: 4 });
+  await page.mouse.up();
+  await page.getByRole('button', { name: 'Mask from selection', exact: true }).click();
+  await expect(page.getByText('Nondestructive mask active', { exact: true })).toBeVisible();
+  await expect.poll(() => pixels(page)).toEqual([fullyAdjusted[0], baseline[1]]);
+
+  const masked = await project(page);
+  const adjustment = masked.history[masked.index].layers.at(-1)!;
+  expect(adjustment.kind).toBe('adjustment');
+  expect(adjustment.mask).toEqual(expect.any(String));
+  expect(adjustment.maskEnabled).toBe(true);
+  expect(masked.history[masked.index].layers.at(-2)?.asset).toBe(sourceAsset);
+  expect(masked.assets[sourceAsset]).toEqual(sourceProject.assets[sourceAsset]);
+
+  await selectTool(page, 'Adjustment Brush');
+  await page.getByLabel('Size', { exact: true }).fill('16');
+  await canvas.click({ position: { x: box.width * 0.86, y: box.height * 0.5 } });
+  await expect(page.locator('footer')).toContainText('Adjustment Brush applied to the adjustment mask');
+  await expect.poll(() => pixels(page)).toEqual(fullyAdjusted);
+
+  const painted = await project(page);
+  const paintedLayer = painted.history[painted.index].layers.at(-1)!;
+  expect(paintedLayer.mask).not.toBe(adjustment.mask);
+  expect(paintedLayer.maskEnabled).toBe(true);
+  await saved(page);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect.poll(() => pixels(page)).toEqual(fullyAdjusted);
+  const restored = await project(page);
+  expect(restored.history[restored.index].layers.at(-1)?.kind).toBe('adjustment');
+  expect(restored.history[restored.index].layers.at(-1)?.mask).toEqual(expect.any(String));
+  expect(restored.history[restored.index].layers.at(-2)?.asset).toBe(sourceAsset);
 });

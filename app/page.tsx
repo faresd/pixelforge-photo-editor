@@ -69,6 +69,7 @@ import {
   colorSelectMask,
   commonLayer,
   isRasterContentLayer,
+  isMaskableLayer,
   decodeAsset,
   effectiveAdjustments,
   inversePoint,
@@ -492,6 +493,7 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'magic-eraser', label: 'Magic Eraser', icon: Wand2, key: 'E' },
   { id: 'mask-brush', label: 'Mask Brush', icon: Brush, key: 'K' },
   { id: 'mask-eraser', label: 'Mask Eraser', icon: Eraser, key: 'K' },
+  { id: 'adjustment-brush', label: 'Adjustment Brush', icon: Brush, key: 'K' },
   { id: 'dodge', label: 'Dodge', icon: Sun, key: 'O' },
   { id: 'burn', label: 'Burn', icon: Moon, key: 'O' },
   { id: 'sponge', label: 'Sponge', icon: Sparkles, key: 'O' },
@@ -583,7 +585,7 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   l: ['lasso', 'polygonal-lasso', 'magnetic-lasso', 'selection-brush'],
   w: ['selection-brush', 'magic-wand'],
   e: ['eraser', 'background-eraser', 'magic-eraser'],
-  k: ['frame'],
+  k: ['frame', 'mask-brush', 'mask-eraser', 'adjustment-brush'],
   o: ['dodge', 'burn', 'sponge'],
   r: ['smudge'],
   s: ['clone', 'pattern-stamp'],
@@ -3283,8 +3285,8 @@ export default function Home() {
   const createMaskFromSelection = async () => {
     const f = current(),
       layer = f.layers.find((l) => l.id === f.active);
-    if (!f.selection || !layer || !isRasterContentLayer(layer)) {
-      setNotice('Select an image or smart object layer and create a selection first');
+    if (!f.selection || !layer || !isMaskableLayer(layer)) {
+      setNotice('Select an image, smart object or adjustment layer and create a selection first');
       return;
     }
     if (layerIsLocked(f, layer)) {
@@ -3305,7 +3307,7 @@ export default function Home() {
   const invertLayerMask = () => {
     const f = current(),
       layer = f.layers.find((item) => item.id === f.active);
-    if (!layer || !isRasterContentLayer(layer) || !layer.mask || !layer.visible) {
+    if (!layer || !isMaskableLayer(layer) || !layer.mask || !layer.visible) {
       setNotice('Create a layer mask before inverting it');
       return;
     }
@@ -3327,7 +3329,7 @@ export default function Home() {
   const toggleLayerMask = () => {
     const f = current(),
       layer = f.layers.find((item) => item.id === f.active);
-    if (!layer || !isRasterContentLayer(layer) || !layer.mask || !layer.visible) {
+    if (!layer || !isMaskableLayer(layer) || !layer.mask || !layer.visible) {
       setNotice('Create a layer mask before disabling it');
       return;
     }
@@ -3342,7 +3344,7 @@ export default function Home() {
   const clearMask = () => {
     const f = current(),
       layer = f.layers.find((item) => item.id === f.active);
-    if (!layer || !isRasterContentLayer(layer) || !layer.mask || !layer.visible)
+    if (!layer || !isMaskableLayer(layer) || !layer.mask || !layer.visible)
       return;
     if (layerIsLocked(f, layer)) {
       setNotice('Unlock this layer before editing its mask');
@@ -5450,6 +5452,7 @@ export default function Home() {
         'magic-eraser',
         'mask-brush',
         'mask-eraser',
+        'adjustment-brush',
         'clone',
         'heal',
         'spot-heal',
@@ -5496,13 +5499,24 @@ export default function Home() {
       setNotice('Frame: drag an artboard viewport, then add it');
       return;
     }
-    if (tool === 'mask-brush' || tool === 'mask-eraser') {
+    if (
+      tool === 'mask-brush' ||
+      tool === 'mask-eraser' ||
+      tool === 'adjustment-brush'
+    ) {
       if (
         layerIsLocked(f, layer) ||
         !layer.visible ||
-        layer.kind !== 'raster'
+        !isMaskableLayer(layer) ||
+        (tool === 'adjustment-brush'
+          ? layer.kind !== 'adjustment'
+          : !isRasterContentLayer(layer))
       ) {
-        setNotice('Select a visible, unlocked raster layer before refining its mask');
+        setNotice(
+          tool === 'adjustment-brush'
+            ? 'Select a visible, unlocked adjustment layer before painting its mask'
+            : 'Select a visible, unlocked raster layer before refining its mask',
+        );
         return;
       }
       if (!layer.mask) {
@@ -5510,7 +5524,7 @@ export default function Home() {
         return;
       }
       const mode: MaskRefinementMode =
-          tool === 'mask-brush' ? 'reveal' : 'conceal',
+          tool === 'mask-eraser' ? 'conceal' : 'reveal',
         maskAsset = assets.current[layer.mask],
         initialPoint = {
           x: p.x,
@@ -6695,7 +6709,9 @@ export default function Home() {
     g.pointerType = e.pointerType;
     g.moved = true;
     if (
-      (g.tool === 'mask-brush' || g.tool === 'mask-eraser') &&
+      (g.tool === 'mask-brush' ||
+        g.tool === 'mask-eraser' ||
+        g.tool === 'adjustment-brush') &&
       g.maskRefinementStroke
     ) {
       const point = { x: p.x, y: p.y, pressure: g.lastPressure };
@@ -7486,8 +7502,11 @@ export default function Home() {
       return;
     }
     if (
-      (g.tool === 'mask-brush' || g.tool === 'mask-eraser') &&
-      g.layer?.kind === 'raster' &&
+      (g.tool === 'mask-brush' ||
+        g.tool === 'mask-eraser' ||
+        g.tool === 'adjustment-brush') &&
+      g.layer &&
+      isMaskableLayer(g.layer) &&
       g.maskBuffer &&
       g.maskRefinementStroke
     ) {
@@ -7534,9 +7553,11 @@ export default function Home() {
         discardPreviewAsset(assets.current, g.maskPreviewAsset);
       if (changed)
         setNotice(
-          g.maskRefinementStroke.mode === 'reveal'
-            ? 'Mask Brush revealed masked pixels'
-            : 'Mask Eraser concealed pixels',
+            g.tool === 'adjustment-brush'
+              ? 'Adjustment Brush applied to the adjustment mask'
+              : g.maskRefinementStroke.mode === 'reveal'
+                ? 'Mask Brush revealed masked pixels'
+                : 'Mask Eraser concealed pixels',
         );
       return;
     }
@@ -7650,8 +7671,11 @@ export default function Home() {
       });
       if (changed) setNotice('Paint layer updated');
     } else if (
-      (g.tool === 'mask-brush' || g.tool === 'mask-eraser') &&
-      g.layer?.kind === 'raster' &&
+      (g.tool === 'mask-brush' ||
+        g.tool === 'mask-eraser' ||
+        g.tool === 'adjustment-brush') &&
+      g.layer &&
+      isMaskableLayer(g.layer) &&
       g.maskBuffer &&
       g.maskRefinementStroke
     ) {
@@ -7676,9 +7700,11 @@ export default function Home() {
         });
       if (changed)
         setNotice(
-          g.tool === 'mask-brush'
-            ? 'Mask Brush revealed masked pixels'
-            : 'Mask Eraser concealed pixels',
+          g.tool === 'adjustment-brush'
+            ? 'Adjustment Brush applied to the adjustment mask'
+            : g.tool === 'mask-brush'
+              ? 'Mask Brush revealed masked pixels'
+              : 'Mask Eraser concealed pixels',
         );
     } else if (
       (g.tool === 'rectangle' ||
@@ -10594,6 +10620,7 @@ export default function Home() {
             tool === 'magic-eraser' ||
             tool === 'mask-brush' ||
             tool === 'mask-eraser' ||
+            tool === 'adjustment-brush' ||
             tool === 'dodge' ||
             tool === 'burn' ||
             tool === 'sponge' ||
@@ -10631,6 +10658,7 @@ export default function Home() {
                 tool === 'magic-eraser' ||
                 tool === 'mask-brush' ||
                 tool === 'mask-eraser' ||
+                tool === 'adjustment-brush' ||
                 tool === 'dodge' ||
                 tool === 'burn' ||
                 tool === 'sponge' ||
@@ -10690,12 +10718,13 @@ export default function Home() {
                       source asset and alpha channel unchanged.
                     </p>
                   )}
-                  {(tool === 'mask-brush' || tool === 'mask-eraser') && (
+                  {(tool === 'mask-brush' ||
+                    tool === 'mask-eraser' ||
+                    tool === 'adjustment-brush') && (
                     <p className="adjust-note">
-                      Refines the existing layer mask in canvas space. Mask
-                      Brush reveals masked pixels and Mask Eraser conceals
-                      them; the source raster remains untouched and each
-                      stroke is undoable.
+                      {tool === 'adjustment-brush'
+                        ? 'Paints the selected adjustment layer mask in canvas space; the adjustment remains nondestructive and each stroke is undoable.'
+                        : 'Refines the existing layer mask in canvas space. Mask Brush reveals masked pixels and Mask Eraser conceals them; the source raster remains untouched and each stroke is undoable.'}
                     </p>
                   )}
                   {tool !== 'magic-eraser' && tool !== 'red-eye' && (
@@ -10782,7 +10811,8 @@ export default function Home() {
                     tool !== 'spot-heal' &&
                     tool !== 'patch' &&
                     tool !== 'mask-brush' &&
-                    tool !== 'mask-eraser' && (
+                    tool !== 'mask-eraser' &&
+                    tool !== 'adjustment-brush' && (
                       <>
                         <label className="check-row">
                           <input
