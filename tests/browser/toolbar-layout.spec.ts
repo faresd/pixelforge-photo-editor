@@ -130,7 +130,16 @@ test('short keyboard activation selects while directional keys and context menu 
   await expect(page.locator(`#${anchorId}`)).toHaveCount(1);
 
   const items = flyout.getByRole('menuitem');
-  await expect(items).toHaveCount(3);
+  await expect(items).toHaveCount(5);
+  await expect(items.evaluateAll((nodes) =>
+    nodes.map((node) => node.getAttribute('aria-label')),
+  )).resolves.toEqual([
+    'Crop',
+    'Perspective Crop',
+    'Slice',
+    'Slice Select',
+    'Frame',
+  ]);
   for (const item of await items.all()) {
     await expect(item).toHaveAttribute('aria-label', /.+/);
   }

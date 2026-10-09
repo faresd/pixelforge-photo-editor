@@ -1,4 +1,5 @@
 import {
+  artboardLayers,
   effectiveArtboards,
   validArtboards,
   type Artboard,
@@ -28,7 +29,15 @@ export type ArtboardId = string | undefined;
  * without a special-case that changes legacy export dimensions.
  */
 export function resolveArtboard(frame: Frame, artboardId?: ArtboardId): Artboard {
-  if (!validArtboards(frame.artboards ?? [], frame.w, frame.h, frame.activeArtboardId))
+  if (
+    !validArtboards(
+      frame.artboards ?? [],
+      frame.w,
+      frame.h,
+      frame.activeArtboardId,
+      frame.layers.map((layer) => layer.id),
+    )
+  )
     throw new Error('Artboard metadata is invalid');
   const list = effectiveArtboards(frame.w, frame.h, frame.artboards);
   const id = artboardId ?? frame.activeArtboardId ?? list[0]?.id;
@@ -58,13 +67,15 @@ export type ArtboardRenderResult = {
 /**
  * Render one artboard into a fresh, pixel-aligned canvas.
  *
- * The document is composited once through the normal renderer, then the
- * requested frame-space viewport is copied into a new surface. Source assets,
- * layer matrices, masks and history are never changed. A solid artboard
- * background is painted underneath transparent composite pixels, matching the
- * viewport's persisted swatch while keeping the source document transparent.
- * This is intentionally a bounded viewport operation, not independent
- * multi-canvas compositing or tiled document rendering.
+ * A selected membership tree is rendered through the normal full-frame
+ * compositor before the requested frame-space viewport is copied into a new
+ * surface. This keeps transforms, masks, groups and effects on the same
+ * renderer path, while source assets, matrices and history remain untouched.
+ * A solid artboard background is painted underneath transparent composite
+ * pixels, matching the persisted swatch while keeping the source transparent.
+ * The subset path deliberately retains a full-frame intermediate allocation;
+ * this is a bounded viewport operation, not tiled or independent multi-canvas
+ * compositing.
  */
 export async function renderArtboard(
   frame: Frame,
@@ -75,7 +86,20 @@ export async function renderArtboard(
   validateFrame(frame, assets);
   const artboard = resolveArtboard(frame, artboardId);
   assertNotCancelled(options);
-  const composite = await renderFrame(frame, assets, undefined, options);
+  const membership = artboardLayers(frame, artboard);
+  // Omitted membership preserves the exact legacy/full-canvas render. An
+  // explicit membership list uses a safe layer/group subset, including the
+  // intentional empty-list transparent render, before viewport cropping.
+  const renderFrameInput =
+    artboard.layerIds === undefined
+      ? frame
+      : {
+          ...frame,
+          layers: membership.layers,
+          groups: membership.groups,
+          active: membership.layers[0]?.id ?? frame.active,
+        };
+  const composite = await renderFrame(renderFrameInput, assets, undefined, options);
   assertNotCancelled(options);
   const output = surface(artboard.w, artboard.h);
   const context = output.getContext('2d');

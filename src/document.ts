@@ -67,6 +67,11 @@ import {
   type Artboard,
 } from './artboards.ts';
 import {
+  transformDocumentSlice,
+  validDocumentSlices,
+  type SliceRect,
+} from './slices.ts';
+import {
   applyPhotoAdjustments,
   effectivePhotoAdjustments,
   isNeutralPhotoAdjustments,
@@ -317,6 +322,10 @@ export type Frame = {
   artboards?: Artboard[];
   /** Optional active artboard pointer, validated against `artboards`. */
   activeArtboardId?: string;
+  /** Persisted named slices used by Slice Select and local export. */
+  slices?: SliceRect[];
+  /** Optional active slice pointer, validated against `slices`. */
+  activeSliceId?: string;
 };
 export type Asset = { url: string; w: number; h: number };
 export type Assets = Record<string, Asset>;
@@ -619,6 +628,14 @@ export const transformFrame = (
     frame.activeArtboardId && artboards?.some((item) => item.id === frame.activeArtboardId)
       ? frame.activeArtboardId
       : artboards?.[0]?.id;
+  const slices = frame.slices?.flatMap((slice) => {
+    const transformed = transformDocumentSlice(slice, matrix, w, h);
+    return transformed ? [transformed] : [];
+  });
+  const activeSliceId =
+    frame.activeSliceId && slices?.some((slice) => slice.id === frame.activeSliceId)
+      ? frame.activeSliceId
+      : slices?.[0]?.id;
   return {
     ...frame,
     w,
@@ -634,8 +651,14 @@ export const transformFrame = (
       ...layer,
       matrix: multiply(matrix, layer.matrix),
     })),
-    ...(artboards?.length
-      ? { artboards, ...(activeArtboardId ? { activeArtboardId } : {}) }
+    // Preserve the collection's explicit presence even when a crop removes
+    // every entry.  Dropping the field conditionally would leave stale
+    // artboards/slices and active pointers on the spread `frame` object.
+    ...(frame.artboards !== undefined
+      ? { artboards: artboards ?? [], activeArtboardId }
+      : {}),
+    ...(frame.slices !== undefined
+      ? { slices: slices ?? [], activeSliceId }
       : {}),
   };
 };
@@ -1108,10 +1131,22 @@ export function validateFrame(
       Number(value.w),
       Number(value.h),
       value.activeArtboardId,
+      Array.isArray(value.layers)
+        ? value.layers.flatMap((layer) =>
+            record(layer) && typeof layer.id === 'string' ? [layer.id] : [],
+          )
+        : [],
     ))
   )
     return fail();
   if (value.artboards === undefined && value.activeArtboardId !== undefined)
+    return fail();
+  if (
+    value.slices !== undefined &&
+    !validDocumentSlices(value.slices, Number(value.w), Number(value.h), value.activeSliceId)
+  )
+    return fail();
+  if (value.slices === undefined && value.activeSliceId !== undefined)
     return fail();
   const groupIds = new Set(groups.map((group) => group.id));
   let pixels = 0;

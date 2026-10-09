@@ -6,7 +6,7 @@ const TOOL_FAMILIES = [
   ['Select', 'Elliptical marquee', 'Single Row marquee', 'Single Column marquee'],
   ['Lasso', 'Polygonal Lasso', 'Magnetic Lasso'],
   ['Selection Brush', 'Magic Wand'],
-  ['Crop', 'Perspective Crop', 'Slice'],
+  ['Crop', 'Perspective Crop', 'Slice', 'Slice Select', 'Frame'],
   ['Gradient', 'Fill'],
   ['Brush', 'Pencil', 'Color Replace'],
   ['Shape', 'Ellipse', 'Line', 'Polygon'],

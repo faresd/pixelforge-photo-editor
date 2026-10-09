@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import {
   ARTBOARD_ID,
   MAX_ARTBOARDS,
+  MAX_ARTBOARD_LAYERS,
   createArtboard,
   effectiveArtboards,
+  sanitizeArtboardLayerMembership,
   transformArtboard,
   validArtboard,
   validArtboards,
@@ -33,6 +35,33 @@ test('artboard collection rejects oversized collections and stale active IDs', (
   assert.throws(() => createArtboard({ name: 'outside', w: 100, h: 100, x: 780 }, frame.w, frame.h), /invalid/i);
 });
 
+test('artboard membership accepts bounded UUIDs and rejects duplicates or unknown IDs', () => {
+  const layerId = '00000000-0000-4000-8000-000000000001';
+  const otherId = '00000000-0000-4000-8000-000000000002';
+  const known = new Set([layerId, otherId]);
+  assert.equal(
+    validArtboard({ ...item, layerIds: [layerId, otherId] }, frame.w, frame.h, known),
+    true,
+  );
+  assert.equal(
+    validArtboard({ ...item, layerIds: [layerId, layerId] }, frame.w, frame.h, known),
+    false,
+  );
+  assert.equal(
+    validArtboard({ ...item, layerIds: [layerId, 'missing'] }, frame.w, frame.h, known),
+    false,
+  );
+  assert.equal(
+    validArtboard(
+      { ...item, layerIds: Array.from({ length: MAX_ARTBOARD_LAYERS + 1 }, () => layerId) },
+      frame.w,
+      frame.h,
+      known,
+    ),
+    false,
+  );
+});
+
 test('legacy frames get a virtual locked Canvas viewport without pixel allocations', () => {
   const legacy = effectiveArtboards(frame.w, frame.h);
   assert.equal(legacy.length, 1);
@@ -51,4 +80,23 @@ test('affine geometry moves and clips artboards while preserving identity', () =
   const clipped = transformArtboard(item, [1, 0, 0, 1, -100, -100], frame.w, frame.h);
   assert.deepEqual(clipped, { ...item, x: 0, y: 0, w: 260, h: 200 });
   assert.throws(() => transformArtboard(item, [1, 0, 0, 1, -900, 0], frame.w, frame.h), /outside/i);
+});
+
+test('destructive layer operations sanitize membership without mutating history', () => {
+  const source = [{ ...item, layerIds: [
+    '00000000-0000-4000-8000-000000000001',
+    '00000000-0000-4000-8000-000000000002',
+  ] }];
+  const next = sanitizeArtboardLayerMembership(source, [
+    '00000000-0000-4000-8000-000000000002',
+  ]);
+  assert.deepEqual(next?.[0].layerIds, ['00000000-0000-4000-8000-000000000002']);
+  assert.deepEqual(source[0].layerIds, [
+    '00000000-0000-4000-8000-000000000001',
+    '00000000-0000-4000-8000-000000000002',
+  ]);
+  assert.deepEqual(
+    sanitizeArtboardLayerMembership([{ ...item, layerIds: [] }], []).at(0)?.layerIds,
+    [],
+  );
 });
