@@ -29,6 +29,7 @@ export const FILTER_EFFECT_TYPES = [
   'spherize',
   'twirl',
   'wave',
+  'shear',
 ] as const;
 export type FilterEffectType = (typeof FILTER_EFFECT_TYPES)[number];
 
@@ -128,6 +129,7 @@ export function isNeutralFilterEffects(
     effect.type === 'none' ||
     effect.amount === 0 ||
     (effect.type === 'twirl' && effect.angle === 0) ||
+    (effect.type === 'shear' && effect.angle === 0) ||
     (effect.type !== 'twirl' && effect.radius === 0)
   );
 }
@@ -954,6 +956,34 @@ function applyWave(
 }
 
 /** Apply a Filter menu effect to an RGBA buffer without mutating its input. */
+function applyShear(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+): void {
+  // A linear horizontal shear with a bounded displacement at either vertical
+  // edge. This first stage deliberately keeps alpha/source bounds unchanged;
+  // it is not a geometric canvas transform or Photoshop's editable curve.
+  const shift = effect.radius * (effect.amount / 100);
+  const direction = Math.sin((effect.angle * Math.PI) / 180);
+  for (let y = 0; y < height; y += 1) {
+    const relativeY = height === 1 ? 0 : (y / (height - 1) - effect.centerY) * 2;
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      if (!source[destination + 3]) continue;
+      const sample = sourcePixelBilinear(
+        source, width, height, x - shift * direction * relativeY, y,
+      );
+      if (!sample[3]) continue;
+      output[destination] = sample[0];
+      output[destination + 1] = sample[1];
+      output[destination + 2] = sample[2];
+    }
+  }
+}
+
 export function applyFilterEffectsPixels(
   data: Uint8ClampedArray,
   width: number,
@@ -1020,6 +1050,8 @@ export function applyFilterEffectsPixels(
     );
   } else if (effect.type === 'wave') {
     applyWave(data, width, height, effect, output);
+  } else if (effect.type === 'shear') {
+    applyShear(data, width, height, effect, output);
   } else {
     applyDistort(data, width, height, effect, output);
   }

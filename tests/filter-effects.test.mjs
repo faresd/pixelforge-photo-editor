@@ -22,6 +22,56 @@ const pixel = (data, width, x, y) =>
 
 const fixture = () => rgba(9, 5, (x, y) => [x * 22, y * 38, (x + y) * 12, x === 0 && y === 0 ? 0 : 255]);
 
+test('linear shear follows the signed inverse map and retains the centre row', () => {
+  const source = rgba(9, 5, (x, y) => [x * 20, y * 30, 70, 255]);
+  const original = source.slice();
+  for (const angle of [90, -90]) {
+    const effect = { type: 'shear', amount: 100, radius: 2, angle };
+    const output = applyFilterEffectsPixels(source, 9, 5, effect);
+    assert.deepEqual(output, applyFilterEffectsPixels(source, 9, 5, effect));
+    assert.deepEqual(pixel(output, 9, 4, 2), pixel(source, 9, 4, 2));
+    assert.deepEqual(pixel(output, 9, 4, 0), pixel(source, 9, angle > 0 ? 6 : 2, 0));
+    assert.deepEqual(pixel(output, 9, 4, 4), pixel(source, 9, angle > 0 ? 2 : 6, 4));
+  }
+  assert.deepEqual(source, original);
+});
+
+test('linear shear interpolates fractional shifts and clamps image edges', () => {
+  const source = rgba(9, 5, (x) => [x * 20, 0, 0, 255]);
+  const output = applyFilterEffectsPixels(source, 9, 5, {
+    type: 'shear', amount: 25, radius: 2, angle: 90,
+  });
+  assert.equal(pixel(output, 9, 4, 0)[0], 90);
+  assert.equal(pixel(output, 9, 4, 4)[0], 70);
+  assert.equal(pixel(output, 9, 8, 0)[0], 160);
+});
+
+test('linear shear preserves partial alpha and hidden RGB and excludes transparent samples', () => {
+  const source = rgba(3, 3, (x) => x === 1 ? [255, 0, 255, 0] : [50, 100, 150, 128]);
+  const output = applyFilterEffectsPixels(source, 3, 3, {
+    type: 'shear', amount: 25, radius: 1, angle: 90,
+  });
+  for (let offset = 0; offset < source.length; offset += 4) {
+    assert.equal(output[offset + 3], source[offset + 3]);
+  }
+  assert.deepEqual(Array.from(output.slice((1 * 3 + 1) * 4, (1 * 3 + 1) * 4 + 3)), [255, 0, 255]);
+});
+
+test('linear shear identity controls and tiny images return detached safe buffers', () => {
+  const source = fixture();
+  for (const controls of [{ amount: 0 }, { radius: 0 }, { angle: 0 }]) {
+    const output = applyFilterEffectsPixels(source, 9, 5, {
+      type: 'shear', amount: 100, radius: 64, angle: 90, ...controls,
+    });
+    assert.deepEqual(output, source);
+    assert.notEqual(output, source);
+  }
+  const tiny = rgba(1, 1, () => [24, 60, 90, 128]);
+  assert.deepEqual(applyFilterEffectsPixels(tiny, 1, 1, {
+    type: 'shear', amount: 100, radius: 64, angle: 90,
+  }), tiny);
+});
+
 test('Filter effect metadata is bounded and legacy/empty values normalize safely', () => {
   const value = effectiveFilterEffects({ type: 'mosaic', amount: 200, radius: -4, centerX: 4, seed: -1 });
   assert.equal(value.type, 'mosaic');

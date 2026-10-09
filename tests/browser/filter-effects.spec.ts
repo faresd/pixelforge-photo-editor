@@ -64,6 +64,42 @@ const pixel = (page: Page, x: number, y: number) =>
     { x, y },
   );
 
+test('linear Shear retains source assets, supports undo and round-trips editable controls', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixel(page, 4, 0);
+  const centre = await pixel(page, 4, 2);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Shear…', exact: true }).click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('shear');
+  await expect(page.getByLabel('Shear direction', { exact: true })).toHaveValue('90');
+  await expect.poll(() => pixel(page, 4, 0)).not.toEqual(original);
+  expect(await pixel(page, 4, 2)).toEqual(centre);
+  expect((await pixel(page, 0, 0))[3]).toBe(0);
+  await page.getByLabel('Shear displacement', { exact: true }).press('ArrowRight');
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'shear', amount: 70, radius: 7, angle: 90 });
+  const changed = await pixel(page, 4, 0);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Shear displacement', { exact: true })).toHaveValue('7');
+  await expect.poll(() => pixel(page, 4, 0)).toEqual(changed);
+  await openProject(page, adjusted);
+  await expect(page.getByLabel('Shear direction', { exact: true })).toHaveValue('90');
+  await expect.poll(() => pixel(page, 4, 0)).toEqual(changed);
+  for (let index = 0; index < 2; index += 1) {
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  }
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
+  await expect.poll(() => pixel(page, 4, 0)).toEqual(original);
+});
+
 test('Average Blur is a global nondestructive menu effect with alpha-safe pixels', async ({ page }) => {
   await importPixels(page);
   const before = await downloadProject(page);
