@@ -43,7 +43,8 @@ function load(id: string) {
   // but the loader silently ignores those entries and no `g/collect` request
   // is emitted. Keep the canonical queue shape while retaining our typed API.
   // oxlint-disable-next-line prefer-rest-params
-  const gtag = function gtag() {
+  const gtag = function gtag(..._args: unknown[]) {
+    void _args;
     dataLayer.push(arguments);
   };
   page.gtag = gtag;
