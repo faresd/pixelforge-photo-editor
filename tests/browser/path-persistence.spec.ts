@@ -4,7 +4,7 @@ import { test, expect, type Page } from '@playwright/test';
 type PathLayer = {
   kind: string;
   matrix: number[];
-  path: { nodes: Array<{ x: number; y: number; inHandle?: { x: number; y: number }; outHandle?: { x: number; y: number } }>; closed: boolean };
+  path: { nodes: Array<{ x: number; y: number; inHandle?: { x: number; y: number }; outHandle?: { x: number; y: number } }>; closed: boolean; fill?: boolean };
 };
 type Project = { history: Array<{ w: number; h: number; layers: PathLayer[] }>; index: number };
 
@@ -149,4 +149,37 @@ test('Freeform Pen creates a smooth open path and preserves it on reload', async
   expect(created.path.nodes.some((node) => node.outHandle || node.inHandle)).toBe(true);
   await page.reload();
   expect(pathLayer(await project(page))).toEqual(created);
+});
+
+test('Curvature Pen creates a closed smooth path with editable handles and persists it', async ({ page }) => {
+  await selectTool(page, 'Curvature Pen');
+  const box = (await page.getByTestId('editor-canvas').boundingBox())!;
+  const beforePixels = await page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
+  const points = [
+    [0.22, 0.28],
+    [0.72, 0.28],
+    [0.55, 0.7],
+    [0.22, 0.28],
+  ];
+  for (const [x, y] of points) await page.mouse.click(box.x + box.width * x, box.y + box.height * y);
+  await expect(page.locator('footer')).toContainText('Editable curvature path layer added');
+  const created = pathLayer(await project(page));
+  expect(created.path.closed).toBe(true);
+  expect(created.path.fill).toBe(true);
+  expect(created.path.nodes.length).toBe(3);
+  expect(created.path.nodes.some((node) => node.outHandle || node.inHandle)).toBe(true);
+  expect(await page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())).not.toBe(beforePixels);
+  await page.reload();
+  expect(pathLayer(await project(page))).toEqual(created);
+});
+
+test('Curvature Pen Escape cancels staged anchors without changing history', async ({ page }) => {
+  await selectTool(page, 'Curvature Pen');
+  const before = await project(page);
+  const box = (await page.getByTestId('editor-canvas').boundingBox())!;
+  await page.mouse.click(box.x + box.width * 0.22, box.y + box.height * 0.28);
+  await page.mouse.click(box.x + box.width * 0.72, box.y + box.height * 0.28);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('footer')).toContainText('Pen path cancelled');
+  expect(await project(page)).toEqual(before);
 });

@@ -176,6 +176,7 @@ import {
 } from '../src/selectionBrush';
 import { snapMagneticPoint } from '../src/magneticLasso';
 import { appendFreeformPoint, buildFreeformPath } from '../src/freeformPen';
+import { appendCurvaturePoint, buildCurvaturePath } from '../src/curvaturePen';
 import { colorRangeMask } from '../src/colorRange';
 import { focusAreaMask } from '../src/focusArea';
 import { similarColorMask } from '../src/similarSelection';
@@ -511,6 +512,7 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'smudge', label: 'Smudge', icon: Brush, key: 'R' },
   { id: 'pen', label: 'Pen', icon: Pencil, key: 'P' },
   { id: 'freeform-pen', label: 'Freeform Pen', icon: Pencil, key: 'P' },
+  { id: 'curvature-pen', label: 'Curvature Pen', icon: Pencil, key: 'P' },
   {
     id: 'direct-select',
     label: 'Direct Selection',
@@ -603,7 +605,7 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   s: ['clone', 'pattern-stamp'],
   y: ['history-brush'],
   j: ['heal', 'spot-heal', 'patch', 'red-eye'],
-  p: ['pen', 'freeform-pen'],
+  p: ['pen', 'freeform-pen', 'curvature-pen'],
 };
 /** Existing PixelForge aliases retained while the primary keys follow Photoshop. */
 const TOOL_ALIASES: Record<string, Tool> = {
@@ -5084,13 +5086,20 @@ export default function Home() {
     e: Pick<React.PointerEvent<HTMLCanvasElement>, 'clientX' | 'clientY'>,
   ) => {
     const c = canvas.current!,
-      rect = c.getBoundingClientRect();
+      rect = c.getBoundingClientRect(),
+      computed = window.getComputedStyle(c),
+      layoutWidth = Number.parseFloat(computed.width),
+      layoutHeight = Number.parseFloat(computed.height);
     return canvasPointFromClient(
       e.clientX,
       e.clientY,
       rect,
-      c.offsetWidth || rect.width,
-      c.offsetHeight || rect.height,
+      Number.isFinite(layoutWidth) && layoutWidth > 0
+        ? layoutWidth
+        : c.offsetWidth || rect.width,
+      Number.isFinite(layoutHeight) && layoutHeight > 0
+        ? layoutHeight
+        : c.offsetHeight || rect.height,
       c.width,
       c.height,
       viewRotation,
@@ -5236,6 +5245,19 @@ export default function Home() {
         drawPathOverlay(preview, [1, 0, 0, 1, 0, 0], null, true);
     });
   };
+  const previewCurvaturePath = (g: Gesture) => {
+    const points = g.points || [];
+    if (points.length < 2) return previewPenPath(g);
+    const preview = buildCurvaturePath(points, {
+      strokeWidth: Math.max(1, size / 3),
+      fillColor: color,
+      strokeColor: color,
+    });
+    void paint(g.frame).then(() => {
+      if (gesture.current === g)
+        drawPathOverlay(preview, [1, 0, 0, 1, 0, 0], null, true);
+    });
+  };
   const finishFreeformPath = (g: Gesture) => {
     if (!g.points || g.points.length < 2) {
       setNotice('Freeform Pen needs at least two points');
@@ -5255,6 +5277,33 @@ export default function Home() {
       if (added) setNotice('Editable freeform path layer added');
     } catch {
       setNotice('Could not create a freeform path');
+    }
+  };
+  const finishCurvaturePath = (g: Gesture, closed = false) => {
+    if (!g.points || g.points.length < 2) {
+      void paint(g.frame);
+      setNotice('Curvature Pen needs at least two points');
+      return;
+    }
+    try {
+      const path = buildCurvaturePath(
+        g.points,
+        {
+          strokeWidth: Math.max(1, size / 3),
+          fillColor: color,
+          strokeColor: color,
+        },
+        closed,
+      );
+      const added = addLayer({
+        ...commonLayer('Curvature Path ' + g.frame.layers.length),
+        kind: 'path',
+        path,
+      });
+      if (added) setNotice('Editable curvature path layer added');
+    } catch {
+      void paint(g.frame);
+      setNotice('Could not create a curvature path');
     }
   };
   const pointerDown = async (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -5294,12 +5343,17 @@ export default function Home() {
         gesture.current = null;
         finishPolygonalLasso(g);
       } else {
-        points.push({
+        const bounded = {
           x: Math.max(0, Math.min(g.frame.w, p.x)),
           y: Math.max(0, Math.min(g.frame.h, p.y)),
-        });
+        };
+        if (g.tool === 'curvature-pen') {
+          g.points = appendCurvaturePoint(points, bounded);
+        } else {
+          points.push(bounded);
+        }
         g.last = p;
-        g.moved = points.length > 1;
+        g.moved = (g.points || points).length > 1;
         void paint(g.frame).then(() => {
           if (gesture.current !== g) return;
           const context = canvas.current?.getContext('2d');
@@ -5318,9 +5372,12 @@ export default function Home() {
       }
       return;
     }
-    // Pen is a click-to-place straight-segment workflow. Keep this gesture
-    // alive between clicks so it works consistently with mouse, pen and touch.
-    if (gesture.current?.tool === 'pen') {
+    // Pen and Curvature Pen are click-to-place workflows. Keep the gesture
+    // alive between clicks so mouse, pen and touch can place each anchor.
+    if (
+      gesture.current?.tool === 'pen' ||
+      gesture.current?.tool === 'curvature-pen'
+    ) {
       const g = gesture.current,
         p = point(e),
         points = g.points || (g.points = []),
@@ -5337,22 +5394,27 @@ export default function Home() {
           ...(node.outHandle ? { outHandle: { ...node.outHandle } } : {}),
         }));
         gesture.current = null;
-        const path: PathModel = {
-          nodes,
-          closed: true,
-          fill: true,
-          stroke: true,
-          strokeWidth: Math.max(1, size / 3),
-          fillColor: color,
-          strokeColor: color,
-        };
-        if (validatePath(path)) {
-          const added = addLayer({
-            ...commonLayer('Path ' + g.frame.layers.length),
-            kind: 'path',
-            path,
-          });
-          if (added) setNotice('Editable path layer added');
+        if (g.tool === 'curvature-pen') {
+          g.points = nodes;
+          finishCurvaturePath(g, true);
+        } else {
+          const path: PathModel = {
+            nodes,
+            closed: true,
+            fill: true,
+            stroke: true,
+            strokeWidth: Math.max(1, size / 3),
+            fillColor: color,
+            strokeColor: color,
+          };
+          if (validatePath(path)) {
+            const added = addLayer({
+              ...commonLayer('Path ' + g.frame.layers.length),
+              kind: 'path',
+              path,
+            });
+            if (added) setNotice('Editable path layer added');
+          }
         }
       } else {
         points.push({
@@ -5361,7 +5423,8 @@ export default function Home() {
         });
         g.last = p;
         g.moved = points.length > 1;
-        previewPenPath(g);
+        if (g.tool === 'curvature-pen') previewCurvaturePath(g);
+        else previewPenPath(g);
       }
       return;
     }
@@ -5381,7 +5444,7 @@ export default function Home() {
       setNotice('Freeform Pen: draw a path, release to finish');
       return;
     }
-    if (tool === 'pen') {
+    if (tool === 'pen' || tool === 'curvature-pen') {
       if (doc.rendering || !frame) return;
       const f = current(),
         p = point(e);
@@ -5401,7 +5464,11 @@ export default function Home() {
       };
       gesture.current = g;
       previewPenPath(g);
-      setNotice('Pen: click to place points, click the first point to close');
+      setNotice(
+        tool === 'curvature-pen'
+          ? 'Curvature Pen: click to place smooth points, click the first point to close'
+          : 'Pen: click to place points, click the first point to close',
+      );
       return;
     }
     if (tool === 'quick-selection') {
@@ -7644,6 +7711,16 @@ export default function Home() {
       }
       return;
     }
+    if (g.tool === 'curvature-pen') {
+      if (e.type === 'pointercancel') {
+        gesture.current = null;
+        void paint(current());
+        setNotice('Curvature Pen path cancelled');
+      } else if (g.points?.length) {
+        previewCurvaturePath(g);
+      }
+      return;
+    }
     const p = point(e),
       f = g.frame;
     const local =
@@ -8509,6 +8586,7 @@ export default function Home() {
         e.key === 'Escape' &&
         (gesture.current?.tool === 'pen' ||
           gesture.current?.tool === 'freeform-pen' ||
+          gesture.current?.tool === 'curvature-pen' ||
           gesture.current?.tool === 'direct-select' ||
           gesture.current?.tool === 'selection-brush' ||
           gesture.current?.tool === 'quick-selection' ||
@@ -8518,7 +8596,9 @@ export default function Home() {
         gesture.current = null;
         void paint(current());
         setNotice(
-          canceledTool === 'pen' || canceledTool === 'freeform-pen'
+          canceledTool === 'pen' ||
+          canceledTool === 'freeform-pen' ||
+          canceledTool === 'curvature-pen'
             ? 'Pen path cancelled'
             : canceledTool === 'selection-brush'
               ? 'Selection Brush cancelled'

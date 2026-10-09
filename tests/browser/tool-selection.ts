@@ -17,12 +17,15 @@ const TOOL_FAMILIES = [
   ['Healing', 'Spot Healing', 'Patch', 'Red Eye'],
   ['History Brush'],
   ['Mask Brush', 'Mask Eraser', 'Adjustment Brush'],
+  ['Pen', 'Freeform Pen', 'Curvature Pen'],
 ] as const;
 
 const FLYOUT_LABELS: Readonly<Record<string, string>> = {
   Select: 'Rectangular Marquee',
   'Elliptical marquee': 'Elliptical Marquee',
   Lasso: 'Freeform Lasso',
+  'Freeform Pen': 'Freeform Pen',
+  'Curvature Pen': 'Curvature Pen',
 };
 
 /** Select a tool through the compact palette, including an inactive subtool. */

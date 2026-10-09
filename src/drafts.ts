@@ -91,6 +91,7 @@ export type Tool =
   | 'text'
   | 'pen'
   | 'freeform-pen'
+  | 'curvature-pen'
   | 'direct-select'
   | 'rectangle'
   | 'ellipse'
@@ -268,6 +269,7 @@ function validSettings(settings: unknown): settings is Settings {
       'text',
       'pen',
       'freeform-pen',
+      'curvature-pen',
       'direct-select',
       'rectangle',
       'ellipse',
