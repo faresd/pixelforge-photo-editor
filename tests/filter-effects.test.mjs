@@ -178,6 +178,31 @@ test('pointillize identities and transparent cells preserve hidden RGB', () => {
   assert.equal(isNeutralFilterEffects({ type: 'pointillize', amount: 100, radius: 0 }), true);
 });
 
+test('lens correction is deterministic, centre-preserving and source-safe', () => {
+  const source = rgba(9, 9, (x, y) => [x * 20, y * 20, 70, 255]);
+  const original = source.slice();
+  const effect = { type: 'lens-correction', amount: 75, radius: 64, centerX: 0.5, centerY: 0.5 };
+  const output = applyFilterEffectsPixels(source, 9, 9, effect);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 9, 9, effect));
+  assert.deepEqual(pixel(output, 9, 4, 4), pixel(source, 9, 4, 4));
+  assert.notDeepEqual(pixel(output, 9, 8, 4), pixel(source, 9, 8, 4));
+  assert.deepEqual(source, original);
+  assert.notEqual(output, source);
+});
+
+test('lens correction identities and transparent source edges remain safe', () => {
+  const source = rgba(5, 5, (x, y) => x === 0 && y === 0 ? [255, 0, 255, 0] : [x * 30, y * 30, 12, 255]);
+  assert.deepEqual(applyFilterEffectsPixels(source, 5, 5, {
+    type: 'lens-correction', amount: 0, radius: 64,
+  }), source);
+  const output = applyFilterEffectsPixels(source, 5, 5, {
+    type: 'lens-correction', amount: 100, radius: 64,
+  });
+  assert.equal(pixel(output, 5, 0, 0)[3], 0);
+  assert.deepEqual(pixel(output, 5, 0, 0).slice(0, 3), [255, 0, 255]);
+  assert.equal(isNeutralFilterEffects({ type: 'lens-correction', amount: 100, radius: 0 }), true);
+});
+
 test('Filter effect metadata is bounded and legacy/empty values normalize safely', () => {
   const value = effectiveFilterEffects({ type: 'mosaic', amount: 200, radius: -4, centerX: 4, seed: -1 });
   assert.equal(value.type, 'mosaic');

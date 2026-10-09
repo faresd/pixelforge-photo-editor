@@ -72,7 +72,7 @@ These tables record the visible commands verbatim where practical. Groups provid
 | Filter group | Commands visible in the reference | Dependency / intended increment |
 | --- | --- | --- |
 | Repeat and source preservation | Last Filter; Convert for Smart Filters | Persisted operation/parameters, repeat behavior and editable source/filter stack |
-| Advanced corrections | Neural Filters…; Filter Gallery…; Adaptive Wide Angle…; Camera Raw Filter…; AI Denoise…; AI Sharpen…; Lens Correction…; Liquify…; Vanishing Point… | Raw/lens metadata, bounded local kernels and geometric warps; inference quality, licensing and privacy gates |
+| Advanced corrections | Neural Filters…; Filter Gallery…; Adaptive Wide Angle…; Camera Raw Filter…; AI Denoise…; AI Sharpen…; **Lens Correction…**; Liquify…; Vanishing Point… | **Lens Correction is active as a bounded radial local approximation with editable centre/radius and source-safe persistence; see [`lens-correction-effect-contract.md`](./lens-correction-effect-contract.md).** Camera profiles, chromatic aberration, AI filters and geometric warps remain staged behind explicit data/privacy contracts. |
 | Effect families | Blur ▶; Blur Gallery ▶; Distort ▶; Noise ▶; Pixelate ▶; Render ▶; Sharpen ▶; Stylize ▶; Video ▶; Other ▶ | Individual effects listed below; Noise, Stylize and Other contents were not opened in the supplied images |
 
 ## Filter submenu inventory

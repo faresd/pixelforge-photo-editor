@@ -25,6 +25,7 @@ export const FILTER_EFFECT_TYPES = [
   'mosaic',
   'color-halftone',
   'pointillize',
+  'lens-correction',
   'displace',
   'pinch',
   'polar-coordinates',
@@ -1127,6 +1128,42 @@ function applyPointillize(
   }
 }
 
+/** Apply a bounded radial lens-correction approximation without mutating the source. */
+function applyLensCorrection(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+): void {
+  const centreX = effect.centerX * (width - 1);
+  const centreY = effect.centerY * (height - 1);
+  const influenceRadius = Math.max(1, Math.min(width, height) * 0.7 * (effect.radius / 64));
+  const strength = (effect.amount / 100) * 0.45;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      if (!source[destination + 3]) continue;
+      const dx = x - centreX;
+      const dy = y - centreY;
+      const normalized = clamp(Math.hypot(dx, dy) / influenceRadius, 0, 1);
+      const scale = 1 - strength * normalized * normalized;
+      const sample = sourcePixelBilinear(
+        source,
+        width,
+        height,
+        centreX + dx * scale,
+        centreY + dy * scale,
+      );
+      if (!sample[3]) continue;
+      output[destination] = sample[0];
+      output[destination + 1] = sample[1];
+      output[destination + 2] = sample[2];
+      output[destination + 3] = source[destination + 3];
+    }
+  }
+}
+
 export function applyFilterEffectsPixels(
   data: Uint8ClampedArray,
   width: number,
@@ -1203,6 +1240,8 @@ export function applyFilterEffectsPixels(
     applyDisplace(data, width, height, effect, output);
   } else if (effect.type === 'pointillize') {
     applyPointillize(data, width, height, effect, output);
+  } else if (effect.type === 'lens-correction') {
+    applyLensCorrection(data, width, height, effect, output);
   } else {
     applyDistort(data, width, height, effect, output);
   }
