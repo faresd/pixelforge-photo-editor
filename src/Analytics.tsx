@@ -34,7 +34,10 @@ function load(id: string) {
   const page = window as AnalyticsWindow;
   if (!validId(id) || page.__cheaplyGaMeasurementId === id) return;
   page.__cheaplyGaMeasurementId = id;
-  const dataLayer = (page.dataLayer ||= []);
+  // Assign the queue explicitly so the production transform cannot reduce
+  // this to a private local fallback that Google’s loader cannot observe.
+  const dataLayer = page.dataLayer || [];
+  page.dataLayer = dataLayer;
   const gtag = (...args: unknown[]) => dataLayer.push(args);
   page.gtag = gtag;
   gtag('consent', 'default', {
@@ -55,7 +58,8 @@ function load(id: string) {
   });
   const script = document.createElement('script');
   script.async = true;
-  script.src = 'https://www.googletagmanager.com/gtag/js?id=' + encodeURIComponent(id);
+  script.src =
+    'https://www.googletagmanager.com/gtag/js?id=' + encodeURIComponent(id);
   document.head.append(script);
   gtag('event', 'page_view', {
     app_name: APP_NAME,
@@ -65,7 +69,9 @@ function load(id: string) {
 
 export default function Analytics() {
   useEffect(() => {
-    const id = String(import.meta.env.VITE_CHEAPLY_GA_MEASUREMENT_ID || '').trim();
+    const id = String(
+      import.meta.env.VITE_CHEAPLY_GA_MEASUREMENT_ID || '',
+    ).trim();
     if (!validId(id)) return;
 
     const setConsent = (value: 'granted' | 'denied') => {
@@ -79,7 +85,8 @@ export default function Analytics() {
       denyConsent: () => setConsent('denied'),
     };
     const onConsent = (event: Event) => {
-      const granted = (event as CustomEvent<{ analytics?: boolean }>).detail?.analytics;
+      const granted = (event as CustomEvent<{ analytics?: boolean }>).detail
+        ?.analytics;
       if (granted === true) setConsent('granted');
       if (granted === false) setConsent('denied');
     };
@@ -101,8 +108,12 @@ export default function Analytics() {
       banner.querySelectorAll('button').forEach((button) => {
         button.style.pointerEvents = 'auto';
       });
-      banner.querySelector('[data-choice="deny"]')?.addEventListener('click', () => setConsent('denied'));
-      banner.querySelector('[data-choice="accept"]')?.addEventListener('click', () => setConsent('granted'));
+      banner
+        .querySelector('[data-choice="deny"]')
+        ?.addEventListener('click', () => setConsent('denied'));
+      banner
+        .querySelector('[data-choice="accept"]')
+        ?.addEventListener('click', () => setConsent('granted'));
       document.body.append(banner);
     }
     return () => {
