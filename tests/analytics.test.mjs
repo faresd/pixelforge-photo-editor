@@ -37,6 +37,16 @@ test('analytics preserves the global dataLayer queue for the Google loader', () 
   assert.match(analyticsSource, /page\.dataLayer = dataLayer;/);
   assert.match(
     analyticsSource,
+    /dataLayer\.push\(arguments\)/,
+    'Google gtag.js expects an array-like arguments object, not a rest array',
+  );
+  assert.doesNotMatch(
+    analyticsSource,
+    /dataLayer\.push\(args\)/,
+    'a rest-parameter array is silently ignored by gtag.js',
+  );
+  assert.match(
+    analyticsSource,
     /https:\/\/www\.googletagmanager\.com\/gtag\/js\?id=/,
   );
 });
