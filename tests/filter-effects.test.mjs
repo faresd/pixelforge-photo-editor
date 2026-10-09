@@ -72,6 +72,33 @@ test('linear shear identity controls and tiny images return detached safe buffer
   }), tiny);
 });
 
+test('polar coordinates performs a deterministic bounded rectangular-to-polar remap', () => {
+  const source = rgba(9, 5, (x, y) => [x * 20, y * 30, 70, 255]);
+  const original = source.slice();
+  const effect = { type: 'polar-coordinates', amount: 100, radius: 64 };
+  const output = applyFilterEffectsPixels(source, 9, 5, effect);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 9, 5, effect));
+  assert.deepEqual(pixel(output, 9, 8, 2), pixel(source, 9, 4, 4));
+  assert.deepEqual(pixel(output, 9, 0, 2), pixel(source, 9, 8, 4));
+  assert.deepEqual(pixel(output, 9, 4, 2), pixel(source, 9, 4, 0));
+  assert.deepEqual(source, original);
+  assert.notEqual(output, source);
+});
+
+test('polar coordinates blends strength, clamps radial extent and preserves transparent pixels', () => {
+  const source = rgba(7, 7, (x, y) => x === 0 && y === 0 ? [255, 0, 255, 0] : [x * 30, y * 30, 12, 255]);
+  const identity = applyFilterEffectsPixels(source, 7, 7, {
+    type: 'polar-coordinates', amount: 0, radius: 64,
+  });
+  assert.deepEqual(identity, source);
+  const output = applyFilterEffectsPixels(source, 7, 7, {
+    type: 'polar-coordinates', amount: 100, radius: 1,
+  });
+  assert.equal(pixel(output, 7, 0, 0)[3], 0);
+  assert.deepEqual(pixel(output, 7, 0, 0).slice(0, 3), [255, 0, 255]);
+  assert.equal(isNeutralFilterEffects({ type: 'polar-coordinates', amount: 100, radius: 0 }), true);
+});
+
 test('Filter effect metadata is bounded and legacy/empty values normalize safely', () => {
   const value = effectiveFilterEffects({ type: 'mosaic', amount: 200, radius: -4, centerX: 4, seed: -1 });
   assert.equal(value.type, 'mosaic');
