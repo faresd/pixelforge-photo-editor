@@ -209,6 +209,13 @@ export type Layer = Common &
   (
     | { kind: 'raster'; asset: string; /** Optional editable solid-fill source color. */ fillColor?: string }
     | {
+        /** Embedded, source-retaining raster content with an editable transform. */
+        kind: 'smart-object';
+        asset: string;
+        /** Original file label retained for replace-contents UX. */
+        sourceName?: string;
+      }
+    | {
         /** A source-free, nondestructive correction applied to the composite below this layer. */
         kind: 'adjustment';
       }
@@ -271,6 +278,18 @@ export type Layer = Common &
         path: PathModel;
       }
   );
+
+export type RasterContentLayer = Extract<Layer, { kind: 'raster' | 'smart-object' }>;
+export function isRasterContentLayer(layer: unknown): layer is RasterContentLayer {
+  return (
+    typeof layer === 'object' &&
+    layer !== null &&
+    'kind' in layer &&
+    (layer as { kind?: unknown }).kind !== undefined &&
+    ((layer as { kind: unknown }).kind === 'raster' ||
+      (layer as { kind: unknown }).kind === 'smart-object')
+  );
+}
 /** A persisted, editable layer folder. Layers keep their own order in Frame.layers. */
 export type Group = {
   id: string;
@@ -689,7 +708,7 @@ export async function transformFrameWithMasks(
   const next = transformFrame(frame, matrix, w, h);
   const layers = await Promise.all(
     next.layers.map(async (layer) => {
-      if (layer.kind !== 'raster' || !layer.mask) return layer;
+      if (!isRasterContentLayer(layer) || !layer.mask) return layer;
       const mask = assets[layer.mask];
       if (!mask) throw new Error('Layer mask asset is missing');
       const image = await decodeAsset(mask),
@@ -1208,7 +1227,7 @@ export function validateFrame(
     if (Math.abs(m[0] * m[3] - m[1] * m[2]) < 0.000000000001) return fail();
     ids.add(layer.id);
     if (
-      layer.kind !== 'raster' &&
+      !isRasterContentLayer(layer) &&
       (layer.mask !== undefined ||
         layer.maskEnabled !== undefined ||
         layer.maskInverted !== undefined ||
@@ -1217,10 +1236,14 @@ export function validateFrame(
         layer.contentAwareFills !== undefined)
     )
       return fail();
-    if (layer.kind === 'raster') {
+    if (isRasterContentLayer(layer)) {
       if (!validId(layer.asset) || !Object.hasOwn(assets, layer.asset))
         return fail();
-      if (layer.fillColor !== undefined && (typeof layer.fillColor !== 'string' || !/^#[a-f\d]{6}$/i.test(layer.fillColor)))
+      if (layer.kind === 'smart-object' && Object.hasOwn(layer, 'fillColor'))
+        return fail();
+      if (layer.kind === 'smart-object' && layer.sourceName !== undefined && !short(layer.sourceName, 160))
+        return fail();
+      if (layer.kind === 'raster' && layer.fillColor !== undefined && (typeof layer.fillColor !== 'string' || !/^#[a-f\d]{6}$/i.test(layer.fillColor)))
         return fail();
       if (
         (layer.maskEnabled !== undefined &&
@@ -1242,8 +1265,11 @@ export function validateFrame(
         return fail();
       if (
         layer.spotHealing !== undefined &&
+        layer.kind === 'raster' &&
         !validSpotHealingStrokes(layer.spotHealing, assets[layer.asset].w, assets[layer.asset].h)
       )
+        return fail();
+      if (layer.kind === 'smart-object' && (layer.spotHealing !== undefined || layer.patchStrokes !== undefined || layer.contentAwareFills !== undefined))
         return fail();
       if (
         layer.patchStrokes !== undefined &&
@@ -1427,10 +1453,10 @@ export function referencedAssets(history: Frame[], assets: Assets): Assets {
         used[entry.selection.mask] = assets[entry.selection.mask];
     }
     for (const layer of frame.layers)
-      if (layer.kind === 'raster') {
+      if (isRasterContentLayer(layer)) {
         used[layer.asset] = assets[layer.asset];
         if (layer.mask) used[layer.mask] = assets[layer.mask];
-        for (const fill of layer.contentAwareFills || [])
+        for (const fill of layer.kind === 'raster' ? layer.contentAwareFills || [] : [])
           if (assets[fill.mask]) used[fill.mask] = assets[fill.mask];
       }
   }
@@ -1808,8 +1834,8 @@ export async function renderFrame(
     const groupOpacity = 1;
     const override = overrides?.[layer.id];
     const image =
-      layer.kind === 'raster' && !override
-        ? layer.fillColor
+      isRasterContentLayer(layer) && !override
+        ? layer.kind === 'raster' && layer.fillColor
           ? (() => {
               const fill = surface(assets[layer.asset].w, assets[layer.asset].h),
                 fillContext = fill.getContext('2d')!;
@@ -1895,7 +1921,7 @@ export async function renderFrame(
       cleanedContext.putImageData(imageData, 0, 0);
       rasterSource = cleaned;
     }
-    if (layer.kind === 'raster' && rasterSource && !isNeutralLayerStyles(layer.styles)) {
+    if (isRasterContentLayer(layer) && rasterSource && !isNeutralLayerStyles(layer.styles)) {
       const asset = assets[layer.asset];
       rasterSource = applyRasterLayerStyles(
         rasterSource,
@@ -1908,7 +1934,7 @@ export async function renderFrame(
       layer.adjustments.filterEffects,
     );
     if (
-      layer.kind === 'raster' &&
+      isRasterContentLayer(layer) &&
       rasterSource &&
       !isNeutralFilterEffects(filterEffect)
     ) {
@@ -1950,7 +1976,7 @@ export async function renderFrame(
       }
     }
     if (
-      layer.kind !== 'raster' &&
+      !isRasterContentLayer(layer) &&
       (effectiveAdjustments(layer.adjustments).hue !== 0 ||
         effectiveAdjustments(layer.adjustments).levelsBlack !==
           neutral.levelsBlack ||
@@ -2041,14 +2067,14 @@ export async function renderFrame(
       continue;
     }
     const maskSettings =
-      layer.kind === 'raster'
+      isRasterContentLayer(layer)
         ? effectiveLayerMask({
             enabled: layer.maskEnabled,
             inverted: layer.maskInverted,
           })
         : undefined;
     if (
-      layer.kind === 'raster' &&
+      isRasterContentLayer(layer) &&
       layer.mask &&
       rasterSource &&
       maskSettings?.enabled
@@ -2111,7 +2137,7 @@ export async function renderFrame(
     // buffer first, apply the input-levels LUT, then composite the result so
     // transforms, blend modes and opacity remain nondestructive metadata.
     if (
-      layer.kind === 'raster' &&
+      isRasterContentLayer(layer) &&
       rasterSource &&
       (effectiveAdjustments(layer.adjustments).hue !== 0 ||
         layer.adjustments.levelsBlack !== neutral.levelsBlack ||
@@ -2166,7 +2192,7 @@ export async function renderFrame(
       reportProgress(layerIndex);
       continue;
     }
-    if (layer.kind === 'raster' && rasterSource)
+    if (isRasterContentLayer(layer) && rasterSource)
       context.drawImage(rasterSource, 0, 0);
     if (layer.kind === 'text') {
       context.fillStyle = layer.color;

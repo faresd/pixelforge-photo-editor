@@ -68,6 +68,7 @@ import {
   addAsset,
   colorSelectMask,
   commonLayer,
+  isRasterContentLayer,
   decodeAsset,
   effectiveAdjustments,
   inversePoint,
@@ -329,6 +330,9 @@ type Command =
   | 'new-layer'
   | 'new-fill-layer'
   | 'new-adjustment-layer'
+  | 'new-smart-object'
+  | 'replace-smart-object'
+  | 'rasterize-layer'
   | 'duplicate-layer'
   | 'delete-layer'
   | 'group-layer'
@@ -718,8 +722,9 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Remove Layer Mask', command: 'remove-layer-mask' },
     { label: 'Vector Mask', command: 'noop', disabled: true },
     { label: 'Create Clipping Mask', command: 'noop', disabled: true },
-    { label: 'Smart Objects', command: 'noop', disabled: true },
-    { label: 'Rasterize', command: 'noop', disabled: true },
+    { label: 'New Smart Object…', command: 'new-smart-object' },
+    { label: 'Replace Contents…', command: 'replace-smart-object' },
+    { label: 'Rasterize', command: 'rasterize-layer' },
     { label: '', command: 'noop', separator: true },
     { label: 'Group Layers', shortcut: 'Ctrl+G', command: 'group-layer' },
     {
@@ -1389,6 +1394,7 @@ const selectionMaskForLayer = async (
 export default function Home() {
   const file = useRef<HTMLInputElement>(null),
     layerFile = useRef<HTMLInputElement>(null),
+    smartObjectFile = useRef<HTMLInputElement>(null),
     projectFile = useRef<HTMLInputElement>(null),
     selectionFile = useRef<HTMLInputElement>(null),
     batchImageFile = useRef<HTMLInputElement>(null),
@@ -1403,7 +1409,8 @@ export default function Home() {
     ),
     pendingMenuFocus = useRef<Record<MenuName, 'first' | 'last' | undefined>>(
       {} as Record<MenuName, 'first' | 'last' | undefined>,
-    );
+    ),
+    smartObjectAction = useRef<'new' | 'replace'>('new');
   const [notice, setNotice] = useState('Ready'),
     [ready, setReady] = useState(false),
     [name, setName] = useState('coastline-edit');
@@ -3241,8 +3248,8 @@ export default function Home() {
   const createMaskFromSelection = async () => {
     const f = current(),
       layer = f.layers.find((l) => l.id === f.active);
-    if (!f.selection || !layer || layer.kind !== 'raster') {
-      setNotice('Select a raster layer and create a selection first');
+    if (!f.selection || !layer || !isRasterContentLayer(layer)) {
+      setNotice('Select an image or smart object layer and create a selection first');
       return;
     }
     if (layerIsLocked(f, layer)) {
@@ -3263,7 +3270,7 @@ export default function Home() {
   const invertLayerMask = () => {
     const f = current(),
       layer = f.layers.find((item) => item.id === f.active);
-    if (!layer || layer.kind !== 'raster' || !layer.mask || !layer.visible) {
+    if (!layer || !isRasterContentLayer(layer) || !layer.mask || !layer.visible) {
       setNotice('Create a layer mask before inverting it');
       return;
     }
@@ -3285,7 +3292,7 @@ export default function Home() {
   const toggleLayerMask = () => {
     const f = current(),
       layer = f.layers.find((item) => item.id === f.active);
-    if (!layer || layer.kind !== 'raster' || !layer.mask || !layer.visible) {
+    if (!layer || !isRasterContentLayer(layer) || !layer.mask || !layer.visible) {
       setNotice('Create a layer mask before disabling it');
       return;
     }
@@ -3300,7 +3307,7 @@ export default function Home() {
   const clearMask = () => {
     const f = current(),
       layer = f.layers.find((item) => item.id === f.active);
-    if (!layer || layer.kind !== 'raster' || !layer.mask || !layer.visible)
+    if (!layer || !isRasterContentLayer(layer) || !layer.mask || !layer.visible)
       return;
     if (layerIsLocked(f, layer)) {
       setNotice('Unlock this layer before editing its mask');
@@ -4827,7 +4834,7 @@ export default function Home() {
         assets.current,
       );
       if (current() !== f) return;
-      const changed = editLayer({
+      const rasterLayer: Layer = {
         ...commonLayer(layer.name),
         id: layer.id,
         kind: 'raster',
@@ -4837,6 +4844,10 @@ export default function Home() {
         visible: layer.visible,
         adjustments: layer.adjustments,
         groupId: layer.groupId,
+      };
+      const changed = commit({
+        ...f,
+        layers: f.layers.map((item) => (item.id === layer.id ? rasterLayer : item)),
       });
       if (changed)
         setNotice('Layer rasterized. Undo restores editable content.');
@@ -4914,6 +4925,82 @@ export default function Home() {
       if (file.current) file.current.value = '';
       if (layerFile.current) layerFile.current.value = '';
     }
+  };
+  const importSmartObject = async (selected?: File, replace = false) => {
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before importing a smart object');
+      return;
+    }
+    const importInfo = selected
+      ? describeImportFormat(selected.name, selected.type)
+      : null;
+    if (!selected || !importInfo?.tryDecode) {
+      setNotice(importInfo?.disclosure || 'Choose a browser-readable image file');
+      if (smartObjectFile.current) smartObjectFile.current.value = '';
+      return;
+    }
+    const original = current();
+    try {
+      if (selected.size > 64 * 1024 * 1024) throw new Error('Image file exceeds 64 MB');
+      const url = URL.createObjectURL(selected),
+        image = new Image();
+      try {
+        image.src = url;
+        await image.decode();
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+      if (
+        image.width * image.height > 16000000 ||
+        image.width > 16000 ||
+        image.height > 16000
+      )
+        throw new Error('Image exceeds 16 megapixels. Current draft unchanged.');
+      const source = surface(image.width, image.height),
+        sourceContext = source.getContext('2d')!;
+      sourceContext.drawImage(image, 0, 0);
+      if (current() !== original)
+        throw new Error('Document changed during import. Please try again.');
+      const asset = addAsset(assets.current, source),
+        sourceName = selected.name.slice(0, 160);
+      if (replace) {
+        const target = original.layers.find((layer) => layer.id === original.active);
+        if (!target || target.kind !== 'smart-object') {
+          setNotice('Select a smart object before replacing its contents');
+          return;
+        }
+        if (
+          commit({
+            ...original,
+            layers: original.layers.map((layer) =>
+              layer.id === target.id
+                ? { ...layer, asset, sourceName }
+                : layer,
+            ),
+          })
+        )
+          setNotice('Smart object contents replaced; transform and edits preserved');
+      } else if (
+        addLayer({
+          ...commonLayer(sourceName),
+          kind: 'smart-object',
+          asset,
+          sourceName,
+        })
+      ) {
+        setNotice('Embedded smart object added');
+      }
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : 'This image could not be embedded',
+      );
+    } finally {
+      if (smartObjectFile.current) smartObjectFile.current.value = '';
+    }
+  };
+  const chooseSmartObjectFile = (replace: boolean) => {
+    smartObjectAction.current = replace ? 'replace' : 'new';
+    smartObjectFile.current?.click();
   };
   const point = (
     e: Pick<React.PointerEvent<HTMLCanvasElement>, 'clientX' | 'clientY'>,
@@ -8323,6 +8410,9 @@ export default function Home() {
     else if (command === 'new-layer') addPaint();
     else if (command === 'new-fill-layer') setFillLayerDialog(true);
     else if (command === 'new-adjustment-layer') addAdjustmentLayer();
+    else if (command === 'new-smart-object') chooseSmartObjectFile(false);
+    else if (command === 'replace-smart-object') chooseSmartObjectFile(true);
+    else if (command === 'rasterize-layer') return rasterize();
     else if (command === 'duplicate-layer') duplicate();
     else if (command === 'delete-layer') remove();
     else if (command === 'group-layer') groupActiveLayer();
@@ -8825,6 +8915,19 @@ export default function Home() {
         type="file"
         accept="image/*,.heic,.heif,.heics,.heifs,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
         onChange={(e) => void load(e.target.files?.[0], true)}
+      />
+      <input
+        ref={smartObjectFile}
+        data-testid="smart-object-input"
+        className="hidden"
+        type="file"
+        accept="image/*,.heic,.heif,.heics,.heifs,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
+        onChange={(event) =>
+          void importSmartObject(
+            event.target.files?.[0],
+            smartObjectAction.current === 'replace',
+          )
+        }
       />
       <input
         ref={projectFile}
@@ -9905,6 +10008,8 @@ export default function Home() {
               edit={editLayer}
               add={addPaint}
               addAdjustment={addAdjustmentLayer}
+              addSmartObject={() => chooseSmartObjectFile(false)}
+              replaceSmartObject={() => chooseSmartObjectFile(true)}
               duplicate={duplicate}
               remove={remove}
               reorder={reorder}
