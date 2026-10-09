@@ -17,6 +17,7 @@ export const FILTER_EFFECT_TYPES = [
   'iris-blur',
   'smart-blur',
   'surface-blur',
+  'shape-blur',
   'motion-blur',
   'radial-blur',
   'field-blur',
@@ -401,6 +402,49 @@ function applySurfaceBlur(
           if (Math.abs(sampleLuma - targetLuma) > threshold) continue;
           const spatialWeight = 1 / (1 + dx * dx + dy * dy);
           const sampleWeight = spatialWeight * alpha;
+          red += source[sampleOffset] * sampleWeight;
+          green += source[sampleOffset + 1] * sampleWeight;
+          blue += source[sampleOffset + 2] * sampleWeight;
+          weight += sampleWeight;
+        }
+      }
+      if (!weight) continue;
+      output[destination] = clampByte(source[destination] * (1 - strength) + (red / weight) * strength);
+      output[destination + 1] = clampByte(source[destination + 1] * (1 - strength) + (green / weight) * strength);
+      output[destination + 2] = clampByte(source[destination + 2] * (1 - strength) + (blue / weight) * strength);
+    }
+  }
+}
+
+/**
+ * Shape Blur approximation with a deterministic diamond aperture. The
+ * Manhattan-distance kernel makes the selected shape explicit and bounded,
+ * while alpha weighting prevents transparent padding halos.
+ */
+function applyShapeBlur(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const bounded = Math.max(1, Math.min(12, Math.round(radius)));
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      if (!source[destination + 3]) continue;
+      let red = 0, green = 0, blue = 0, weight = 0;
+      for (let dy = -bounded; dy <= bounded; dy += 1) {
+        for (let dx = -bounded; dx <= bounded; dx += 1) {
+          const distance = Math.abs(dx) + Math.abs(dy);
+          if (distance > bounded) continue;
+          const sx = x + dx, sy = y + dy;
+          if (sx < 0 || sy < 0 || sx >= width || sy >= height) continue;
+          const sampleOffset = (sy * width + sx) * 4;
+          const alpha = source[sampleOffset + 3] / 255;
+          if (!alpha) continue;
+          const sampleWeight = (bounded + 1 - distance) * alpha;
           red += source[sampleOffset] * sampleWeight;
           green += source[sampleOffset + 1] * sampleWeight;
           blue += source[sampleOffset + 2] * sampleWeight;
@@ -935,6 +979,8 @@ export function applyFilterEffectsPixels(
     applySmartBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'surface-blur') {
     applySurfaceBlur(data, width, height, effect.radius, output, strength);
+  } else if (effect.type === 'shape-blur') {
+    applyShapeBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'lens-blur') {
     applyLensBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'iris-blur') {

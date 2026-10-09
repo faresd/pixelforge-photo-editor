@@ -499,6 +499,19 @@ test('surface blur smooths tonal surfaces while retaining a hard luminance edge'
   assert.equal(pixel(output, 9, 0, 0)[3], 255);
 });
 
+test('shape blur uses a deterministic diamond aperture and preserves alpha', () => {
+  const source = rgba(7, 7, (x, y) =>
+    x === 3 && y === 3 ? [255, 255, 255, 255] : [0, 0, 0, 255],
+  );
+  const effect = effectiveFilterEffects({ type: 'shape-blur', amount: 100, radius: 2 });
+  assert.equal(validFilterEffects(effect), true);
+  const output = applyFilterEffectsPixels(source, 7, 7, effect);
+  assert.notDeepEqual(output, source);
+  assert.ok(pixel(output, 7, 3, 3)[0] < 255);
+  assert.ok(pixel(output, 7, 2, 3)[0] > 0);
+  assert.equal(pixel(output, 7, 0, 0)[3], 255);
+});
+
 test('iris blur keeps a central focal ellipse sharp while blurring the outside', () => {
   const source = rgba(9, 5, (x, y) =>
     x === 4 && y === 2 ? [255, 255, 255, 255] : [0, 0, 0, 255],

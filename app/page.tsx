@@ -399,6 +399,7 @@ type Command =
   | 'filter-iris-blur'
   | 'filter-smart-blur'
   | 'filter-surface-blur'
+  | 'filter-shape-blur'
   | 'filter-motion-blur'
   | 'filter-radial-blur'
   | 'filter-field-blur'
@@ -803,6 +804,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Radial Blur…', command: 'filter-radial-blur' },
     { label: 'Smart Blur…', command: 'filter-smart-blur' },
     { label: 'Surface Blur…', command: 'filter-surface-blur' },
+    { label: 'Shape Blur…', command: 'filter-shape-blur' },
     { label: 'Blur Gallery', command: 'noop', disabled: true },
     { label: 'Iris Blur…', command: 'filter-iris-blur' },
     { label: 'Distort', command: 'noop', disabled: true },
@@ -3385,7 +3387,7 @@ export default function Home() {
                   type === 'blur-more' ||
                   type === 'mosaic' || type === 'color-halftone'
                     ? 85
-                    : type === 'box-blur' || type === 'gaussian-blur' || type === 'lens-blur' || type === 'iris-blur' || type === 'smart-blur' || type === 'surface-blur'
+                    : type === 'box-blur' || type === 'gaussian-blur' || type === 'lens-blur' || type === 'iris-blur' || type === 'smart-blur' || type === 'surface-blur' || type === 'shape-blur'
                       ? 85
                       : 70,
                 radius:
@@ -8170,6 +8172,8 @@ export default function Home() {
       chooseFilterEffect('smart-blur', 'Smart Blur (edge-preserving approximation)');
     else if (command === 'filter-surface-blur')
       chooseFilterEffect('surface-blur', 'Surface Blur (tonal-surface approximation)');
+    else if (command === 'filter-shape-blur')
+      chooseFilterEffect('shape-blur', 'Shape Blur (diamond aperture)');
     else if (command === 'filter-motion-blur')
       chooseFilterEffect('motion-blur', 'Motion Blur');
     else if (command === 'filter-radial-blur')
@@ -8356,6 +8360,7 @@ export default function Home() {
       case 'filter-iris-blur':
       case 'filter-smart-blur':
       case 'filter-surface-blur':
+      case 'filter-shape-blur':
       case 'filter-tilt-shift':
       case 'filter-mosaic':
       case 'filter-color-halftone':
@@ -10310,6 +10315,9 @@ export default function Home() {
             {filterEffects.type === 'surface-blur' && (
               <p>Local tonal-surface blur. Neighbours outside the luminance threshold are excluded; semantic edges and depth are not inferred.</p>
             )}
+            {filterEffects.type === 'shape-blur' && (
+              <p>Local diamond-aperture blur. The shape is deterministic and bounded; custom user-supplied kernels remain planned.</p>
+            )}
             {filterEffects.type !== 'none' && (
               <>
                 <Slider
@@ -10330,6 +10338,7 @@ export default function Home() {
                           filterEffects.type === 'iris-blur' ||
                           filterEffects.type === 'smart-blur' ||
                           filterEffects.type === 'surface-blur' ||
+                          filterEffects.type === 'shape-blur' ||
                           filterEffects.type === 'motion-blur'
                           ? 'Blur radius'
                       : filterEffects.type === 'radial-blur'
