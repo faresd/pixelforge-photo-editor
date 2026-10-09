@@ -2,14 +2,18 @@
 
 PixelForge can render an immutable document frame in a dedicated module worker
 when the browser exposes `Worker`, `OffscreenCanvas`, `createImageBitmap` and a
-usable 2D context. This is a bounded full-frame isolation slice. It keeps the
-main thread available while a committed frame is painted, but it is not a
-tiled renderer and it does not make the current 16 MP safety limit larger.
+usable 2D context. The worker still publishes a bounded full-frame result and
+does not make the current 16 MP safety limit larger. A visible source-provider /
+destination-sink adapter uses bounded tiles internally for Box and Gaussian
+Blur (radius 1–64); unsupported effects continue through the full-frame path.
 
 ## Request protocol
 
-The main thread creates a fresh module worker for a render and sends one
-structured-clone request:
+Committed renders send one structured-clone request through a persistent module
+worker session. The session creates a worker on demand, processes requests
+sequentially, keeps only the newest queued render, and tears the worker down
+after an idle timeout or failure. Nonpersistent callers may still create a
+fresh worker for an individual render.
 
 ```ts
 {
@@ -88,17 +92,19 @@ image-encode worker consumes these batches and releases each temporary tile
 buffer before advancing. This protects worker operations from accidentally
 turning a neighbourhood read into an unbounded queue.
 
-The schedule is a reusable planning boundary for the future document renderer;
-it does not change the current full-frame document result protocol, stream
+The schedule is a reusable planning boundary for document rendering. The
+visible adapter consumes it for bounded Box and Gaussian Blur; other
+neighbourhood effects still require their own edge and compositing tests. The
+schedule does not change the full-frame document result protocol, stream
 partial pixels, or increase the 16 MP safety limit. Overlap remains explicit so
-blur, healing and other neighbourhood effects can adopt the same plan only
-after their edge and compositing rules are tested.
+additional effects can adopt the same plan only after their rules are tested.
 
 ## Tiled render planning protocol
 
 The first document-render planning slice is now implemented in
-[`tiledRender.ts`](../src/tiledRender.ts). It is deliberately self-contained:
-the visible document renderer still uses the full-frame result protocol above.
+[`tiledRender.ts`](../src/tiledRender.ts). The visible document renderer still
+publishes the full-frame result protocol above, while the bounded blur adapter
+uses the tile plan internally.
 The module provides a versioned, pixel-free request envelope:
 
 ```ts
@@ -144,8 +150,9 @@ default key includes the canonical request and tile rectangles, and callers
 can provide a key and retained-byte estimator for processed pixels. Cache
 hits still emit the same monotonic progress event, while outputs that have no
 safe byte estimate are simply left uncached. These counters make a future
-device benchmark observable without changing the visible full-frame path;
-cache policy and measured eviction thresholds remain a release gate.
+device benchmark observable without widening the bounded blur adapter to other
+effects or selecting a device cache policy; measured eviction thresholds remain
+a release gate.
 
 The compositor's pure contract covers edge-clipped overlap, inner-rectangle
 ownership, source immutability, exact parity for a neighbourhood blur,
