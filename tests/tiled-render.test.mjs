@@ -88,7 +88,9 @@ test('tiled render runner checks cancellation before scheduling the next tile', 
     (error) => error?.name === 'AbortError',
   );
   assert.equal(calls, 1);
-  assert.deepEqual(progress, [1]);
+  // Cancellation after the async callback must not publish or cache a stale
+  // tile for the superseding render.
+  assert.deepEqual(progress, []);
 });
 
 test('tiled render runner can reuse a byte-bounded cache without changing progress', async () => {

@@ -63,6 +63,8 @@ export function useDocument(onError: (message: string) => void) {
           overrides,
           {
             signal: controller.signal,
+            reuseWorker: true,
+            tiledRevision: sequence,
             isCancelled: () => sequence !== renderSequence.current,
             onProgress: (completed, total) => {
               if (sequence === renderSequence.current)
@@ -174,6 +176,8 @@ export function useDocument(onError: (message: string) => void) {
         undefined,
         {
           signal: installController.signal,
+          reuseWorker: true,
+          tiledRevision: installSequence,
           isCancelled: () => installSequence !== renderSequence.current,
           onProgress: (completed, total) => {
             if (installSequence === renderSequence.current)

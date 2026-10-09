@@ -1,6 +1,7 @@
 import {
   renderFrame,
   validateFrame,
+  clearDecodedAssetCache,
   type Assets,
   type Frame,
 } from './document.ts';
@@ -15,6 +16,7 @@ type CancelRequest = { kind: 'cancel'; id: number };
 type Request = RenderRequest | CancelRequest;
 type Response =
   | { kind: 'progress'; id: number; completed: number; total: number }
+  | { kind: 'cancelled'; id: number }
   | {
       kind: 'result';
       id: number;
@@ -95,13 +97,15 @@ scope.onmessage = (event: MessageEvent<Request>) => {
   }
   activeId = request.id;
   void (async () => {
+    let output: OffscreenCanvas | undefined;
     try {
       validateFrame(request.frame, request.assets);
-      const output = await renderFrame(
+      output = (await renderFrame(
         request.frame,
         request.assets,
         undefined,
         {
+          tiledRevision: request.id,
           isCancelled: () => cancelled.has(request.id),
           yieldEveryLayers: 1,
           onProgress: (completed, total) => {
@@ -113,17 +117,24 @@ scope.onmessage = (event: MessageEvent<Request>) => {
             });
           },
         },
-      );
+      )) as unknown as OffscreenCanvas;
       if (cancelled.has(request.id)) throw cancellationError();
       await encodeResult(
         request.id,
-        output as unknown as OffscreenCanvas,
+        output,
         request.frame.w,
         request.frame.h,
       );
     } catch (error) {
-      if (!cancelled.has(request.id)) postError(request.id, error);
+      if (cancelled.has(request.id))
+        scope.postMessage({ kind: 'cancelled', id: request.id });
+      else postError(request.id, error);
     } finally {
+      if (output) {
+        output.width = 0;
+        output.height = 0;
+      }
+      clearDecodedAssetCache();
       cancelled.delete(request.id);
       activeId = undefined;
     }

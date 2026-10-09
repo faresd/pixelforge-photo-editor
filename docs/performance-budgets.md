@@ -95,7 +95,8 @@ The worker path is an isolation and responsiveness improvement for committed
 frames, not a larger-document guarantee. It sends only the current frame's
 referenced raster and mask assets, checks cancellation between layer passes,
 reports monotonic completed-layer progress, transfers an `ImageBitmap` (or a
-bounded PNG buffer), and terminates the worker after each request. The browser
+bounded PNG buffer), and reuses one worker between sequential committed
+requests before an idle teardown. The browser
 suite covers capability detection, cancellation, progress validation, malformed
 or forged responses, exact output dimensions, pixel round trips and Canvas2D
 fallback. A browser that lacks a usable worker/OffscreenCanvas pair continues to
@@ -110,10 +111,13 @@ safety and planning seed for document rendering, not evidence that document
 pixels are already tiled. The isolated `src/tiledCompositor.ts` module now
 assembles one expanded tile at a time, writes only inner rectangles, enforces a
 retained input/output byte budget, and compares its result with a full-frame
-oracle. Its pure tests cover exact neighbourhood-effect parity and deliberate
-seam detection when overlap is insufficient. The visible document path does
-not yet consume this compositor, provide a persistent worker pool or provide
-worker-aware interactive brush/adjustment overrides. The shared tile planner
+oracle. The visible document path now consumes a source-provider/destination-
+sink adapter for box and Gaussian blur with radius 1–64; unsupported/global
+effects remain on the full-frame fallback. Its pure tests cover exact
+neighbourhood-effect parity, cache ownership and deliberate seam detection
+when overlap is insufficient. The committed render path also reuses one
+worker sequentially with latest-wins cancellation and idle teardown. The
+shared tile planner
 now has an opt-in byte-bounded LRU cache with cumulative hit/miss, peak-byte
 and eviction counters, and the cancellable tile runner can reuse outputs when
 a caller supplies a safe retained-byte estimate. This is instrumentation and a
@@ -139,9 +143,10 @@ industrial-scale, the implementation needs:
    and other neighborhood operations) into document rendering so one edit does
    not allocate several full-size surfaces. The serial compositor now validates
    expanded input/output bytes, writes each inner rectangle once and proves
-   representative neighbourhood parity against a full-frame oracle. A visible
-   document adapter, tile cache size/eviction policy and measured desktop/mobile
-   gates still require implementation.
+   representative neighbourhood parity against a full-frame oracle. The
+   visible adapter currently covers only box/Gaussian blur; tile cache policy,
+   eviction thresholds and measured desktop/mobile memory gates remain
+   required before widening the effect family.
 3. Repeat the operation-level marks for pointer-to-paint, render completion,
    export and IndexedDB save as p50/p95 reports on physical devices. The first
    local instrumentation slice is active and covered by the focused desktop

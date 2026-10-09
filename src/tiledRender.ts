@@ -233,6 +233,9 @@ export async function runTiledRender<T>(
         : undefined;
       const cached = cacheKey ? options.cache?.get(cacheKey) : undefined;
       const output = cached === undefined ? await renderTile(tile, context) : cached;
+      // A cancelled asynchronous callback must never populate the cache or
+      // report a completed tile for a superseded render.
+      assertAbort(options.signal);
       if (cached === undefined && cacheKey && options.cache) {
         const bytes = options.cacheBytes?.(output, tile, context) ?? inferCacheBytes(output);
         if (bytes !== undefined && Number.isSafeInteger(bytes) && bytes > 0)
