@@ -1,6 +1,8 @@
 import {
   DEFAULT_TILE_BATCH_BYTES,
   TILE_MAX_BATCH_BYTES,
+  TILE_MAX_DIMENSION,
+  TILE_MAX_PIXELS,
   type Tile,
   type TileSchedule,
   TileCache,
@@ -90,8 +92,10 @@ function validTileCacheStats(value: unknown): value is TileCacheStats {
     bytes.every((item) => Number.isSafeInteger(item) && (item as number) >= 0) &&
     counters.every((item) => Number.isSafeInteger(item) && (item as number) >= 0) &&
     (stats.maxBytes as number) > 0 &&
+    (stats.maxBytes as number) <= TILE_MAX_BATCH_BYTES &&
     (stats.bytes as number) <= (stats.maxBytes as number) &&
     (stats.peakBytes as number) >= (stats.bytes as number) &&
+    (stats.peakBytes as number) <= (stats.maxBytes as number) &&
     (stats.size as number) <= (stats.hits as number) + (stats.misses as number)
   );
 }
@@ -114,23 +118,40 @@ export function validTiledRenderTelemetry(value: unknown): value is TiledRenderT
   ];
   const cacheStatsValid =
     candidate.cacheStats === undefined || validTileCacheStats(candidate.cacheStats);
+  const allowedKeys = new Set([
+    'kind', 'effect', 'layerId', 'width', 'height', 'tileSize', 'tileCount',
+    'destinationBytes', 'peakWorkingBytes', 'cacheBytes', 'peakBytes',
+    'maxWorkingBytes', 'maxCacheBytes', 'cacheStats',
+  ]);
   return candidate.kind === 'tiled-neighborhood' &&
+    Object.keys(candidate).every((key) => allowedKeys.has(key)) &&
     (candidate.effect === 'box-blur' || candidate.effect === 'gaussian-blur') &&
     (candidate.tileSize === 256 || candidate.tileSize === 512) &&
     integers.every((item) => Number.isSafeInteger(item) && (item as number) >= 0) &&
     (candidate.width as number) > 0 && (candidate.height as number) > 0 &&
-    (candidate.tileCount as number) > 0 &&
+    (candidate.width as number) <= TILE_MAX_DIMENSION &&
+    (candidate.height as number) <= TILE_MAX_DIMENSION &&
+    (candidate.width as number) * (candidate.height as number) <= TILE_MAX_PIXELS &&
+    candidate.tileCount === Math.ceil((candidate.width as number) / (candidate.tileSize as number)) *
+      Math.ceil((candidate.height as number) / (candidate.tileSize as number)) &&
     (candidate.maxWorkingBytes as number) > 0 &&
+    (candidate.maxWorkingBytes as number) <= TILE_MAX_BATCH_BYTES &&
     (candidate.maxCacheBytes as number) >= 0 &&
+    (candidate.maxCacheBytes as number) <= TILE_MAX_BATCH_BYTES &&
     (candidate.peakWorkingBytes as number) <= (candidate.maxWorkingBytes as number) &&
     (candidate.cacheBytes as number) <= (candidate.maxCacheBytes as number) &&
     (candidate.destinationBytes as number) ===
       (candidate.width as number) * (candidate.height as number) * 4 &&
+    (candidate.peakBytes as number) >= (candidate.destinationBytes as number) +
+      (candidate.peakWorkingBytes as number) + (candidate.cacheBytes as number) &&
+    (candidate.peakBytes as number) <= (candidate.destinationBytes as number) +
+      (candidate.maxWorkingBytes as number) + (candidate.maxCacheBytes as number) &&
     cacheStatsValid &&
     (!candidate.cacheStats ||
       (candidate.cacheStats.bytes === candidate.cacheBytes &&
         candidate.cacheStats.maxBytes === candidate.maxCacheBytes)) &&
-    (!candidate.layerId || (typeof candidate.layerId === 'string' && candidate.layerId.length <= 128));
+    (candidate.layerId === undefined || (typeof candidate.layerId === 'string' &&
+      candidate.layerId.length > 0 && candidate.layerId.length <= 128));
 }
 
 export type TiledDocumentOptions = {
@@ -310,6 +331,7 @@ export async function renderTiledNeighborhoodEffect(
       options.onProgress?.(completed, plan.schedule.tileCount);
     }
   }
+  assertAbort(options.signal, options.isCancelled);
   options.onTelemetry?.({
     kind: 'tiled-neighborhood',
     effect: effect.type as 'box-blur' | 'gaussian-blur',

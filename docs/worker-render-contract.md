@@ -166,6 +166,9 @@ The document path now carries one validated `tiled-telemetry` message for each
 eligible blur layer. It reports only effect kind, layer-local dimensions,
 tile count/size, destination bytes, peak tile working bytes, cache bytes and
 bounded cache counters; it never includes pixels, asset URLs or user content.
+The committed editor currently uses the adapter without a retained `TileCache`,
+so its live cache counters remain zero; cache reuse is an explicit opt-in for
+future bounded sessions rather than a claim of cross-render cache persistence.
 The worker validates this envelope before invoking the UI callback, drops
 telemetry from superseded request IDs, and publishes it before the owned image
 result. The editor exposes the latest values as render-status data attributes

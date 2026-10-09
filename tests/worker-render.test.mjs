@@ -203,6 +203,57 @@ test('worker renderer forwards monotonic bounded layer progress', async () => {
   }
 });
 
+test('worker callback failures retire the session before starting a queued render', async () => {
+  const workers = [];
+  let secondPromise;
+  class FakeCanvas { getContext() { return {}; } transferToImageBitmap() { return {}; } }
+  class FakeWorker {
+    constructor() { this.terminated = false; workers.push(this); }
+    postMessage(message) {
+      if (message.kind !== 'render') return;
+      if (workers.length === 1) {
+        queueMicrotask(() => this.onmessage?.({ data: {
+          kind: 'progress', id: message.id, completed: 1, total: 1,
+        } }));
+      } else {
+        queueMicrotask(() => this.onmessage?.({ data: {
+          kind: 'result', id: message.id, width: 1, height: 1,
+          image: { width: 1, height: 1, close() {} },
+        } }));
+      }
+    }
+    terminate() { this.terminated = true; }
+  }
+  setGlobal('Worker', FakeWorker);
+  setGlobal('OffscreenCanvas', FakeCanvas);
+  setGlobal('createImageBitmap', async () => ({}));
+  try {
+    const first = renderFrameWithWorker(rectangleFrame(), {}, undefined, {
+      forceWorker: true,
+      reuseWorker: true,
+      onProgress: () => {
+        secondPromise = renderFrameWithWorker(rectangleFrame(), {}, undefined, {
+          forceWorker: true,
+          reuseWorker: true,
+        });
+        throw new Error('progress consumer failed');
+      },
+    });
+    // Queuing the replacement cancels the superseded promise; the callback
+    // failure still has to retire the first worker before the replacement can
+    // run on a fresh session.
+    await assert.rejects(first, (error) => error?.name === 'AbortError');
+    assert.ok(secondPromise);
+    const image = await Promise.resolve(secondPromise);
+    assert.equal(image.width, 1);
+    assert.equal(workers.length, 2);
+    assert.equal(workers[0].terminated, true);
+  } finally {
+    resetPersistentWorkerForTests();
+    restoreGlobals();
+  }
+});
+
 test('worker renderer rejects forged or regressing progress before accepting output', async () => {
   let worker;
   class FakeOffscreenCanvas {

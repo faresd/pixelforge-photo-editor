@@ -119,7 +119,8 @@ scope.onmessage = (event: MessageEvent<Request>) => {
             });
           },
           onTiledTelemetry: (telemetry) => {
-            scope.postMessage({ kind: 'tiled-telemetry', id: request.id, telemetry });
+            if (!cancelled.has(request.id))
+              scope.postMessage({ kind: 'tiled-telemetry', id: request.id, telemetry });
           },
         },
       )) as unknown as OffscreenCanvas;
