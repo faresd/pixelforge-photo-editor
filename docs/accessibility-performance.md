@@ -40,7 +40,10 @@ megapixel canvas, 64 megapixel raster-frame, 64 MiB portable project, and 64
 megapixel decoded-cache limits are safety budgets. Worker image encoding now
 uses the shared bounded row-major tile schedule (16 MiB expanded-RGBA batch
 budget, 64 MiB hard ceiling), while document rendering still publishes a
-full-frame result. Tile compositing, eviction, partial-pixel streaming and
+full-frame result. An isolated overlap-aware compositor now assembles one tile
+at a time under a retained-byte budget and proves neighbourhood pixel parity
+against a full-frame oracle; it is not connected to visible document rendering
+yet. Persistent worker reuse, eviction policy, partial-pixel streaming and
 device-specific telemetry remain planned follow-up work and are not implied by
 this contract.
 
