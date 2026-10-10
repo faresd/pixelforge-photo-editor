@@ -47,6 +47,13 @@ The editable path slice is covered by pure geometry tests and desktop/mobile bro
 
 Editable vertical type flow is covered by deterministic glyph-column and validation tests plus four desktop/mobile browser checks. The Type menu and Layers panel round-trip horizontal/vertical state through reload and project export, preserve editable source metadata, and disable orientation commands for raster or locked layers. The rendering and persistence contract is documented in [`docs/vertical-type-contract.md`](./vertical-type-contract.md); OpenType vertical shaping, punctuation alternates, type-on-path and text masks remain staged.
 
+**Layer → Arrange** now provides Photoshop-style Bring to Front, Bring Forward,
+Send Backward and Send to Back for selected root-level layers. The immutable
+planner preserves stack-order selection, active-layer identity and source
+metadata, creates one undoable history step, and disables empty, locked,
+grouped or boundary no-op moves. Folder-aware arrange remains staged; see
+[`layer-arrange-contract.md`](./layer-arrange-contract.md).
+
 **Layer → Merge Layers** now combines either the active layer with the immediately
 lower visible, unlocked, ungrouped layer or a contiguous selected root-level
 range of at least two visible, unlocked, ungrouped layers. The selected range

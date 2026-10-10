@@ -12,6 +12,10 @@ import {
 } from './document';
 import type { ParametricShapeVariant } from './vectorShapes';
 import type { AlignmentMode, DistributionAxis } from './layerAlignment';
+import {
+  planLayerArrange,
+  type LayerArrangeMode,
+} from './layerArrange';
 import { effectiveLayerStyles, type LayerStyles } from './layerStyles';
 import { filterLayersBySearch, groupMatchesSearch } from './layerSearch';
 import {
@@ -37,6 +41,7 @@ type Props = {
   duplicate: () => void;
   remove: () => void;
   reorder: (direction: number) => void;
+  arrange: (mode: LayerArrangeMode) => void;
   groupActive: () => void;
   ungroupActive: () => void;
   editGroup: (id: string, patch: Partial<Group>) => void;
@@ -70,6 +75,7 @@ export default function LayersPanel({
   duplicate,
   remove,
   reorder,
+  arrange,
   groupActive,
   ungroupActive,
   editGroup,
@@ -114,6 +120,8 @@ export default function LayersPanel({
     ).filter((id) => frame.layers.some((item) => item.id === id)),
   );
   const styles = effectiveLayerStyles(layer.styles);
+  const arrangeDisabled = (mode: LayerArrangeMode) =>
+    !planLayerArrange(frame, mode).ok;
   const updateStyles = (patch: Partial<LayerStyles>) =>
     edit({ styles: { ...styles, ...patch } });
   const updateDropShadow = (
@@ -955,6 +963,30 @@ export default function LayersPanel({
           disabled={layerLocked || frame.layers[0].id === layer.id}
         >
           Lower layer
+        </button>
+        <button
+          onClick={() => arrange('front')}
+          disabled={arrangeDisabled('front')}
+        >
+          Bring to front
+        </button>
+        <button
+          onClick={() => arrange('forward')}
+          disabled={arrangeDisabled('forward')}
+        >
+          Bring forward
+        </button>
+        <button
+          onClick={() => arrange('backward')}
+          disabled={arrangeDisabled('backward')}
+        >
+          Send backward
+        </button>
+        <button
+          onClick={() => arrange('back')}
+          disabled={arrangeDisabled('back')}
+        >
+          Send to back
         </button>
         <button onClick={duplicate} disabled={frame.layers.length >= 32}>
           Duplicate layer

@@ -146,6 +146,12 @@ import {
   planSelectedLayerMerge,
   selectedLayerMergeReason,
 } from '../src/layerMerge';
+import {
+  applyLayerArrange,
+  layerArrangeReason,
+  planLayerArrange,
+  type LayerArrangeMode,
+} from '../src/layerArrange';
 import { combineSelectionBounds } from '../src/layerSelection';
 import {
   clippingCandidateBase,
@@ -397,6 +403,10 @@ type Command =
   | 'distribute-horizontal'
   | 'distribute-vertical'
   | 'hide-layer'
+  | 'arrange-front'
+  | 'arrange-forward'
+  | 'arrange-backward'
+  | 'arrange-back'
   | 'merge-layers'
   | 'merge-visible'
   | 'combine-shapes-union'
@@ -809,7 +819,10 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Merge Layers', command: 'merge-layers' },
     { label: 'Merge Visible', command: 'merge-visible' },
     { label: 'Flatten Image', command: 'flatten' },
-    { label: 'Arrange', command: 'noop', disabled: true },
+    { label: 'Bring to Front', command: 'arrange-front' },
+    { label: 'Bring Forward', command: 'arrange-forward' },
+    { label: 'Send Backward', command: 'arrange-backward' },
+    { label: 'Send to Back', command: 'arrange-back' },
     { label: 'Combine Shapes → Union', command: 'combine-shapes-union' },
     { label: 'Combine Shapes → Subtract Front Shape', command: 'combine-shapes-subtract' },
     { label: 'Combine Shapes → Intersect', command: 'combine-shapes-intersect' },
@@ -5151,6 +5164,25 @@ export default function Home() {
     [layers[from], layers[to]] = [layers[to], layers[from]];
     commit({ ...f, layers });
   };
+  const arrangeLayers = (mode: LayerArrangeMode) => {
+    const f = current();
+    const plan = planLayerArrange(f, mode);
+    if (!plan.ok) {
+      setNotice(layerArrangeReason(plan.reason));
+      return false;
+    }
+    const next = applyLayerArrange(f, plan);
+    if (next === f) return false;
+    if (!commit(next)) return false;
+    const labels: Record<LayerArrangeMode, string> = {
+      front: 'Bring to Front',
+      forward: 'Bring Forward',
+      backward: 'Send Backward',
+      back: 'Send to Back',
+    };
+    setNotice(`${labels[mode]} applied; undo restores the previous order`);
+    return true;
+  };
   const rasterize = async () => {
     const f = current(),
       layer = f.layers.find((l) => l.id === f.active)!;
@@ -9227,6 +9259,10 @@ export default function Home() {
     else if (command === 'distribute-vertical')
       distributeGroupLayers('vertical');
     else if (command === 'hide-layer') hideActiveLayer();
+    else if (command === 'arrange-front') arrangeLayers('front');
+    else if (command === 'arrange-forward') arrangeLayers('forward');
+    else if (command === 'arrange-backward') arrangeLayers('backward');
+    else if (command === 'arrange-back') arrangeLayers('back');
     else if (command === 'merge-layers') return mergeLayers();
     else if (command === 'merge-visible') return mergeVisible();
     else if (command === 'flatten') return flattenImage();
@@ -9660,6 +9696,14 @@ export default function Home() {
         return !frame.selection;
       case 'hide-layer':
         return !layer || Boolean(groupForLayer(frame, layer)?.locked);
+      case 'arrange-front':
+        return !planLayerArrange(frame, 'front').ok;
+      case 'arrange-forward':
+        return !planLayerArrange(frame, 'forward').ok;
+      case 'arrange-backward':
+        return !planLayerArrange(frame, 'backward').ok;
+      case 'arrange-back':
+        return !planLayerArrange(frame, 'back').ok;
       case 'merge-layers': {
         const selected = selectedIdsForFrame(frame);
         if (selected.length >= 2)
@@ -10875,6 +10919,7 @@ export default function Home() {
               duplicate={duplicate}
               remove={remove}
               reorder={reorder}
+              arrange={arrangeLayers}
               groupActive={groupActiveLayer}
               ungroupActive={ungroupActiveLayer}
               editGroup={editGroup}
