@@ -30,6 +30,16 @@ history entry and therefore participates in undo/redo. Locked and hidden paths
 reject node edits. The Layers panel exposes path closure, fill/stroke toggles,
 colors, stroke width, and the node count.
 
+When the Pen is active on an existing visible, unlocked path, a click on its
+stroke splits the nearest bounded segment and inserts an editable anchor. The
+split preserves cubic Bézier geometry through a deterministic de Casteljau
+step. Shift-clicking an anchor toggles a mirrored smooth point and Alt/Option-
+clicking removes it; removing an anchor never leaves an invalid empty path and
+automatically opens a path that no longer has enough nodes for a closed loop.
+These edits are immutable, undoable, and round-trip through local drafts and
+project files. Path booleans and semantic shape union/subtract remain outside
+this local geometry contract.
+
 Path metadata is validated on draft import and project export. Node coordinates
 and style values are bounded to keep malformed or oversized project files from
 allocating unbounded work. Raster export uses the same affine, opacity, blend,

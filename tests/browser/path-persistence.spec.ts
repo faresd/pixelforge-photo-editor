@@ -134,6 +134,46 @@ test('Direct Selection edits cubic handles and persists the curve through reload
   expect(pathLayer(await project(page))).toEqual(moved);
 });
 
+test('Pen adds, converts and deletes anchors on an existing path', async ({ page }) => {
+  await triangle(page);
+  const box = (await page.getByTestId('editor-canvas').boundingBox())!;
+  await selectTool(page, 'Pen');
+  // The triangle's first segment is horizontal at y=.2; a stroke click adds
+  // an anchor at the deterministic midpoint.
+  await page.mouse.click(box.x + box.width * 0.45, box.y + box.height * 0.2);
+  await expect(page.locator('footer')).toContainText('Path anchor added');
+  let edited = pathLayer(await project(page));
+  expect(edited.path.nodes).toHaveLength(4);
+  expect(edited.path.nodes[1].x).toBeCloseTo(edited.path.nodes[0].x + (edited.path.nodes[2].x - edited.path.nodes[0].x) / 2, 0);
+
+  // Shift-clicking an anchor toggles the smooth/corner representation.
+  const first = edited.path.nodes[0];
+  const frame = (await project(page)).history[(await project(page)).index];
+  const screen = (x: number, y: number) => ({
+    x: box.x + box.width * x / frame.w,
+    y: box.y + box.height * y / frame.h,
+  });
+  const firstScreen = screen(first.x, first.y);
+  await page.keyboard.down('Shift');
+  await page.mouse.click(firstScreen.x, firstScreen.y);
+  await page.keyboard.up('Shift');
+  await expect(page.locator('footer')).toContainText('Path anchor converted');
+  edited = pathLayer(await project(page));
+  expect(edited.path.nodes[0].inHandle).toBeDefined();
+  expect(edited.path.nodes[0].outHandle).toBeDefined();
+
+  // Alt-clicking the same anchor removes it without changing source pixels.
+  await page.keyboard.down('Alt');
+  await page.mouse.click(firstScreen.x, firstScreen.y);
+  await page.keyboard.up('Alt');
+  await expect(page.locator('footer')).toContainText('Path anchor deleted');
+  edited = pathLayer(await project(page));
+  expect(edited.path.nodes).toHaveLength(3);
+  expect(edited.path.closed).toBe(true);
+  await page.reload();
+  expect(pathLayer(await project(page))).toEqual(edited);
+});
+
 test('Freeform Pen creates a smooth open path and preserves it on reload', async ({ page }) => {
   await selectTool(page, 'Freeform Pen');
   const box = (await page.getByTestId('editor-canvas').boundingBox())!;

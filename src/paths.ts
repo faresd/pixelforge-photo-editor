@@ -26,6 +26,13 @@ export type PathModel = {
 
 export type PathMatrix = readonly [number, number, number, number, number, number];
 export type PathHandleKind = 'in' | 'out';
+export type PathSegmentHit = {
+  /** Segment order: 0..nodes.length-2, with the closing segment last. */
+  segmentIndex: number;
+  /** Approximate local parameter on the segment, bounded to 0..1. */
+  t: number;
+  distance: number;
+};
 
 export const PATH_MAX_NODES = 10_000;
 export const PATH_MAX_COORDINATE = 1_000_000;
@@ -109,6 +116,15 @@ const controlPoints = (segment: Segment): [PathNode, PathNode, PathNode, PathNod
   segment.end.inHandle ?? segment.end,
   segment.end,
 ];
+
+const segmentAt = (path: PathModel, index: number): Segment => {
+  if (!Number.isInteger(index) || index < 0) throw new Error('Path segment index is invalid');
+  if (index < path.nodes.length - 1)
+    return { start: path.nodes[index], end: path.nodes[index + 1], close: false };
+  if (path.closed && index === path.nodes.length - 1)
+    return { start: path.nodes[path.nodes.length - 1], end: path.nodes[0], close: true };
+  throw new Error('Path segment index is invalid');
+};
 
 const cubic = (p0: PathNode, p1: PathNode, p2: PathNode, p3: PathNode, t: number): PathNode => {
   const u = 1 - t;
@@ -273,6 +289,123 @@ export function hitTestPathStroke(path: PathModel, point: PathNode, tolerance: n
     }
   }
   return false;
+}
+
+/**
+ * Find the nearest editable segment and a stable parameter on it. Sampling is
+ * intentionally bounded: the result is used to place a new anchor, not to
+ * claim sub-pixel curve intersection precision.
+ */
+export function nearestPathSegment(
+  path: PathModel,
+  point: PathNode,
+  tolerance = Number.POSITIVE_INFINITY,
+): PathSegmentHit | null {
+  const valid = validatePath(path);
+  if (!finite(point.x) || !finite(point.y) ||
+      (!(Number.isFinite(tolerance) || tolerance === Number.POSITIVE_INFINITY)) || tolerance < 0)
+    throw new Error('Path hit-test input is invalid');
+  const count = valid.nodes.length - 1 + (valid.closed ? 1 : 0);
+  let best: PathSegmentHit | null = null;
+  for (let segmentIndex = 0; segmentIndex < count; segmentIndex += 1) {
+    const segment = segmentAt(valid, segmentIndex);
+    const [p0, p1, p2, p3] = controlPoints(segment);
+    let previous = cubic(p0, p1, p2, p3, 0);
+    for (let step = 1; step <= 48; step += 1) {
+      const next = cubic(p0, p1, p2, p3, step / 48);
+      const dx = next.x - previous.x, dy = next.y - previous.y;
+      const length2 = dx * dx + dy * dy;
+      const u = length2 === 0
+        ? 0
+        : Math.max(0, Math.min(1, ((point.x - previous.x) * dx + (point.y - previous.y) * dy) / length2));
+      const candidate = {
+        x: previous.x + dx * u,
+        y: previous.y + dy * u,
+      };
+      const distance = Math.hypot(point.x - candidate.x, point.y - candidate.y);
+      const t = Math.max(0, Math.min(1, (step - 1 + u) / 48));
+      if (distance <= tolerance &&
+          (best === null || distance < best.distance ||
+            (distance === best.distance && segmentIndex < best.segmentIndex)))
+        best = { segmentIndex, t, distance };
+      previous = next;
+    }
+  }
+  return best;
+}
+
+const lerpPoint = (a: PathNode, b: PathNode, t: number) => ({
+  x: a.x + (b.x - a.x) * t,
+  y: a.y + (b.y - a.y) * t,
+});
+
+/** Insert an anchor by splitting a straight or cubic segment immutably. */
+export function insertPathNode(path: PathModel, segmentIndex: number, t: number): PathModel {
+  const valid = validatePath(path);
+  if (!finite(t) || t < 0 || t > 1) throw new Error('Path segment parameter is invalid');
+  const segment = segmentAt(valid, segmentIndex);
+  const [p0, p1, p2, p3] = controlPoints(segment);
+  const curved = Boolean(segment.start.outHandle || segment.end.inHandle);
+  let node: PathNode;
+  let start = cloneNode(segment.start), end = cloneNode(segment.end);
+  if (curved) {
+    const p01 = lerpPoint(p0, p1, t), p12 = lerpPoint(p1, p2, t), p23 = lerpPoint(p2, p3, t);
+    const p012 = lerpPoint(p01, p12, t), p123 = lerpPoint(p12, p23, t);
+    const p0123 = lerpPoint(p012, p123, t);
+    start = { ...start, outHandle: p01 };
+    end = { ...end, inHandle: p23 };
+    node = { ...p0123, inHandle: p012, outHandle: p123 };
+  } else node = lerpPoint(p0, p3, t);
+  const nodes = valid.nodes.map(cloneNode);
+  if (segmentIndex < valid.nodes.length - 1) {
+    nodes[segmentIndex] = start;
+    nodes.splice(segmentIndex + 1, 0, node);
+    nodes[segmentIndex + 2] = end;
+  } else {
+    nodes[nodes.length - 1] = start;
+    nodes[0] = end;
+    nodes.push(node);
+  }
+  return validatePath({ ...valid, nodes });
+}
+
+/** Remove one anchor while preserving a valid, drawable path. */
+export function removePathNode(path: PathModel, index: number): PathModel {
+  const valid = validatePath(path);
+  if (!Number.isInteger(index) || index < 0 || index >= valid.nodes.length)
+    throw new Error('Path node index is invalid');
+  if (valid.nodes.length <= 1) throw new Error('Path needs at least one anchor');
+  const nodes = valid.nodes.filter((_, itemIndex) => itemIndex !== index).map(cloneNode);
+  return validatePath({ ...valid, nodes, closed: valid.closed && nodes.length >= 3 });
+}
+
+/** Toggle a node between a corner and a mirrored smooth anchor. */
+export function setPathNodeSmooth(path: PathModel, index: number, smooth: boolean): PathModel {
+  const valid = validatePath(path);
+  if (!Number.isInteger(index) || index < 0 || index >= valid.nodes.length)
+    throw new Error('Path node index is invalid');
+  const node = valid.nodes[index];
+  if (!smooth)
+    return validatePath({ ...valid, nodes: valid.nodes.map((item, itemIndex) => itemIndex === index
+      ? { x: item.x, y: item.y }
+      : cloneNode(item)) });
+  const previous = index > 0 ? valid.nodes[index - 1] : (valid.closed ? valid.nodes.at(-1)! : undefined);
+  const next = index < valid.nodes.length - 1 ? valid.nodes[index + 1] : (valid.closed ? valid.nodes[0] : undefined);
+  const before = previous ? { x: node.x - previous.x, y: node.y - previous.y } : { x: 1, y: 0 };
+  const after = next ? { x: next.x - node.x, y: next.y - node.y } : before;
+  const tangent = { x: before.x + after.x, y: before.y + after.y };
+  const length = Math.hypot(tangent.x, tangent.y) || 1;
+  const leftLength = previous ? Math.min(64, Math.max(8, Math.hypot(node.x - previous.x, node.y - previous.y) / 3)) : 24;
+  const rightLength = next ? Math.min(64, Math.max(8, Math.hypot(next.x - node.x, next.y - node.y) / 3)) : leftLength;
+  const ux = tangent.x / length, uy = tangent.y / length;
+  return validatePath({ ...valid, nodes: valid.nodes.map((item, itemIndex) => itemIndex === index
+    ? {
+        x: item.x,
+        y: item.y,
+        inHandle: { x: item.x - ux * leftLength, y: item.y - uy * leftLength },
+        outHandle: { x: item.x + ux * rightLength, y: item.y + uy * rightLength },
+      }
+    : cloneNode(item)) });
 }
 
 /** Stable SVG path data used for export/tests, with no locale-sensitive formatting. */

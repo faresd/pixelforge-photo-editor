@@ -248,6 +248,10 @@ import {
   hitTestPathNode,
   movePathHandle,
   movePathNode,
+  insertPathNode,
+  nearestPathSegment,
+  removePathNode,
+  setPathNodeSmooth,
   validatePath,
   type PathHandleKind,
   type PathNode,
@@ -5443,6 +5447,53 @@ export default function Home() {
       gesture.current = g;
       setNotice('Freeform Pen: draw a path, release to finish');
       return;
+    }
+    // Photoshop's Pen tool edits an existing path when the pointer is over
+    // an anchor or stroke.  Alt/Option removes an anchor, Shift toggles a
+    // corner/smooth point, and an unmodified stroke click inserts an anchor;
+    // clicking empty canvas still starts a new path as before.
+    if (tool === 'pen') {
+      const f = current(), activeLayer = f.layers.find((item) => item.id === f.active), p = point(e);
+      if (activeLayer?.kind !== 'path') {
+        // Empty canvas or a non-path active layer starts a new path below.
+      } else if (layerIsLocked(f, activeLayer) || !activeLayer.visible) {
+        setNotice('Select a visible, unlocked path layer before editing anchors');
+        return;
+      } else {
+        const localPath = inversePoint(activeLayer.matrix, p);
+        if (!localPath) {
+          setNotice('This path transform cannot be edited');
+          return;
+        }
+        const scale = Math.max(
+          Math.hypot(activeLayer.matrix[0], activeLayer.matrix[1]),
+          Math.hypot(activeLayer.matrix[2], activeLayer.matrix[3]),
+          0.0001,
+        );
+        const path = validatePath(activeLayer.path);
+        const nodeIndex = hitTestPathNode(path, localPath, 12 / scale);
+        if (nodeIndex !== null && (e.altKey || e.shiftKey)) {
+          const next = e.altKey
+            ? removePathNode(path, nodeIndex)
+            : setPathNodeSmooth(
+                path,
+                nodeIndex,
+                !(path.nodes[nodeIndex].inHandle || path.nodes[nodeIndex].outHandle),
+              );
+          if (commit({ ...f, layers: f.layers.map((item) => item.id === activeLayer.id ? { ...item, path: next } : item) }))
+            setNotice(e.altKey ? 'Path anchor deleted' : 'Path anchor converted');
+          return;
+        }
+        if (!e.altKey && !e.shiftKey) {
+          const hit = nearestPathSegment(path, localPath, 12 / scale);
+          if (hit) {
+            const next = insertPathNode(path, hit.segmentIndex, hit.t);
+            if (commit({ ...f, layers: f.layers.map((item) => item.id === activeLayer.id ? { ...item, path: next } : item) }))
+              setNotice('Path anchor added');
+            return;
+          }
+        }
+      }
     }
     if (tool === 'pen' || tool === 'curvature-pen') {
       if (doc.rendering || !frame) return;
