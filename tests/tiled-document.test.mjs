@@ -170,3 +170,29 @@ test('tiled blur emits privacy-safe telemetry with bounded cache accounting', as
   assert.ok(events[0].cacheBytes <= events[0].maxCacheBytes);
   assert.equal(events[0].cacheStats.maxBytes, cache.maxBytes);
 });
+
+test('tiled blur emits monotonic tile progress with a canonical plan', async () => {
+  const progress = [];
+  const sourcePixels = pixels(520, 300);
+  await renderTiledNeighborhoodEffect(
+    520,
+    300,
+    { type: 'gaussian-blur', amount: 100, radius: 4 },
+    (tile) => readTile(sourcePixels, 520, 300, tile),
+    () => {},
+    {
+      revision: 'progress-fixture',
+      tileSize: 256,
+      onProgress: (completed, total, meta) =>
+        progress.push({ completed, total, ...meta }),
+    },
+  );
+  assert.deepEqual(progress, [
+    { completed: 1, total: 6, tileSize: 256, tileCount: 6 },
+    { completed: 2, total: 6, tileSize: 256, tileCount: 6 },
+    { completed: 3, total: 6, tileSize: 256, tileCount: 6 },
+    { completed: 4, total: 6, tileSize: 256, tileCount: 6 },
+    { completed: 5, total: 6, tileSize: 256, tileCount: 6 },
+    { completed: 6, total: 6, tileSize: 256, tileCount: 6 },
+  ]);
+});

@@ -622,6 +622,83 @@ test('worker forwards bounded tiled telemetry before publishing its owned result
   } finally { restoreGlobals(); }
 });
 
+test('worker forwards bounded tiled progress before telemetry and result', async () => {
+  let worker;
+  let receivedBudget;
+  const progress = {
+    kind: 'tiled-neighborhood-progress',
+    effect: 'gaussian-blur',
+    layerId: 'layer-1',
+    width: 520,
+    height: 300,
+    tileSize: 256,
+    tileCount: 6,
+    completed: 3,
+    total: 6,
+  };
+  class FakeCanvas { getContext() { return {}; } transferToImageBitmap() { return {}; } }
+  class FakeWorker {
+    constructor() { worker = this; }
+    postMessage(message) {
+      if (message.kind === 'render') receivedBudget = message.tiledMaxWorkingBytes;
+      if (message.kind === 'render') queueMicrotask(() => {
+        this.onmessage?.({ data: { kind: 'tiled-progress', id: message.id, progress } });
+        this.onmessage?.({ data: {
+          kind: 'result', id: message.id, width: 1, height: 1,
+          image: { width: 1, height: 1, close() {} },
+        } });
+      });
+    }
+    terminate() {}
+  }
+  setGlobal('Worker', FakeWorker);
+  setGlobal('OffscreenCanvas', FakeCanvas);
+  setGlobal('createImageBitmap', async () => ({}));
+  try {
+    const events = [];
+    const image = await renderFrameWithWorker(rectangleFrame(), {}, undefined, {
+      forceWorker: true,
+      tiledMaxWorkingBytes: 2 * 1024 * 1024,
+      onTiledProgress: (event) => events.push(event),
+    });
+    assert.equal(image.width, 1);
+    assert.equal(receivedBudget, 2 * 1024 * 1024);
+    assert.deepEqual(events, [progress]);
+    assert.ok(worker);
+  } finally { restoreGlobals(); }
+});
+
+test('worker rejects forged tiled progress before accepting a result', async () => {
+  let worker;
+  class FakeCanvas { getContext() { return {}; } transferToImageBitmap() { return {}; } }
+  class FakeWorker {
+    constructor() { worker = this; }
+    postMessage(message) {
+      if (message.kind === 'render') queueMicrotask(() => {
+        this.onmessage?.({ data: {
+          kind: 'tiled-progress', id: message.id,
+          progress: { kind: 'tiled-neighborhood-progress', effect: 'box-blur', width: -1 },
+        } });
+        this.onmessage?.({ data: {
+          kind: 'result', id: message.id, width: 1, height: 1,
+          image: { width: 1, height: 1, close() {} },
+        } });
+      });
+    }
+    terminate() { this.terminated = true; }
+  }
+  setGlobal('Worker', FakeWorker);
+  setGlobal('OffscreenCanvas', FakeCanvas);
+  setGlobal('createImageBitmap', async () => ({}));
+  try {
+    await assert.rejects(
+      renderFrameWithWorker(rectangleFrame(), {}, undefined, { forceWorker: true }),
+      /invalid tiled progress/,
+    );
+    assert.equal(worker.terminated, true);
+  } finally { restoreGlobals(); }
+});
+
 test('worker rejects forged tiled telemetry before accepting a result', async () => {
   let worker;
   class FakeCanvas { getContext() { return {}; } transferToImageBitmap() { return {}; } }

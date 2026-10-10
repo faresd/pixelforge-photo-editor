@@ -124,6 +124,8 @@ test('Gaussian Blur uses bounded tiled rendering and preserves the editable sour
   await expect(renderStatus).toHaveAttribute('data-tiled-tile-count', /[1-9]/);
   await expect(renderStatus).toHaveAttribute('data-tiled-peak-bytes', /[1-9]/);
   await expect(renderStatus).toHaveAttribute('data-tiled-working-bytes', /[1-9]/);
+  await expect(renderStatus).toHaveAttribute('data-tiled-completed', /[1-9]/);
+  await expect(renderStatus).toHaveAttribute('data-tiled-total', /[1-9]/);
   const changed = await pixels(page);
   expect(changed).not.toEqual(original);
   const after = await downloadProject(page);

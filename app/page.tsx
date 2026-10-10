@@ -1510,6 +1510,7 @@ export default function Home() {
       revision,
       renderProgress,
       tiledTelemetry,
+      tiledProgress,
       commit,
       install,
       select,
@@ -12061,6 +12062,8 @@ export default function Home() {
           data-tiled-peak-bytes={tiledTelemetry?.peakBytes ?? 0}
           data-tiled-working-bytes={tiledTelemetry?.peakWorkingBytes ?? 0}
           data-tiled-destination-bytes={tiledTelemetry?.destinationBytes ?? 0}
+          data-tiled-completed={tiledProgress?.completed ?? 0}
+          data-tiled-total={tiledProgress?.total ?? 0}
           aria-live="polite"
         >
           {doc.rendering

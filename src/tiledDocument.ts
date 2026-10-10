@@ -72,6 +72,19 @@ export type TiledRenderTelemetry = {
   cacheStats?: TileCacheStats;
 };
 
+/** Progress for one bounded neighbourhood effect, without pixel data. */
+export type TiledNeighborhoodProgress = {
+  kind: 'tiled-neighborhood-progress';
+  effect: 'box-blur' | 'gaussian-blur';
+  layerId?: string;
+  width: number;
+  height: number;
+  tileSize: TiledRenderTileSize;
+  tileCount: number;
+  completed: number;
+  total: number;
+};
+
 function validTileCacheStats(value: unknown): value is TileCacheStats {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const stats = value as Partial<TileCacheStats>;
@@ -154,6 +167,48 @@ export function validTiledRenderTelemetry(value: unknown): value is TiledRenderT
       candidate.layerId.length > 0 && candidate.layerId.length <= 128));
 }
 
+/** Validate bounded tile progress at worker/UI boundaries. */
+export function validTiledNeighborhoodProgress(
+  value: unknown,
+): value is TiledNeighborhoodProgress {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as Partial<TiledNeighborhoodProgress>;
+  const integers = [
+    candidate.width,
+    candidate.height,
+    candidate.tileSize,
+    candidate.tileCount,
+    candidate.completed,
+    candidate.total,
+  ];
+  const allowedKeys = new Set([
+    'kind', 'effect', 'layerId', 'width', 'height', 'tileSize', 'tileCount',
+    'completed', 'total',
+  ]);
+  return candidate.kind === 'tiled-neighborhood-progress' &&
+    Object.keys(candidate).every((key) => allowedKeys.has(key)) &&
+    (candidate.effect === 'box-blur' || candidate.effect === 'gaussian-blur') &&
+    (candidate.tileSize === 256 || candidate.tileSize === 512) &&
+    integers.every((item) => Number.isSafeInteger(item) && (item as number) >= 0) &&
+    (candidate.width as number) > 0 && (candidate.height as number) > 0 &&
+    (candidate.width as number) <= TILE_MAX_DIMENSION &&
+    (candidate.height as number) <= TILE_MAX_DIMENSION &&
+    (candidate.width as number) * (candidate.height as number) <= TILE_MAX_PIXELS &&
+    (candidate.tileCount as number) > 0 &&
+    candidate.tileCount === Math.ceil((candidate.width as number) / (candidate.tileSize as number)) *
+      Math.ceil((candidate.height as number) / (candidate.tileSize as number)) &&
+    candidate.total === candidate.tileCount &&
+    (candidate.completed as number) >= 1 &&
+    (candidate.completed as number) <= (candidate.total as number) &&
+    (candidate.layerId === undefined || (typeof candidate.layerId === 'string' &&
+      candidate.layerId.length > 0 && candidate.layerId.length <= 128));
+}
+
+export type TiledNeighborhoodProgressMeta = {
+  tileSize: TiledRenderTileSize;
+  tileCount: number;
+};
+
 export type TiledDocumentOptions = {
   tileSize?: TiledRenderTileSize;
   maxBatchBytes?: number;
@@ -161,7 +216,11 @@ export type TiledDocumentOptions = {
   revision: string | number;
   cache?: TileCache<Uint8ClampedArray>;
   maxWorkingBytes?: number;
-  onProgress?: (completed: number, total: number) => void;
+  onProgress?: (
+    completed: number,
+    total: number,
+    meta: TiledNeighborhoodProgressMeta,
+  ) => void;
   signal?: AbortSignal;
   isCancelled?: () => boolean;
   onTelemetry?: (telemetry: TiledRenderTelemetry) => void;
@@ -328,7 +387,10 @@ export async function renderTiledNeighborhoodEffect(
         destinationBytes + ledger.peakWorkingBytes + ledger.cacheBytes,
       );
       completed += 1;
-      options.onProgress?.(completed, plan.schedule.tileCount);
+      options.onProgress?.(completed, plan.schedule.tileCount, {
+        tileSize: plan.request.tileSize,
+        tileCount: plan.schedule.tileCount,
+      });
     }
   }
   assertAbort(options.signal, options.isCancelled);
