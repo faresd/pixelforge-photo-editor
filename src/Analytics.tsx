@@ -38,7 +38,16 @@ function load(id: string) {
   // this to a private local fallback that Google’s loader cannot observe.
   const dataLayer = page.dataLayer || [];
   page.dataLayer = dataLayer;
-  const gtag = (...args: unknown[]) => dataLayer.push(args);
+  // Google’s loader consumes the array-like `arguments` object pushed by the
+  // canonical gtag snippet. Pushing a rest-parameter array looks equivalent,
+  // but the loader silently ignores those entries and no `g/collect` request
+  // is emitted. Keep the canonical queue shape while retaining our typed API.
+  // eslint-disable-next-line prefer-rest-params
+  const gtag = function gtag(..._args: unknown[]) {
+    void _args;
+    // eslint-disable-next-line prefer-rest-params
+    dataLayer.push(arguments);
+  };
   page.gtag = gtag;
   gtag('consent', 'default', {
     ad_storage: 'denied',
