@@ -59,7 +59,7 @@ export function clippingBase(
   const sourceIndex = frame.layers.findIndex((layer) => layer.id === source.id);
   if (sourceIndex < 1) return undefined;
   const base = frame.layers[sourceIndex - 1];
-  return validClippingRelationship(frame, source.id, base.id)
+  return source.clippingTo === base.id && validClippingRelationship(frame, source.id, base.id)
     ? base
     : undefined;
 }

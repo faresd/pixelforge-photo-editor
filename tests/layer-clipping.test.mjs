@@ -25,6 +25,7 @@ test('clipping relationships require adjacent same-root pixel-producing base', (
   assert.equal(isPixelProducingLayer(base), true);
   assert.equal(validClippingRelationship(frame, source.id, base.id), true);
   assert.equal(clippingBase(frame, source), base);
+  assert.equal(clippingBase({ layers: [base, { ...source, clippingTo: undefined }] }, { ...source, clippingTo: undefined }), undefined);
   assert.equal(
     validClippingRelationship({ layers: [source, base] }, source.id, base.id),
     false,
