@@ -110,3 +110,24 @@ test('self-intersecting even-odd operands split crossings before tracing', () =>
   assert.ok(flattenPathContours(intersection).every((contour) => Math.abs(signedArea(contour)) > 0));
   assert.ok(pathContours(exclude).length >= 2);
 });
+
+test('nonzero compound operands retain filled nested contours', () => {
+  const outer = box(0, 0, 20, 20);
+  const inner = box(5, 5, 10, 10);
+  const nested = validatePath({
+    ...outer,
+    contours: [
+      { nodes: outer.nodes, closed: true },
+      { nodes: inner.nodes, closed: true },
+    ],
+    fillRule: 'nonzero',
+  });
+  const center = box(7, 7, 6, 6);
+  const filled = combinePathBooleans([nested, center], 'union');
+  assert.equal(pathContours(filled).length, 1);
+  const hole = combinePathBooleans([
+    { ...nested, fillRule: 'evenodd' },
+    center,
+  ], 'union');
+  assert.ok(pathContours(hole).length > 1);
+});

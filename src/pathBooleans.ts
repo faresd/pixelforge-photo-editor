@@ -125,18 +125,27 @@ const pointOnSegment = (point: BooleanPoint, edge: Edge) =>
   point.x >= Math.min(edge.a.x, edge.b.x) - EPSILON && point.x <= Math.max(edge.a.x, edge.b.x) + EPSILON &&
   point.y >= Math.min(edge.a.y, edge.b.y) - EPSILON && point.y <= Math.max(edge.a.y, edge.b.y) + EPSILON;
 
-const pointInContours = (point: BooleanPoint, contours: readonly BooleanPoint[][]): boolean => {
-  let inside = false;
+const pointInContours = (
+  point: BooleanPoint,
+  contours: readonly BooleanPoint[][],
+  fillRule: 'nonzero' | 'evenodd' = 'evenodd',
+): boolean => {
+  let winding = 0;
   for (const contour of contours) {
     const edges = edgesFromContours([contour]);
     if (edges.some((edge) => pointOnSegment(point, edge))) return true;
     for (const edge of edges) {
-      const crosses = (edge.a.y > point.y) !== (edge.b.y > point.y) &&
-        point.x < ((edge.b.x - edge.a.x) * (point.y - edge.a.y)) / (edge.b.y - edge.a.y) + edge.a.x;
-      if (crosses) inside = !inside;
+      if ((edge.a.y > point.y) !== (edge.b.y > point.y)) {
+        const x = ((edge.b.x - edge.a.x) * (point.y - edge.a.y)) /
+          (edge.b.y - edge.a.y) + edge.a.x;
+        if (point.x < x) {
+          if (fillRule === 'evenodd') winding += 1;
+          else winding += edge.b.y > edge.a.y ? 1 : -1;
+        }
+      }
     }
   }
-  return inside;
+  return fillRule === 'evenodd' ? Math.abs(winding) % 2 === 1 : winding !== 0;
 };
 
 const operationValue = (operation: PathBooleanOperation, left: boolean, right: boolean) => {
@@ -194,7 +203,10 @@ export function combinePathBooleans(
   let result = validatePath(paths[0]);
   for (const candidate of paths.slice(1)) {
     const leftContours = flattenPathContours(result);
-    const rightContours = flattenPathContours(candidate);
+    const candidatePath = validatePath(candidate);
+    const rightContours = flattenPathContours(candidatePath);
+    const leftFillRule = result.fillRule ?? 'nonzero';
+    const rightFillRule = candidatePath.fillRule ?? 'nonzero';
     const leftEdges = edgesFromContours(leftContours), rightEdges = edgesFromContours(rightContours);
     if (leftEdges.length + rightEdges.length > MAX_EDGES)
       throw new Error('Boolean operands exceed the bounded edge limit');
@@ -208,11 +220,11 @@ export function combinePathBooleans(
       const normal = { x: -delta.y / length * epsilon, y: delta.x / length * epsilon };
       const midpoint = scale(add(edge.a, edge.b), 0.5);
       const left = operationValue(operation,
-        pointInContours(add(midpoint, normal), leftContours),
-        pointInContours(add(midpoint, normal), rightContours));
+        pointInContours(add(midpoint, normal), leftContours, leftFillRule),
+        pointInContours(add(midpoint, normal), rightContours, rightFillRule));
       const right = operationValue(operation,
-        pointInContours(add(midpoint, scale(normal, -1)), leftContours),
-        pointInContours(add(midpoint, scale(normal, -1)), rightContours));
+        pointInContours(add(midpoint, scale(normal, -1)), leftContours, leftFillRule),
+        pointInContours(add(midpoint, scale(normal, -1)), rightContours, rightFillRule));
       if (left === right) return;
       boundaries.push(left ? edge : { a: edge.b, b: edge.a });
     };
