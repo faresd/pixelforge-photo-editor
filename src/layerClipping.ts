@@ -51,17 +51,26 @@ export function validClippingRelationship(
   );
 }
 
-/** Return the directly lower pixel-producing base for a source, when valid. */
-export function clippingBase(
+/** Return the directly lower pixel-producing base eligible for a new mask. */
+export function clippingCandidateBase(
   frame: Pick<Frame, 'layers'>,
   source: Layer,
 ): Layer | undefined {
   const sourceIndex = frame.layers.findIndex((layer) => layer.id === source.id);
   if (sourceIndex < 1) return undefined;
   const base = frame.layers[sourceIndex - 1];
-  return source.clippingTo === base.id && validClippingRelationship(frame, source.id, base.id)
+  return validClippingRelationship(frame, source.id, base.id)
     ? base
     : undefined;
+}
+
+/** Return the directly lower base for an existing persisted clipping link. */
+export function clippingBase(
+  frame: Pick<Frame, 'layers'>,
+  source: Layer,
+): Layer | undefined {
+  const base = clippingCandidateBase(frame, source);
+  return base && source.clippingTo === base.id ? base : undefined;
 }
 
 /**

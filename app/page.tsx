@@ -142,7 +142,7 @@ import {
 import { layerMergeReason, planLayerMerge } from '../src/layerMerge';
 import { combineSelectionBounds } from '../src/layerSelection';
 import {
-  clippingBase,
+  clippingCandidateBase,
   isClippingSourceLayer,
   validClippingRelationship,
 } from '../src/layerClipping';
@@ -4479,7 +4479,7 @@ export default function Home() {
   const createClippingMask = () => {
     const f = current(),
       source = f.layers.find((item) => item.id === f.active),
-      base = source ? clippingBase(f, source) : undefined;
+      base = source ? clippingCandidateBase(f, source) : undefined;
     if (!source || !isClippingSourceLayer(source) || !base) {
       setNotice('Select a raster or smart-object layer directly above its clipping base');
       return false;
@@ -9510,7 +9510,7 @@ export default function Home() {
           !layer.mask
         );
       case 'create-clipping-mask': {
-        const base = layer ? clippingBase(frame, layer) : undefined;
+        const base = layer ? clippingCandidateBase(frame, layer) : undefined;
         return (
           !layer ||
           !isClippingSourceLayer(layer) ||

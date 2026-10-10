@@ -14,7 +14,11 @@ import type { ParametricShapeVariant } from './vectorShapes';
 import type { AlignmentMode, DistributionAxis } from './layerAlignment';
 import { effectiveLayerStyles, type LayerStyles } from './layerStyles';
 import { filterLayersBySearch, groupMatchesSearch } from './layerSearch';
-import { clippingBase, isClippingSourceLayer } from './layerClipping';
+import {
+  clippingCandidateBase,
+  clippingBase,
+  isClippingSourceLayer,
+} from './layerClipping';
 
 type Props = {
   frame: Frame;
@@ -101,6 +105,7 @@ export default function LayersPanel({
     if (groupMatchesSearch(group, searchQuery)) matchingGroupIds.add(group.id);
   const activeGroup = layer.groupId ? groupById.get(layer.groupId) : undefined;
   const clippingMaskBase = clippingBase(frame, layer);
+  const clippingCandidate = clippingCandidateBase(frame, layer);
   const layerLocked = layer.locked || Boolean(activeGroup?.locked);
   const selectedIds = new Set(
     (frame.selectedLayerIds === undefined
@@ -409,11 +414,11 @@ export default function LayersPanel({
           disabled={
             !isClippingSourceLayer(layer) ||
             Boolean(layer.clippingTo) ||
-            !clippingMaskBase ||
+            !clippingCandidate ||
             layerLocked ||
             Boolean(
-              clippingMaskBase &&
-                (clippingMaskBase.locked || !clippingMaskBase.visible),
+              clippingCandidate &&
+                (clippingCandidate.locked || !clippingCandidate.visible),
             ) ||
             !layer.visible
           }

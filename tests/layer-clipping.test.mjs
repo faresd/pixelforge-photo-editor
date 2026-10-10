@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   applyClippingAlpha,
+  clippingCandidateBase,
   clippingBase,
   isPixelProducingLayer,
   sanitizeClippingRelations,
@@ -24,6 +25,7 @@ test('clipping relationships require adjacent same-root pixel-producing base', (
     frame = { layers: [base, source] };
   assert.equal(isPixelProducingLayer(base), true);
   assert.equal(validClippingRelationship(frame, source.id, base.id), true);
+  assert.equal(clippingCandidateBase({ layers: [base, { ...source, clippingTo: undefined }] }, { ...source, clippingTo: undefined }), base);
   assert.equal(clippingBase(frame, source), base);
   assert.equal(clippingBase({ layers: [base, { ...source, clippingTo: undefined }] }, { ...source, clippingTo: undefined }), undefined);
   assert.equal(
