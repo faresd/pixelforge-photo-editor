@@ -139,6 +139,61 @@ test('Gaussian Blur uses bounded tiled rendering and preserves the editable sour
   await expect.poll(() => pixels(page)).toEqual(changed);
 });
 
+test('Path Blur is editable, source-safe and round-trips on desktop and mobile', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixel(page, 4, 0);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Path Blur…', exact: true }).click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('path-blur');
+  await expect(page.getByLabel('Path direction', { exact: true })).toHaveValue('0');
+  await expect(page.getByLabel('Motion point 1 X', { exact: true })).toHaveValue('20');
+  await expect.poll(() => pixel(page, 4, 0)).not.toEqual(original);
+  await page.getByLabel('Path direction', { exact: true }).press('ArrowRight');
+  await page.getByLabel('Motion point 1 X', { exact: true }).press('ArrowRight');
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  const pathEffects = layer.adjustments.filterEffects as { type?: string; angle?: number; path?: Array<{ x?: number }> };
+  expect(pathEffects).toMatchObject({ type: 'path-blur', angle: 1 });
+  expect(pathEffects.path?.[0]?.x).toBeCloseTo(0.21);
+  const changed = await pixel(page, 4, 0);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('path-blur');
+  await expect(page.getByLabel('Path direction', { exact: true })).toHaveValue('1');
+  await expect.poll(() => pixel(page, 4, 0)).toEqual(changed);
+});
+
+test('Spin Blur exposes an editable centre and preserves transparent padding', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixel(page, 8, 0);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Spin Blur…', exact: true }).click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('spin-blur');
+  await expect(page.getByLabel('Angular sweep', { exact: true })).toHaveValue('18');
+  await expect(page.getByLabel('Spin horizontal radius', { exact: true })).toHaveValue('80');
+  await expect.poll(() => pixel(page, 8, 0)).not.toEqual(original);
+  expect(await pixel(page, 0, 0)).toEqual([0, 0, 0, 0]);
+  await page.getByLabel('Spin center X', { exact: true }).press('ArrowRight');
+  await page.getByLabel('Spin ellipse rotation', { exact: true }).press('ArrowRight');
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'spin-blur', centerX: 0.51, spinEllipse: { rotation: 1 } });
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('spin-blur');
+  await expect(page.getByLabel('Spin center X', { exact: true })).toHaveValue('51');
+});
+
 test('Polar Coordinates is enabled, editable and round-trips nondestructively', async ({ page }) => {
   await importPixels(page);
   const before = await downloadProject(page);
@@ -569,6 +624,58 @@ test('Radial Blur is a nondestructive spin effect with editable centre', async (
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
+});
+
+test('Path Blur and Spin Blur are bounded gallery effects with source-safe round trips', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset;
+  const original = await pixel(page, 1, 0);
+
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const pathCommand = page.getByRole('menuitem', { name: 'Path Blur…', exact: true });
+  await expect(pathCommand).toBeEnabled();
+  await pathCommand.click();
+  await expect(page.getByText('Path Blur (local approximation) applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('path-blur');
+  await expect(page.getByLabel('Blur radius', { exact: true })).toHaveValue('6');
+  await expect(page.getByLabel('Path direction', { exact: true })).toHaveValue('0');
+  await expect(page.getByLabel('Path center X', { exact: true })).toHaveValue('50');
+  await page.getByLabel('Blur radius', { exact: true }).press('ArrowRight');
+  await page.getByLabel('Path direction', { exact: true }).press('ArrowRight');
+  await page.getByLabel('Path center X', { exact: true }).press('ArrowRight');
+  await expect.poll(() => pixel(page, 1, 0)).not.toEqual(original);
+  const pathProject = await downloadProject(page);
+  const pathLayer = pathProject.history[pathProject.index].layers.at(-1)!;
+  expect(pathLayer.asset).toBe(sourceAsset);
+  expect(pathProject.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
+  expect(pathLayer.adjustments.filterEffects).toMatchObject({ type: 'path-blur', radius: 7, angle: 1, centerX: 0.51 });
+
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('path-blur');
+  await expect(page.getByLabel('Path direction', { exact: true })).toHaveValue('1');
+
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const spinCommand = page.getByRole('menuitem', { name: 'Spin Blur…', exact: true });
+  await expect(spinCommand).toBeEnabled();
+  await spinCommand.click();
+  await expect(page.getByText('Spin Blur (local approximation) applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('spin-blur');
+  await expect(page.getByLabel('Angular sweep', { exact: true })).toHaveValue('18');
+  await expect(page.getByLabel('Spin center X', { exact: true })).toHaveValue('51');
+  await page.getByLabel('Angular sweep', { exact: true }).press('ArrowRight');
+  await page.getByLabel('Spin center X', { exact: true }).press('ArrowRight');
+  const spinProject = await downloadProject(page);
+  const spinLayer = spinProject.history[spinProject.index].layers.at(-1)!;
+  expect(spinLayer.asset).toBe(sourceAsset);
+  expect(spinProject.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
+  expect(spinLayer.adjustments.filterEffects).toMatchObject({ type: 'spin-blur', radius: 19, centerX: 0.52 });
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('spin-blur');
+  await expect(page.getByLabel('Angular sweep', { exact: true })).toHaveValue('19');
 });
 
 test('Mosaic, Tilt-Shift, Ripple and Twirl commands expose editable effect metadata', async ({ page }) => {

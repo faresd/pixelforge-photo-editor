@@ -398,6 +398,120 @@ test('radial blur identity controls and tiny canvases always return a fresh safe
   for (let y = 0; y < 9; y += 1) assert.equal(pixel(resultLine, 1, 0, y)[3], 255);
 });
 
+test('spin blur is a distinct bounded radial gallery effect with editable centre', () => {
+  const source = rgba(15, 15, (x, y) => {
+    if (x === 0 && y === 0) return [31, 42, 53, 0];
+    return [(x * 19 + y * 7) % 256, (x * 11 + y * 23) % 256, (x * 5 + y * 17) % 256, 255];
+  });
+  const original = source.slice();
+  const effect = { type: 'spin-blur', amount: 100, radius: 48, centerX: 0.5, centerY: 0.5 };
+  const first = applyFilterEffectsPixels(source, 15, 15, effect);
+  assert.deepEqual(first, applyFilterEffectsPixels(source, 15, 15, effect));
+  assert.deepEqual(source, original);
+  assert.equal(pixel(first, 15, 0, 0)[3], 0);
+  assert.deepEqual(pixel(first, 15, 0, 0).slice(0, 3), [31, 42, 53]);
+  assert.notDeepEqual(pixel(first, 15, 2, 2), pixel(source, 15, 2, 2));
+  assert.notDeepEqual(first, applyFilterEffectsPixels(source, 15, 15, { ...effect, centerX: 0.1 }));
+  assert.equal(validFilterEffects(effectiveFilterEffects({ ...effect, radius: 500 })), true);
+  assert.equal(effectiveFilterEffects({ ...effect, radius: 500 }).radius, 64);
+});
+
+test('path blur follows a bounded deterministic curved path and preserves alpha/hidden RGB', () => {
+  const source = rgba(13, 9, (x, y) => {
+    if (x === 0 && y === 0) return [241, 17, 233, 0];
+    return [(x * 31 + y * 7) % 256, (x * 11 + y * 23) % 256, (x * 5 + y * 17) % 256, (x + y) % 3 ? 255 : 127];
+  });
+  const original = source.slice();
+  const effect = { type: 'path-blur', amount: 100, radius: 7, angle: 35, centerX: 0.5, centerY: 0.5 };
+  const first = applyFilterEffectsPixels(source, 13, 9, effect);
+  assert.deepEqual(first, applyFilterEffectsPixels(source, 13, 9, effect));
+  assert.deepEqual(source, original);
+  assert.equal(pixel(first, 13, 0, 0)[3], 0);
+  assert.deepEqual(pixel(first, 13, 0, 0).slice(0, 3), [241, 17, 233]);
+  assert.notDeepEqual(pixel(first, 13, 3, 2), pixel(source, 13, 3, 2));
+  for (let y = 0; y < 9; y += 1)
+    for (let x = 0; x < 13; x += 1)
+      assert.equal(pixel(first, 13, x, y)[3], pixel(source, 13, x, y)[3]);
+  assert.notDeepEqual(first, applyFilterEffectsPixels(source, 13, 9, { ...effect, angle: -35 }));
+  assert.deepEqual(applyFilterEffectsPixels(source, 13, 9, { ...effect, amount: 0 }), source);
+  assert.deepEqual(applyFilterEffectsPixels(source, 13, 9, { ...effect, radius: 0 }), source);
+  const normalized = effectiveFilterEffects({ ...effect, angle: 220, radius: 99 });
+  assert.deepEqual({ type: normalized.type, angle: normalized.angle, radius: normalized.radius }, { type: 'path-blur', angle: 180, radius: 64 });
+  assert.equal(validFilterEffects(normalized), true);
+});
+
+test('Spin and Path Blur identity, tiny, alpha and invalid metadata boundaries are safe', () => {
+  const source = rgba(7, 7, (x, y) => x === 0 || y === 0
+    ? [255, 0, 255, 0]
+    : [120, 60, 30, (x + y) % 2 ? 127 : 255]);
+  for (const type of ['spin-blur', 'path-blur']) {
+    for (const controls of [{ amount: 0 }, { radius: 0 }]) {
+      const effect = { type, amount: 100, radius: 64, angle: 180, ...controls };
+      assert.equal(isNeutralFilterEffects(effect), true);
+      const output = applyFilterEffectsPixels(source, 7, 7, effect);
+      assert.deepEqual(output, source);
+      assert.notEqual(output, source);
+    }
+    const output = applyFilterEffectsPixels(source, 7, 7, {
+      type, amount: 100, radius: 64, angle: 180, centerX: 0, centerY: 1,
+    });
+    assert.deepEqual(output, source, `${type} must retain constant visible colour and exclude hidden magenta`);
+    const tiny = new Uint8ClampedArray([12, 34, 56, 127]);
+    assert.deepEqual(applyFilterEffectsPixels(tiny, 1, 1, {
+      type, amount: 100, radius: 64, angle: 180,
+    }), tiny);
+    const normalized = effectiveFilterEffects({
+      type, amount: 140, radius: 99, angle: 999, centerX: -2, centerY: 9,
+    });
+    assert.deepEqual(
+      { type: normalized.type, amount: normalized.amount, radius: normalized.radius, angle: normalized.angle, centerX: normalized.centerX, centerY: normalized.centerY },
+      { type, amount: 100, radius: 64, angle: 180, centerX: 0, centerY: 1 },
+    );
+    assert.equal(validFilterEffects(normalized), true);
+    for (const invalid of [{ radius: 1.5 }, { angle: 181 }, { centerX: -0.01 }, { amount: Infinity }])
+      assert.equal(validFilterEffects({ ...normalized, ...invalid }), false);
+  }
+});
+
+test('Path Blur integrates an authored polyline with endpoint speeds and taper', () => {
+  const source = rgba(17, 11, (x, y) => [x * 13, y * 19, (x + y) * 7, 255]);
+  const path = [
+    { x: 0.1, y: 0.5, speed: 100 },
+    { x: 0.5, y: 0.25, speed: 40 },
+    { x: 0.9, y: 0.5, speed: 10 },
+  ];
+  const effect = {
+    type: 'path-blur', amount: 100, radius: 7, centerX: 0.5, centerY: 0.5,
+    path, pathCentered: true, pathTaper: 0.4,
+  };
+  const first = applyFilterEffectsPixels(source, 17, 11, effect);
+  assert.deepEqual(first, applyFilterEffectsPixels(source, 17, 11, effect));
+  assert.notDeepEqual(first, source);
+  assert.notDeepEqual(first, applyFilterEffectsPixels(source, 17, 11, { ...effect, path: [...path].reverse() }));
+  const normalized = effectiveFilterEffects({ ...effect, path: [...path, ...path, ...path, ...path] });
+  assert.equal(normalized.path?.length, 8);
+  assert.deepEqual(normalized.path?.[0], path[0]);
+  assert.equal(normalized.pathCentered, true);
+  assert.equal(normalized.pathTaper, 0.4);
+  assert.equal(validFilterEffects(normalized), true);
+});
+
+test('Spin Blur applies a rotated soft ellipse and leaves outside pixels untouched', () => {
+  const source = rgba(15, 15, (x, y) => [x * 17, y * 13, (x + y) * 5, 255]);
+  const ellipse = { radiusX: 0.45, radiusY: 0.2, rotation: 35, feather: 0.25 };
+  const effect = {
+    type: 'spin-blur', amount: 100, radius: 50, centerX: 0.5, centerY: 0.5,
+    spinEllipse: ellipse,
+  };
+  const output = applyFilterEffectsPixels(source, 15, 15, effect);
+  assert.notDeepEqual(output, source);
+  assert.deepEqual(pixel(output, 15, 0, 7), pixel(source, 15, 0, 7));
+  assert.notDeepEqual(output, applyFilterEffectsPixels(source, 15, 15, { ...effect, spinEllipse: { ...ellipse, rotation: -35 } }));
+  const normalized = effectiveFilterEffects({ ...effect, spinEllipse: { radiusX: 5, radiusY: 0, rotation: 220, feather: 2 } });
+  assert.deepEqual(normalized.spinEllipse, { radiusX: 2, radiusY: 0.01, rotation: 180, feather: 1 });
+  assert.equal(validFilterEffects(normalized), true);
+});
+
 test('blur identity and tiny-canvas boundaries preserve source and alpha', () => {
   const source = new Uint8ClampedArray([12, 34, 56, 127]);
   for (const type of ['box-blur', 'gaussian-blur']) {

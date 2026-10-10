@@ -45,6 +45,15 @@ test('action recipes serialize and validate bounded round trips', () => {
   assert.throws(() => parseActionSets('{"version":2,"actions":[]}'), /invalid/);
 });
 
+test('local Path and Spin Blur commands record and round-trip through the action allowlist', () => {
+  const original = createActionSet('Gallery blur', 'blur-action', now);
+  const path = appendActionStep(original, 'filter-path-blur', 'Path Blur', undefined, 'path', now);
+  const spin = appendActionStep(path, 'filter-spin-blur', 'Spin Blur', undefined, 'spin', now);
+  assert.deepEqual(original.steps, []);
+  assert.deepEqual(spin.steps.map((step) => step.command), ['filter-path-blur', 'filter-spin-blur']);
+  assert.deepEqual(parseActionSets(serializeActionSets([spin])), [spin]);
+});
+
 test('recipes support deterministic rename and step removal without mutating history', () => {
   const source = appendActionStep(
     appendActionStep(createActionSet('Recipe', 'action-3', now), 'flip-h', 'Flip horizontal', undefined, 'step-a', now),

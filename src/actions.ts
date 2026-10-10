@@ -139,6 +139,8 @@ export const REPLAYABLE_ACTION_COMMANDS = new Set([
   'filter-gaussian-blur',
   'filter-motion-blur',
   'filter-radial-blur',
+  'filter-spin-blur',
+  'filter-path-blur',
   'filter-field-blur',
   'filter-tilt-shift',
   'filter-mosaic',
