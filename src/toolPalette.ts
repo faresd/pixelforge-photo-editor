@@ -71,7 +71,10 @@ export const TOOL_FLYOUTS: Readonly<Record<string, readonly PaletteToolId[]>> = 
   healing: ['heal', 'spot-heal', 'patch', 'red-eye'],
   history: ['history-brush'],
   mask: ['mask-brush', 'mask-eraser', 'adjustment-brush'],
-  pen: ['pen', 'freeform-pen', 'curvature-pen'],
+  // The classic Pen button remains a direct tool in the toolbar. Freeform
+  // and Curvature Pen stay independently reachable (and still cycle from P)
+  // so the direct Pen keeps its Photoshop-compatible singleton affordance and
+  // does not gain a misleading submenu indicator in the compact palette.
 };
 
 export function familyForTool(tool: string): string | undefined {
