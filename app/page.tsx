@@ -87,6 +87,8 @@ import {
   surface,
   transformFrameWithMasks,
   floodFill,
+  drawTextLayer,
+  effectiveTextLayer,
   type Adjustments,
   type Group,
   type Layer,
@@ -98,6 +100,12 @@ import {
   type TextAlign,
   type Assets,
 } from '../src/document';
+import {
+  alphaFromRgba,
+  normalizeTextMaskRequest,
+  TEXT_MASK_MAX_PIXELS,
+  type TextMaskOrientation,
+} from '../src/textMask';
 import { useDocument } from '../src/useDocument';
 import {
   beginPerformanceSpan,
@@ -420,6 +428,8 @@ type Command =
   | 'text-align-right'
   | 'text-orientation-horizontal'
   | 'text-orientation-vertical'
+  | 'text-mask-horizontal'
+  | 'text-mask-vertical'
   | 'select-all'
   | 'select-all-layers'
   | 'deselect-layers'
@@ -849,6 +859,8 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Anti-Alias', command: 'noop', disabled: true },
     { label: 'Horizontal Type', command: 'text-orientation-horizontal' },
     { label: 'Vertical Type', command: 'text-orientation-vertical' },
+    { label: 'Horizontal Type Mask', command: 'text-mask-horizontal' },
+    { label: 'Vertical Type Mask', command: 'text-mask-vertical' },
     { label: 'OpenType', command: 'noop', disabled: true },
     { label: 'Create Work Path', command: 'noop', disabled: true },
     { label: 'Convert to Shape', command: 'noop', disabled: true },
@@ -2976,6 +2988,99 @@ export default function Home() {
     if (!commit({ ...frame, selection })) return false;
     setNotice(notice);
     return true;
+  };
+  /**
+   * Render editable text into the existing full-canvas selection-mask asset.
+   * The source layer is cloned with a temporary flow orientation, so the
+   * command never converts or mutates the user's text metadata.
+   */
+  const applyTextMask = async (orientation: TextMaskOrientation) => {
+    const f = current();
+    const layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || layer.kind !== 'text' || layerIsLocked(f, layer) || !layer.visible || groupForLayer(f, layer)?.visible === false) {
+      setNotice('Select a visible, unlocked text layer before creating a type mask');
+      return;
+    }
+    const [a, b, c, d, e, g] = layer.matrix;
+    if (
+      ![a, b, c, d, e, g].every((value) => Number.isFinite(value) && Math.abs(value) <= 1000000) ||
+      Math.abs(a * d - b * c) < 1e-12
+    ) {
+      setNotice('Text layer transform is invalid for a type mask');
+      return;
+    }
+    let request: ReturnType<typeof normalizeTextMaskRequest>;
+    try {
+      request = normalizeTextMaskRequest({
+        width: f.w,
+        height: f.h,
+        text: layer.text,
+        orientation,
+      });
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Text mask request is invalid');
+      return;
+    }
+    const frameIndex = index.current,
+      workToken = ++selectionWorkToken.current,
+      operation = selectionOperation,
+      sourceAssets = assets.current;
+    try {
+      const mask = surface(request.width, request.height),
+        context = mask.getContext('2d');
+      if (!context) throw new Error('Text mask canvas is unavailable');
+      const textLayer = effectiveTextLayer({ ...layer, orientation }, f.w);
+      context.save();
+      context.setTransform(...textLayer.matrix);
+      context.globalAlpha = 1;
+      context.globalCompositeOperation = 'source-over';
+      context.fillStyle = '#fff';
+      context.font = `${textLayer.bold ? '700' : '400'} ${textLayer.fontSize}px "${textLayer.fontFamily}"`;
+      context.textBaseline = 'top';
+      drawTextLayer(context, textLayer);
+      context.restore();
+      const rendered = context.getImageData(0, 0, request.width, request.height),
+        alpha = alphaFromRgba(rendered.data, request.width, request.height);
+      if (!alpha.some((value) => value > 0)) {
+        setNotice('Text mask has no rendered glyph pixels');
+        return;
+      }
+      // Normalize RGB in the rendered buffer so mask assets remain portable
+      // across browser encoders; selection composition consumes only alpha.
+      for (let pixel = 0; pixel < alpha.length; pixel += 1) {
+        const offset = pixel * 4;
+        rendered.data[offset] = 255;
+        rendered.data[offset + 1] = 255;
+        rendered.data[offset + 2] = 255;
+      }
+      context.putImageData(rendered, 0, 0);
+      const next: Selection = {
+        shape: 'rectangle',
+        x: 0,
+        y: 0,
+        w: f.w,
+        h: f.h,
+        feather: 0,
+        inverted: false,
+      };
+      const candidate = await composeSelectionCandidate(
+        f,
+        next,
+        mask,
+        operation,
+        sourceAssets,
+      );
+      publishSelectionCandidate(
+        f,
+        frameIndex,
+        workToken,
+        candidate,
+        `${orientation === 'horizontal' ? 'Horizontal' : 'Vertical'} Type Mask selection created`,
+      );
+    } catch (error) {
+      if (isCurrentSelectionOperation(f, frameIndex, workToken))
+        setNotice(error instanceof Error ? error.message : 'Could not create a Type Mask selection');
+    }
   };
   const setSelection = (selection: Selection | undefined) => {
     const f = current();
@@ -9295,6 +9400,10 @@ export default function Home() {
       setTextOrientation('horizontal');
     else if (command === 'text-orientation-vertical')
       setTextOrientation('vertical');
+    else if (command === 'text-mask-horizontal')
+      await applyTextMask('horizontal');
+    else if (command === 'text-mask-vertical')
+      await applyTextMask('vertical');
     else if (command === 'select-all') selectAll();
     else if (command === 'select-all-layers') selectAllLayers();
     else if (command === 'deselect-layers') deselectLayers();
@@ -9716,6 +9825,19 @@ export default function Home() {
       case 'text-orientation-horizontal':
       case 'text-orientation-vertical':
         return !layer || layer.kind !== 'text' || locked;
+      case 'text-mask-horizontal':
+      case 'text-mask-vertical': {
+        if (!layer || layer.kind !== 'text' || locked || !layer.visible)
+          return true;
+        if (groupForLayer(frame, layer)?.visible === false) return true;
+        if (!layer.text.trim() || frame.w * frame.h > TEXT_MASK_MAX_PIXELS)
+          return true;
+        const [a, b, c, d, e, f] = layer.matrix;
+        return (
+          ![a, b, c, d, e, f].every((value) => Number.isFinite(value) && Math.abs(value) <= 1000000) ||
+          Math.abs(a * d - b * c) < 1e-12
+        );
+      }
       case 'merge-visible':
         return !frame.layers.some(
           (item) =>
