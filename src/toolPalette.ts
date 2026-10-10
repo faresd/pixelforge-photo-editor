@@ -8,12 +8,12 @@
  */
 
 export type PaletteToolId =
-  | 'move' | 'hand' | 'zoom' | 'eyedropper' | 'color-sampler' | 'ruler' | 'note' | 'count'
+  | 'move' | 'hand' | 'zoom' | 'rotate-view' | 'eyedropper' | 'color-sampler' | 'ruler' | 'note' | 'count'
   | 'fill' | 'gradient' | 'clone' | 'heal' | 'spot-heal' | 'patch' | 'red-eye' | 'pattern-stamp' | 'mixer-brush' | 'history-brush'
   | 'crop' | 'perspective-crop' | 'slice' | 'slice-select' | 'frame' | 'brush' | 'pencil' | 'color-replace' | 'eraser'
   | 'background-eraser' | 'magic-eraser' | 'dodge' | 'burn' | 'sponge' | 'smudge' | 'pen'
   | 'mask-brush' | 'mask-eraser' | 'adjustment-brush'
-  | 'direct-select' | 'text' | 'rectangle' | 'ellipse' | 'line' | 'polygon' | 'freeform-pen' | 'select'
+  | 'direct-select' | 'text' | 'rectangle' | 'ellipse' | 'line' | 'polygon' | 'freeform-pen' | 'curvature-pen' | 'select'
   | 'ellipse-select' | 'row-select' | 'column-select' | 'lasso' | 'polygonal-lasso'
   | 'magnetic-lasso' | 'selection-brush' | 'quick-selection' | 'magic-wand';
 
@@ -24,7 +24,7 @@ export type ToolCategory = {
 };
 
 export const TOOL_CATEGORIES: readonly ToolCategory[] = [
-  { id: 'navigation', label: 'Navigate', tools: ['move', 'hand', 'zoom'] },
+  { id: 'navigation', label: 'Navigate', tools: ['move', 'hand', 'zoom', 'rotate-view'] },
   { id: 'measure', label: 'Measure', tools: ['eyedropper', 'color-sampler', 'ruler', 'note', 'count'] },
   { id: 'marquee', label: 'Marquee', tools: ['select', 'ellipse-select', 'row-select', 'column-select'] },
   { id: 'lasso', label: 'Lasso', tools: ['lasso', 'polygonal-lasso', 'magnetic-lasso'] },
@@ -33,7 +33,7 @@ export const TOOL_CATEGORIES: readonly ToolCategory[] = [
   { id: 'retouch', label: 'Retouch', tools: ['clone', 'pattern-stamp', 'heal', 'spot-heal', 'patch', 'red-eye', 'smudge', 'dodge', 'burn', 'sponge', 'history-brush'] },
   { id: 'paint', label: 'Paint & Fill', tools: ['brush', 'pencil', 'color-replace', 'mixer-brush', 'gradient', 'fill', 'eraser', 'background-eraser', 'magic-eraser'] },
   { id: 'mask', label: 'Mask Refinement', tools: ['mask-brush', 'mask-eraser', 'adjustment-brush'] },
-  { id: 'draw', label: 'Draw & Type', tools: ['pen', 'freeform-pen', 'direct-select', 'text', 'rectangle', 'ellipse', 'line', 'polygon'] },
+  { id: 'draw', label: 'Draw & Type', tools: ['pen', 'freeform-pen', 'curvature-pen', 'direct-select', 'text', 'rectangle', 'ellipse', 'line', 'polygon'] },
 ] as const;
 
 /** Photoshop's repeated-key families. Singletons are intentionally omitted. */
@@ -50,6 +50,7 @@ export const TOOL_FAMILIES: Readonly<Record<string, readonly PaletteToolId[]>> =
   o: ['dodge', 'burn', 'sponge'],
   s: ['clone', 'pattern-stamp'],
   j: ['heal', 'spot-heal', 'patch', 'red-eye'],
+  p: ['pen', 'freeform-pen', 'curvature-pen'],
 };
 
 /** Pointer/touch flyouts use Photoshop's visible tool families.  Selection
@@ -70,6 +71,10 @@ export const TOOL_FLYOUTS: Readonly<Record<string, readonly PaletteToolId[]>> = 
   healing: ['heal', 'spot-heal', 'patch', 'red-eye'],
   history: ['history-brush'],
   mask: ['mask-brush', 'mask-eraser', 'adjustment-brush'],
+  // The classic Pen button remains a direct tool in the toolbar. Freeform
+  // and Curvature Pen stay independently reachable (and still cycle from P)
+  // so the direct Pen keeps its Photoshop-compatible singleton affordance and
+  // does not gain a misleading submenu indicator in the compact palette.
 };
 
 export function familyForTool(tool: string): string | undefined {

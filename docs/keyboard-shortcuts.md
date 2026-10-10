@@ -22,7 +22,7 @@ Use `Cmd` on macOS and `Ctrl` on Windows/Linux.
 | `C` | Crop |
 | `E` | Eraser |
 | `O` | Cycle Dodge, Burn and Sponge (Shift reverses) |
-| `R` | Smudge |
+| `R` | Cycle Rotate View and Smudge (Shift reverses) |
 | `T` | Text |
 | `U` | Cycle Rectangle and Ellipse |
 | `M` | Cycle rectangular, elliptical, single-row and single-column marquee |
@@ -37,7 +37,7 @@ Use `Cmd` on macOS and `Ctrl` on Windows/Linux.
 clicks place path nodes; click the first node after three or more points to
 close and commit the editable path layer. Escape cancels an open Pen gesture or
 a Direct Selection drag. Photoshop tools that PixelForge has not implemented
-yet (for example Freeform/Curvature Pen and Rotate View) remain planned.
+yet (for example Freeform/Curvature Pen) remain planned; **R cycles Rotate View and Smudge, with Shift reversing the family; the menu and toolbar controls persist only the viewport angle. Escape cancels an in-progress Rotate View gesture.**
 
 ## Commands and view
 

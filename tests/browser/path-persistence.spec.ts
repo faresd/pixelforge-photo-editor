@@ -4,7 +4,7 @@ import { test, expect, type Page } from '@playwright/test';
 type PathLayer = {
   kind: string;
   matrix: number[];
-  path: { nodes: Array<{ x: number; y: number; inHandle?: { x: number; y: number }; outHandle?: { x: number; y: number } }>; closed: boolean };
+  path: { nodes: Array<{ x: number; y: number; inHandle?: { x: number; y: number }; outHandle?: { x: number; y: number } }>; closed: boolean; fill?: boolean };
 };
 type Project = { history: Array<{ w: number; h: number; layers: PathLayer[] }>; index: number };
 
@@ -134,6 +134,46 @@ test('Direct Selection edits cubic handles and persists the curve through reload
   expect(pathLayer(await project(page))).toEqual(moved);
 });
 
+test('Pen adds, converts and deletes anchors on an existing path', async ({ page }) => {
+  await triangle(page);
+  const box = (await page.getByTestId('editor-canvas').boundingBox())!;
+  await selectTool(page, 'Pen');
+  // The triangle's first segment is horizontal at y=.2; a stroke click adds
+  // an anchor at the deterministic midpoint.
+  await page.mouse.click(box.x + box.width * 0.45, box.y + box.height * 0.2);
+  await expect(page.locator('footer')).toContainText('Path anchor added');
+  let edited = pathLayer(await project(page));
+  expect(edited.path.nodes).toHaveLength(4);
+  expect(edited.path.nodes[1].x).toBeCloseTo(edited.path.nodes[0].x + (edited.path.nodes[2].x - edited.path.nodes[0].x) / 2, 0);
+
+  // Shift-clicking an anchor toggles the smooth/corner representation.
+  const first = edited.path.nodes[0];
+  const frame = (await project(page)).history[(await project(page)).index];
+  const screen = (x: number, y: number) => ({
+    x: box.x + box.width * x / frame.w,
+    y: box.y + box.height * y / frame.h,
+  });
+  const firstScreen = screen(first.x, first.y);
+  await page.keyboard.down('Shift');
+  await page.mouse.click(firstScreen.x, firstScreen.y);
+  await page.keyboard.up('Shift');
+  await expect(page.locator('footer')).toContainText('Path anchor converted');
+  edited = pathLayer(await project(page));
+  expect(edited.path.nodes[0].inHandle).toBeDefined();
+  expect(edited.path.nodes[0].outHandle).toBeDefined();
+
+  // Alt-clicking the same anchor removes it without changing source pixels.
+  await page.keyboard.down('Alt');
+  await page.mouse.click(firstScreen.x, firstScreen.y);
+  await page.keyboard.up('Alt');
+  await expect(page.locator('footer')).toContainText('Path anchor deleted');
+  edited = pathLayer(await project(page));
+  expect(edited.path.nodes).toHaveLength(3);
+  expect(edited.path.closed).toBe(true);
+  await page.reload();
+  expect(pathLayer(await project(page))).toEqual(edited);
+});
+
 test('Freeform Pen creates a smooth open path and preserves it on reload', async ({ page }) => {
   await selectTool(page, 'Freeform Pen');
   const box = (await page.getByTestId('editor-canvas').boundingBox())!;
@@ -149,4 +189,37 @@ test('Freeform Pen creates a smooth open path and preserves it on reload', async
   expect(created.path.nodes.some((node) => node.outHandle || node.inHandle)).toBe(true);
   await page.reload();
   expect(pathLayer(await project(page))).toEqual(created);
+});
+
+test('Curvature Pen creates a closed smooth path with editable handles and persists it', async ({ page }) => {
+  await selectTool(page, 'Curvature Pen');
+  const box = (await page.getByTestId('editor-canvas').boundingBox())!;
+  const beforePixels = await page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
+  const points = [
+    [0.22, 0.28],
+    [0.72, 0.28],
+    [0.55, 0.7],
+    [0.22, 0.28],
+  ];
+  for (const [x, y] of points) await page.mouse.click(box.x + box.width * x, box.y + box.height * y);
+  await expect(page.locator('footer')).toContainText('Editable curvature path layer added');
+  const created = pathLayer(await project(page));
+  expect(created.path.closed).toBe(true);
+  expect(created.path.fill).toBe(true);
+  expect(created.path.nodes.length).toBe(3);
+  expect(created.path.nodes.some((node) => node.outHandle || node.inHandle)).toBe(true);
+  expect(await page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())).not.toBe(beforePixels);
+  await page.reload();
+  expect(pathLayer(await project(page))).toEqual(created);
+});
+
+test('Curvature Pen Escape cancels staged anchors without changing history', async ({ page }) => {
+  await selectTool(page, 'Curvature Pen');
+  const before = await project(page);
+  const box = (await page.getByTestId('editor-canvas').boundingBox())!;
+  await page.mouse.click(box.x + box.width * 0.22, box.y + box.height * 0.28);
+  await page.mouse.click(box.x + box.width * 0.72, box.y + box.height * 0.28);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('footer')).toContainText('Pen path cancelled');
+  expect(await project(page)).toEqual(before);
 });

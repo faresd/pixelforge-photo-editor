@@ -60,8 +60,10 @@ import {
 } from '../src/drafts';
 import {
   useMember,
+  openCloudProject,
   saveCloudProject,
   SIGN_IN,
+  CloudConflictError,
   type CloudLink,
 } from '../src/cloud';
 import {
@@ -139,6 +141,11 @@ import {
 } from '../src/layerAlignment';
 import { layerMergeReason, planLayerMerge } from '../src/layerMerge';
 import { combineSelectionBounds } from '../src/layerSelection';
+import {
+  clippingCandidateBase,
+  isClippingSourceLayer,
+  validClippingRelationship,
+} from '../src/layerClipping';
 import CurveEditor from '../src/CurveEditor';
 import { type CurveChannel, type CurvePoints } from '../src/curves';
 import { applyAutoAdjustmentsPixels, type AutoMode } from '../src/auto';
@@ -176,9 +183,25 @@ import {
 } from '../src/selectionBrush';
 import { snapMagneticPoint } from '../src/magneticLasso';
 import { appendFreeformPoint, buildFreeformPath } from '../src/freeformPen';
+import { appendCurvaturePoint, buildCurvaturePath } from '../src/curvaturePen';
 import { colorRangeMask } from '../src/colorRange';
 import { focusAreaMask } from '../src/focusArea';
 import { similarColorMask } from '../src/similarSelection';
+import {
+  canvasPointFromClient,
+  normalizeViewRotation,
+  rotationDelta,
+  screenPanDelta,
+} from '../src/viewRotation';
+import {
+  booleanPathFromPoints,
+  booleanPathIsClosed,
+  combinePathBooleans,
+  type BooleanPoint,
+  type PathBooleanOperation,
+} from '../src/pathBooleans';
+import { pathContours, transformPath } from '../src/paths';
+import { shapePoints } from '../src/vectorShapes';
 import { quickSelectionMask } from '../src/quickSelection';
 import { composeSelectionAlpha } from '../src/selectionComposition';
 import {
@@ -241,6 +264,10 @@ import {
   hitTestPathNode,
   movePathHandle,
   movePathNode,
+  insertPathNode,
+  nearestPathSegment,
+  removePathNode,
+  setPathNodeSmooth,
   validatePath,
   type PathHandleKind,
   type PathNode,
@@ -362,6 +389,10 @@ type Command =
   | 'hide-layer'
   | 'merge-layers'
   | 'merge-visible'
+  | 'combine-shapes-union'
+  | 'combine-shapes-subtract'
+  | 'combine-shapes-intersect'
+  | 'combine-shapes-exclude'
   | 'flatten'
   | 'text-tool'
   | 'text-align-left'
@@ -390,6 +421,8 @@ type Command =
   | 'invert-layer-mask'
   | 'toggle-layer-mask'
   | 'remove-layer-mask'
+  | 'create-clipping-mask'
+  | 'release-clipping-mask'
   | 'free-transform'
   | 'quick-mask'
   | 'save-selection'
@@ -448,7 +481,10 @@ type Command =
   | 'zoom-in'
   | 'zoom-out'
   | 'fit'
-  | 'actual';
+  | 'actual'
+  | 'rotate-view-left'
+  | 'rotate-view-right'
+  | 'reset-rotate-view';
 type MenuItem = {
   label: string;
   shortcut?: string;
@@ -461,6 +497,7 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'move', label: 'Move', icon: MousePointer2, key: 'V' },
   { id: 'hand', label: 'Hand', icon: Hand, key: 'H' },
   { id: 'zoom', label: 'Zoom', icon: ZoomIn, key: 'Z' },
+  { id: 'rotate-view', label: 'Rotate View', icon: RotateCw, key: 'R' },
   { id: 'eyedropper', label: 'Eyedropper', icon: Pipette, key: 'I' },
   { id: 'color-sampler', label: 'Color Sampler', icon: Pipette, key: 'I' },
   { id: 'ruler', label: 'Ruler', icon: Ruler, key: 'I' },
@@ -501,6 +538,7 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'smudge', label: 'Smudge', icon: Brush, key: 'R' },
   { id: 'pen', label: 'Pen', icon: Pencil, key: 'P' },
   { id: 'freeform-pen', label: 'Freeform Pen', icon: Pencil, key: 'P' },
+  { id: 'curvature-pen', label: 'Curvature Pen', icon: Pencil, key: 'P' },
   {
     id: 'direct-select',
     label: 'Direct Selection',
@@ -589,11 +627,11 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   e: ['eraser', 'background-eraser', 'magic-eraser'],
   k: ['frame', 'mask-brush', 'mask-eraser', 'adjustment-brush'],
   o: ['dodge', 'burn', 'sponge'],
-  r: ['smudge'],
+  r: ['rotate-view', 'smudge'],
   s: ['clone', 'pattern-stamp'],
   y: ['history-brush'],
   j: ['heal', 'spot-heal', 'patch', 'red-eye'],
-  p: ['pen', 'freeform-pen'],
+  p: ['pen', 'freeform-pen', 'curvature-pen'],
 };
 /** Existing PixelForge aliases retained while the primary keys follow Photoshop. */
 const TOOL_ALIASES: Record<string, Tool> = {
@@ -743,7 +781,8 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Disable Layer Mask', command: 'toggle-layer-mask' },
     { label: 'Remove Layer Mask', command: 'remove-layer-mask' },
     { label: 'Vector Mask', command: 'noop', disabled: true },
-    { label: 'Create Clipping Mask', command: 'noop', disabled: true },
+    { label: 'Create Clipping Mask', command: 'create-clipping-mask' },
+    { label: 'Release Clipping Mask', command: 'release-clipping-mask' },
     { label: 'New Smart Object…', command: 'new-smart-object' },
     { label: 'Replace Contents…', command: 'replace-smart-object' },
     { label: 'Rasterize', command: 'rasterize-layer' },
@@ -759,6 +798,10 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Merge Visible', command: 'merge-visible' },
     { label: 'Flatten Image', command: 'flatten' },
     { label: 'Arrange', command: 'noop', disabled: true },
+    { label: 'Combine Shapes → Union', command: 'combine-shapes-union' },
+    { label: 'Combine Shapes → Subtract Front Shape', command: 'combine-shapes-subtract' },
+    { label: 'Combine Shapes → Intersect', command: 'combine-shapes-intersect' },
+    { label: 'Combine Shapes → Exclude Overlapping Shapes', command: 'combine-shapes-exclude' },
     { label: 'Align Left', command: 'align-left' },
     { label: 'Align Horizontal Centers', command: 'align-center-horizontal' },
     { label: 'Align Right', command: 'align-right' },
@@ -892,6 +935,9 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Zoom out', shortcut: '−', command: 'zoom-out' },
     { label: 'Fit to screen', shortcut: '0', command: 'fit' },
     { label: 'Actual size', shortcut: '1', command: 'actual' },
+    { label: 'Rotate View left 15°', command: 'rotate-view-left' },
+    { label: 'Rotate View right 15°', command: 'rotate-view-right' },
+    { label: 'Reset Rotate View', command: 'reset-rotate-view' },
     { label: 'Full Screen Mode', command: 'noop', disabled: true },
   ],
   Plugins: [
@@ -911,6 +957,11 @@ type Gesture = {
   /** Immutable source captured at pointer-down for Mixer/History Brush. */
   sourcePixels?: Uint8ClampedArray;
   historySourceIndex?: number;
+  viewRotationStart?: number;
+  viewRotationCenter?: { x: number; y: number };
+  viewRotationPointerAngle?: number;
+  lastClientX?: number;
+  lastClientY?: number;
   brushPoints?: BrushStrokePoint[];
   /** Canvas-sized mask buffer used while a refinement stroke is in flight. */
   maskBuffer?: HTMLCanvasElement;
@@ -1474,6 +1525,7 @@ export default function Home() {
     [selectionOperation, setSelectionOperation] =
       useState<SelectionOperation>('replace'),
     [zoom, setZoom] = useState(72),
+    [viewRotation, setViewRotation] = useState(0),
     [color, setColor] = useState('#ff5c35'),
     [backgroundColor, setBackgroundColor] = useState('#ffffff'),
     [size, setSize] = useState(18),
@@ -1745,7 +1797,8 @@ export default function Home() {
   const [cloud, setCloud] = useState<CloudLink | undefined>(),
     [cloudBusy, setCloudBusy] = useState(false),
     [recovering, setRecovering] = useState(false),
-    [cloudMessage, setCloudMessage] = useState('');
+    [cloudMessage, setCloudMessage] = useState(''),
+    [cloudConflict, setCloudConflict] = useState<CloudConflictError | null>(null);
   const active = frame?.layers.find((l) => l.id === frame.active),
     adjustments = active ? effectiveAdjustments(active.adjustments) : neutral;
   const {
@@ -1774,6 +1827,7 @@ export default function Home() {
   const settings = (): Settings => ({
     tool,
     zoom,
+    viewRotation,
     color,
     backgroundColor,
     size,
@@ -1817,6 +1871,7 @@ export default function Home() {
   const restoreSettings = useCallback((s: Settings) => {
     setTool(s.tool);
     setZoom(s.zoom);
+    setViewRotation(normalizeViewRotation(s.viewRotation ?? 0));
     setColor(s.color);
     setBackgroundColor(s.backgroundColor || '#ffffff');
     setSize(s.size);
@@ -1850,6 +1905,7 @@ export default function Home() {
   }, [
     setTool,
     setZoom,
+    setViewRotation,
     setColor,
     setBackgroundColor,
     setSize,
@@ -1914,6 +1970,91 @@ export default function Home() {
   const selectedLayersForFrame = (f: Frame): Layer[] => {
     const ids = new Set(selectedIdsForFrame(f));
     return f.layers.filter((layer) => ids.has(layer.id));
+  };
+
+  /** Convert editable paths and parametric shapes into one common world-space model. */
+  const booleanOperand = (layer: Layer): ReturnType<typeof booleanPathFromPoints> => {
+    if (layer.kind === 'path') return transformPath(layer.path, layer.matrix);
+    if (layer.kind === 'line' || layer.kind === 'text' || layer.kind === 'raster' ||
+        layer.kind === 'smart-object' || layer.kind === 'adjustment')
+      throw new Error('Only closed vector shape layers can be combined');
+    const map = (point: BooleanPoint): BooleanPoint => ({
+      x: layer.matrix[0] * point.x + layer.matrix[2] * point.y + layer.matrix[4],
+      y: layer.matrix[1] * point.x + layer.matrix[3] * point.y + layer.matrix[5],
+    });
+    let points: BooleanPoint[];
+    if (layer.kind === 'rectangle') {
+      points = [
+        { x: 0, y: 0 },
+        { x: layer.width, y: 0 },
+        { x: layer.width, y: layer.height },
+        { x: 0, y: layer.height },
+      ];
+    } else if (layer.kind === 'ellipse') {
+      points = Array.from({ length: 64 }, (_, index) => {
+        const angle = (index * Math.PI * 2) / 64;
+        return { x: layer.width / 2 + Math.cos(angle) * layer.width / 2, y: layer.height / 2 + Math.sin(angle) * layer.height / 2 };
+      });
+    } else {
+      // Match the renderer's stroke-centered polygon geometry so a boolean
+      // result follows the pixels users see on the canvas.
+      points = shapePoints(
+        Math.max(1, layer.width - layer.stroke),
+        Math.max(1, layer.height - layer.stroke),
+        layer.variant,
+        layer.sides,
+      ).map((point) => ({
+        x: point.x + layer.stroke / 2,
+        y: point.y + layer.stroke / 2,
+      }));
+    }
+    return booleanPathFromPoints(points.map(map), {
+      fill: layer.fill,
+      stroke: true,
+      strokeWidth: layer.stroke,
+      fillColor: layer.color,
+      strokeColor: layer.color,
+    });
+  };
+  const combineSelectedShapes = (operation: PathBooleanOperation) => {
+    const f = current(), selected = selectedLayersForFrame(f);
+    if (selected.length < 2) {
+      setNotice('Select at least two closed vector layers before combining shapes');
+      return;
+    }
+    if (selected.some((layer) =>
+      layerIsLocked(f, layer) || !layer.visible || groupForLayer(f, layer)?.visible === false,
+    )) {
+      setNotice('Unlock and show all selected vector layers before combining shapes');
+      return;
+    }
+    const groups = new Set(selected.map((layer) => layer.groupId || ''));
+    if (groups.size > 1) {
+      setNotice('Combine Shapes requires layers in one group or at the document root');
+      return;
+    }
+    try {
+      const operands = selected.map(booleanOperand);
+      if (operands.some((operand) => !booleanPathIsClosed(operand)))
+        throw new Error('Only closed vector shape layers can be combined');
+      const path = combinePathBooleans(operands, operation);
+      const ids = new Set(selected.map((layer) => layer.id));
+      const firstIndex = f.layers.findIndex((layer) => ids.has(layer.id));
+      const remainingBefore = f.layers.slice(0, firstIndex).filter((layer) => !ids.has(layer.id)).length;
+      const groupId = selected[0].groupId;
+      const result: Layer = {
+        ...commonLayer(`Combined ${operation}`),
+        kind: 'path',
+        path,
+        ...(groupId ? { groupId } : {}),
+      };
+      const layers = f.layers.filter((layer) => !ids.has(layer.id));
+      layers.splice(remainingBefore, 0, result);
+      if (commit({ ...f, layers, active: result.id, selectedLayerIds: [result.id] }))
+        setNotice(`Shapes combined (${operation})`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not combine shapes');
+    }
   };
   const selectAllLayers = () => {
     const f = current();
@@ -3787,6 +3928,7 @@ export default function Home() {
         mixerBrush,
         historyBrush,
         historySourceIndex,
+        viewRotation,
         exportFormat,
         exportQuality,
         exportTargetBytes,
@@ -3860,6 +4002,7 @@ export default function Home() {
     mixerBrush,
     historyBrush,
     historySourceIndex,
+    viewRotation,
     exportFormat,
     exportQuality,
     exportTargetBytes,
@@ -3919,6 +4062,7 @@ export default function Home() {
     if (!member || cloudBusy) return;
     setCloudBusy(true);
     setCloudMessage('Saving private cloud project…');
+    setCloudConflict(null);
     const link = !asCopy && cloud?.owner === member.id ? cloud : undefined;
     try {
       const result = await saveCloudProject(
@@ -3931,10 +4075,56 @@ export default function Home() {
         'Cloud copy saved. Choose Update cloud project after further edits.',
       );
     } catch (error) {
+      if (error instanceof CloudConflictError) setCloudConflict(error);
       setCloudMessage(
         error instanceof Error
           ? error.message
           : 'Cloud save failed. Your local draft is safe.',
+      );
+    } finally {
+      setCloudBusy(false);
+    }
+  };
+  const reloadCloudCopy = async () => {
+    if (!member || cloudBusy || !cloudConflict) return;
+    const projectId = cloudConflict.projectId || cloud?.id;
+    if (!projectId) {
+      setCloudMessage('The remote project identity is unavailable. Save a new cloud copy.');
+      return;
+    }
+    if (
+      !confirm(
+        'Replace the current local edits with the latest cloud project? Save as a new cloud project first if you want to keep these edits.',
+      )
+    )
+      return;
+    const expected = current();
+    setCloudBusy(true);
+    setCloudMessage('Loading the latest cloud project…');
+    try {
+      const result = await openCloudProject(projectId);
+      if (current() !== expected)
+        throw new Error('Document changed while the cloud project was loading.');
+      await install(result.document);
+      clearClipboard();
+      setName(result.document.name);
+      setCloud({
+        id: result.id,
+        generation: result.generation,
+        owner: member.id,
+      });
+      restoreSettings(result.document.settings);
+      quickMaskRef.current = null;
+      setQuickMask(null);
+      setQuickMasking(false);
+      setCloudConflict(null);
+      setCloudMessage('Latest cloud project restored. Local edits were replaced.');
+      setNotice('Latest cloud project restored');
+    } catch (error) {
+      setCloudMessage(
+        error instanceof Error
+          ? error.message
+          : 'Could not reload the cloud project. Your local edits are still available.',
       );
     } finally {
       setCloudBusy(false);
@@ -4285,6 +4475,56 @@ export default function Home() {
           ? 'Layer added to a new group'
           : `${layers.length} layers added to a new group`,
       );
+  };
+  const createClippingMask = () => {
+    const f = current(),
+      source = f.layers.find((item) => item.id === f.active),
+      base = source ? clippingCandidateBase(f, source) : undefined;
+    if (!source || !isClippingSourceLayer(source) || !base) {
+      setNotice('Select a raster or smart-object layer directly above its clipping base');
+      return false;
+    }
+    if (layerIsLocked(f, source) || layerIsLocked(f, base) || !source.visible || !base.visible) {
+      setNotice('Show and unlock the source and clipping base first');
+      return false;
+    }
+    if (
+      commit({
+        ...f,
+        layers: f.layers.map((layer) =>
+          layer.id === source.id ? { ...layer, clippingTo: base.id } : layer,
+        ),
+      })
+    ) {
+      setNotice(`Clipping mask created from ${base.name || 'base layer'}`);
+      return true;
+    }
+    return false;
+  };
+  const releaseClippingMask = () => {
+    const f = current(),
+      source = f.layers.find((item) => item.id === f.active);
+    if (!source?.clippingTo) {
+      setNotice('The active layer has no clipping mask');
+      return false;
+    }
+    if (layerIsLocked(f, source)) {
+      setNotice('Unlock the clipped layer before releasing its mask');
+      return false;
+    }
+    const { clippingTo: _clippingTo, ...withoutClipping } = source;
+    if (
+      commit({
+        ...f,
+        layers: f.layers.map((layer) =>
+          layer.id === source.id ? (withoutClipping as Layer) : layer,
+        ),
+      })
+    ) {
+      setNotice('Clipping mask released');
+      return true;
+    }
+    return false;
   };
   const ungroupActiveLayer = () => {
     const f = current(),
@@ -5060,11 +5300,24 @@ export default function Home() {
     e: Pick<React.PointerEvent<HTMLCanvasElement>, 'clientX' | 'clientY'>,
   ) => {
     const c = canvas.current!,
-      r = c.getBoundingClientRect();
-    return {
-      x: ((e.clientX - r.left) * c.width) / r.width,
-      y: ((e.clientY - r.top) * c.height) / r.height,
-    };
+      rect = c.getBoundingClientRect(),
+      computed = window.getComputedStyle(c),
+      layoutWidth = Number.parseFloat(computed.width),
+      layoutHeight = Number.parseFloat(computed.height);
+    return canvasPointFromClient(
+      e.clientX,
+      e.clientY,
+      rect,
+      Number.isFinite(layoutWidth) && layoutWidth > 0
+        ? layoutWidth
+        : c.offsetWidth || rect.width,
+      Number.isFinite(layoutHeight) && layoutHeight > 0
+        ? layoutHeight
+        : c.offsetHeight || rect.height,
+      c.width,
+      c.height,
+      viewRotation,
+    );
   };
   const pressure = (e: React.PointerEvent<HTMLCanvasElement>) =>
     (e.pointerType === 'pen' || e.pointerType === 'touch') &&
@@ -5097,83 +5350,75 @@ export default function Home() {
     dashed = false,
   ) => {
     const context = canvas.current?.getContext('2d');
-    if (!context || !path.nodes.length) return;
-    const transformed = path.nodes.map(({ x, y }) => ({
-      x: matrix[0] * x + matrix[2] * y + matrix[4],
-      y: matrix[1] * x + matrix[3] * y + matrix[5],
-    }));
+    if (!context) return;
+    const contours = pathContours(path);
+    if (!contours.length) return;
+    const map = (point: { x: number; y: number }) => ({
+      x: matrix[0] * point.x + matrix[2] * point.y + matrix[4],
+      y: matrix[1] * point.x + matrix[3] * point.y + matrix[5],
+    });
     context.save();
     context.strokeStyle = '#38bdf8';
     context.fillStyle = 'rgba(56,189,248,.14)';
     context.lineWidth = 1.5;
     context.setLineDash(dashed ? [7, 5] : []);
     context.beginPath();
-    context.moveTo(transformed[0].x, transformed[0].y);
-    for (const [index, node] of transformed.slice(1).entries()) {
-      const sourcePrevious = path.nodes[index], sourceNode = path.nodes[index + 1];
-      if (sourcePrevious.outHandle || sourceNode.inHandle) {
-        const out = sourcePrevious.outHandle ?? sourcePrevious;
-        const incoming = sourceNode.inHandle ?? sourceNode;
-        const map = (point: { x: number; y: number }) => ({
-          x: matrix[0] * point.x + matrix[2] * point.y + matrix[4],
-          y: matrix[1] * point.x + matrix[3] * point.y + matrix[5],
-        });
-        const mappedOut = map(out), mappedIncoming = map(incoming);
-        context.bezierCurveTo(mappedOut.x, mappedOut.y, mappedIncoming.x, mappedIncoming.y, node.x, node.y);
-      } else context.lineTo(node.x, node.y);
-    }
-    if (path.closed && path.nodes.length > 1) {
-      const sourcePrevious = path.nodes[path.nodes.length - 1], sourceNode = path.nodes[0];
-      if (sourcePrevious.outHandle || sourceNode.inHandle) {
-        const map = (point: { x: number; y: number }) => ({
-          x: matrix[0] * point.x + matrix[2] * point.y + matrix[4],
-          y: matrix[1] * point.x + matrix[3] * point.y + matrix[5],
-        });
-        const mappedOut = map(sourcePrevious.outHandle ?? sourcePrevious), mappedIncoming = map(sourceNode.inHandle ?? sourceNode);
-        context.bezierCurveTo(mappedOut.x, mappedOut.y, mappedIncoming.x, mappedIncoming.y, transformed[0].x, transformed[0].y);
+    for (const contour of contours) {
+      if (!contour.nodes.length) continue;
+      const transformed = contour.nodes.map(map);
+      context.moveTo(transformed[0].x, transformed[0].y);
+      for (const [index, node] of transformed.slice(1).entries()) {
+        const sourcePrevious = contour.nodes[index], sourceNode = contour.nodes[index + 1];
+        if (sourcePrevious.outHandle || sourceNode.inHandle) {
+          const out = map(sourcePrevious.outHandle ?? sourcePrevious);
+          const incoming = map(sourceNode.inHandle ?? sourceNode);
+          context.bezierCurveTo(out.x, out.y, incoming.x, incoming.y, node.x, node.y);
+        } else context.lineTo(node.x, node.y);
+      }
+      if (contour.closed && contour.nodes.length > 1) {
+        const sourcePrevious = contour.nodes[contour.nodes.length - 1], sourceNode = contour.nodes[0];
+        if (sourcePrevious.outHandle || sourceNode.inHandle) {
+          const out = map(sourcePrevious.outHandle ?? sourcePrevious);
+          const incoming = map(sourceNode.inHandle ?? sourceNode);
+          context.bezierCurveTo(out.x, out.y, incoming.x, incoming.y, transformed[0].x, transformed[0].y);
+        }
+        context.closePath();
       }
     }
-    if (path.closed) context.closePath();
     context.stroke();
-    if (path.closed && path.fill) context.fill();
-    context.setLineDash([]);
-    // Expose editable Bezier controls while a path is selected so Direct
-    // Selection can discover and drag them without hiding the curve shape.
-    const map = (point: { x: number; y: number }) => ({
-      x: matrix[0] * point.x + matrix[2] * point.y + matrix[4],
-      y: matrix[1] * point.x + matrix[3] * point.y + matrix[5],
-    });
-    context.lineWidth = 1;
-    for (const node of path.nodes) {
-      const anchor = map(node);
-      for (const handle of [node.inHandle, node.outHandle]) {
-        if (!handle) continue;
-        const control = map(handle);
-        context.strokeStyle = 'rgba(148,163,184,.8)';
+    if (path.fill) context.fill(path.fillRule === 'evenodd' ? 'evenodd' : 'nonzero');
+    for (const [contourIndex, contour] of contours.entries()) {
+      if (!contour.nodes.length) continue;
+      const transformed = contour.nodes.map(map);
+      // Expose editable Bezier controls while a path is selected so Direct
+      // Selection can discover and drag them without hiding the curve shape.
+      context.lineWidth = 1;
+      for (const node of contour.nodes) {
+        const anchor = map(node);
+        for (const handle of [node.inHandle, node.outHandle]) {
+          if (!handle) continue;
+          const control = map(handle);
+          context.strokeStyle = 'rgba(148,163,184,.8)';
+          context.beginPath();
+          context.moveTo(anchor.x, anchor.y);
+          context.lineTo(control.x, control.y);
+          context.stroke();
+          context.fillStyle = '#38bdf8';
+          context.beginPath();
+          context.arc(control.x, control.y, 4, 0, Math.PI * 2);
+          context.fill();
+        }
+      }
+      for (const [index, node] of transformed.entries()) {
         context.beginPath();
-        context.moveTo(anchor.x, anchor.y);
-        context.lineTo(control.x, control.y);
-        context.stroke();
-        context.fillStyle = '#38bdf8';
-        context.beginPath();
-        context.arc(control.x, control.y, 4, 0, Math.PI * 2);
+        context.fillStyle = contourIndex === 0 && index === selectedIndex ? '#fbbf24' : '#ffffff';
+        context.strokeStyle = '#0f172a';
+        context.arc(node.x, node.y, contourIndex === 0 && index === selectedIndex ? 6 : 4, 0, Math.PI * 2);
         context.fill();
+        context.stroke();
       }
     }
-    for (const [index, node] of transformed.entries()) {
-      context.beginPath();
-      context.fillStyle = index === selectedIndex ? '#fbbf24' : '#ffffff';
-      context.strokeStyle = '#0f172a';
-      context.arc(
-        node.x,
-        node.y,
-        index === selectedIndex ? 6 : 4,
-        0,
-        Math.PI * 2,
-      );
-      context.fill();
-      context.stroke();
-    }
+    context.setLineDash([]);
     context.restore();
   };
   const previewPenPath = (g: Gesture) => {
@@ -5206,6 +5451,19 @@ export default function Home() {
         drawPathOverlay(preview, [1, 0, 0, 1, 0, 0], null, true);
     });
   };
+  const previewCurvaturePath = (g: Gesture) => {
+    const points = g.points || [];
+    if (points.length < 2) return previewPenPath(g);
+    const preview = buildCurvaturePath(points, {
+      strokeWidth: Math.max(1, size / 3),
+      fillColor: color,
+      strokeColor: color,
+    });
+    void paint(g.frame).then(() => {
+      if (gesture.current === g)
+        drawPathOverlay(preview, [1, 0, 0, 1, 0, 0], null, true);
+    });
+  };
   const finishFreeformPath = (g: Gesture) => {
     if (!g.points || g.points.length < 2) {
       setNotice('Freeform Pen needs at least two points');
@@ -5225,6 +5483,33 @@ export default function Home() {
       if (added) setNotice('Editable freeform path layer added');
     } catch {
       setNotice('Could not create a freeform path');
+    }
+  };
+  const finishCurvaturePath = (g: Gesture, closed = false) => {
+    if (!g.points || g.points.length < 2) {
+      void paint(g.frame);
+      setNotice('Curvature Pen needs at least two points');
+      return;
+    }
+    try {
+      const path = buildCurvaturePath(
+        g.points,
+        {
+          strokeWidth: Math.max(1, size / 3),
+          fillColor: color,
+          strokeColor: color,
+        },
+        closed,
+      );
+      const added = addLayer({
+        ...commonLayer('Curvature Path ' + g.frame.layers.length),
+        kind: 'path',
+        path,
+      });
+      if (added) setNotice('Editable curvature path layer added');
+    } catch {
+      void paint(g.frame);
+      setNotice('Could not create a curvature path');
     }
   };
   const pointerDown = async (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -5264,12 +5549,17 @@ export default function Home() {
         gesture.current = null;
         finishPolygonalLasso(g);
       } else {
-        points.push({
+        const bounded = {
           x: Math.max(0, Math.min(g.frame.w, p.x)),
           y: Math.max(0, Math.min(g.frame.h, p.y)),
-        });
+        };
+        if (g.tool === 'curvature-pen') {
+          g.points = appendCurvaturePoint(points, bounded);
+        } else {
+          points.push(bounded);
+        }
         g.last = p;
-        g.moved = points.length > 1;
+        g.moved = (g.points || points).length > 1;
         void paint(g.frame).then(() => {
           if (gesture.current !== g) return;
           const context = canvas.current?.getContext('2d');
@@ -5288,9 +5578,12 @@ export default function Home() {
       }
       return;
     }
-    // Pen is a click-to-place straight-segment workflow. Keep this gesture
-    // alive between clicks so it works consistently with mouse, pen and touch.
-    if (gesture.current?.tool === 'pen') {
+    // Pen and Curvature Pen are click-to-place workflows. Keep the gesture
+    // alive between clicks so mouse, pen and touch can place each anchor.
+    if (
+      gesture.current?.tool === 'pen' ||
+      gesture.current?.tool === 'curvature-pen'
+    ) {
       const g = gesture.current,
         p = point(e),
         points = g.points || (g.points = []),
@@ -5307,22 +5600,27 @@ export default function Home() {
           ...(node.outHandle ? { outHandle: { ...node.outHandle } } : {}),
         }));
         gesture.current = null;
-        const path: PathModel = {
-          nodes,
-          closed: true,
-          fill: true,
-          stroke: true,
-          strokeWidth: Math.max(1, size / 3),
-          fillColor: color,
-          strokeColor: color,
-        };
-        if (validatePath(path)) {
-          const added = addLayer({
-            ...commonLayer('Path ' + g.frame.layers.length),
-            kind: 'path',
-            path,
-          });
-          if (added) setNotice('Editable path layer added');
+        if (g.tool === 'curvature-pen') {
+          g.points = nodes;
+          finishCurvaturePath(g, true);
+        } else {
+          const path: PathModel = {
+            nodes,
+            closed: true,
+            fill: true,
+            stroke: true,
+            strokeWidth: Math.max(1, size / 3),
+            fillColor: color,
+            strokeColor: color,
+          };
+          if (validatePath(path)) {
+            const added = addLayer({
+              ...commonLayer('Path ' + g.frame.layers.length),
+              kind: 'path',
+              path,
+            });
+            if (added) setNotice('Editable path layer added');
+          }
         }
       } else {
         points.push({
@@ -5331,7 +5629,8 @@ export default function Home() {
         });
         g.last = p;
         g.moved = points.length > 1;
-        previewPenPath(g);
+        if (g.tool === 'curvature-pen') previewCurvaturePath(g);
+        else previewPenPath(g);
       }
       return;
     }
@@ -5351,7 +5650,54 @@ export default function Home() {
       setNotice('Freeform Pen: draw a path, release to finish');
       return;
     }
+    // Photoshop's Pen tool edits an existing path when the pointer is over
+    // an anchor or stroke.  Alt/Option removes an anchor, Shift toggles a
+    // corner/smooth point, and an unmodified stroke click inserts an anchor;
+    // clicking empty canvas still starts a new path as before.
     if (tool === 'pen') {
+      const f = current(), activeLayer = f.layers.find((item) => item.id === f.active), p = point(e);
+      if (activeLayer?.kind !== 'path') {
+        // Empty canvas or a non-path active layer starts a new path below.
+      } else if (layerIsLocked(f, activeLayer) || !activeLayer.visible) {
+        setNotice('Select a visible, unlocked path layer before editing anchors');
+        return;
+      } else {
+        const localPath = inversePoint(activeLayer.matrix, p);
+        if (!localPath) {
+          setNotice('This path transform cannot be edited');
+          return;
+        }
+        const scale = Math.max(
+          Math.hypot(activeLayer.matrix[0], activeLayer.matrix[1]),
+          Math.hypot(activeLayer.matrix[2], activeLayer.matrix[3]),
+          0.0001,
+        );
+        const path = validatePath(activeLayer.path);
+        const nodeIndex = hitTestPathNode(path, localPath, 12 / scale);
+        if (nodeIndex !== null && (e.altKey || e.shiftKey)) {
+          const next = e.altKey
+            ? removePathNode(path, nodeIndex)
+            : setPathNodeSmooth(
+                path,
+                nodeIndex,
+                !(path.nodes[nodeIndex].inHandle || path.nodes[nodeIndex].outHandle),
+              );
+          if (commit({ ...f, layers: f.layers.map((item) => item.id === activeLayer.id ? { ...item, path: next } : item) }))
+            setNotice(e.altKey ? 'Path anchor deleted' : 'Path anchor converted');
+          return;
+        }
+        if (!e.altKey && !e.shiftKey) {
+          const hit = nearestPathSegment(path, localPath, 12 / scale);
+          if (hit) {
+            const next = insertPathNode(path, hit.segmentIndex, hit.t);
+            if (commit({ ...f, layers: f.layers.map((item) => item.id === activeLayer.id ? { ...item, path: next } : item) }))
+              setNotice('Path anchor added');
+            return;
+          }
+        }
+      }
+    }
+    if (tool === 'pen' || tool === 'curvature-pen') {
       if (doc.rendering || !frame) return;
       const f = current(),
         p = point(e);
@@ -5371,7 +5717,11 @@ export default function Home() {
       };
       gesture.current = g;
       previewPenPath(g);
-      setNotice('Pen: click to place points, click the first point to close');
+      setNotice(
+        tool === 'curvature-pen'
+          ? 'Curvature Pen: click to place smooth points, click the first point to close'
+          : 'Pen: click to place points, click the first point to close',
+      );
       return;
     }
     if (tool === 'quick-selection') {
@@ -5716,6 +6066,23 @@ export default function Home() {
       setNotice('Zoomed in');
       return;
     }
+    if (tool === 'rotate-view') {
+      const rect = canvas.current!.getBoundingClientRect();
+      const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      gesture.current = {
+        tool,
+        start: p,
+        last: p,
+        frame: f,
+        moved: false,
+        viewRotationStart: viewRotation,
+        viewRotationCenter: center,
+        viewRotationPointerAngle: Math.atan2(e.clientY - center.y, e.clientX - center.x),
+      };
+      canvas.current!.setPointerCapture(e.pointerId);
+      setNotice('Rotate View: drag around the canvas; use Reset view to restore');
+      return;
+    }
     if (tool === 'eyedropper') {
       const pixel = canvas
         .current!.getContext('2d')!
@@ -5789,7 +6156,15 @@ export default function Home() {
       return;
     }
     if (tool === 'hand') {
-      gesture.current = { tool, start: p, last: p, frame: f, moved: false };
+      gesture.current = {
+        tool,
+        start: p,
+        last: p,
+        frame: f,
+        moved: false,
+        lastClientX: e.clientX,
+        lastClientY: e.clientY,
+      };
       return;
     }
     if (tool === 'fill') {
@@ -6876,11 +7251,30 @@ export default function Home() {
       }
       return;
     }
+    if (g.tool === 'rotate-view' && g.viewRotationCenter && g.viewRotationPointerAngle !== undefined) {
+      const currentAngle = Math.atan2(
+        e.clientY - g.viewRotationCenter.y,
+        e.clientX - g.viewRotationCenter.x,
+      );
+      const delta = rotationDelta(g.viewRotationPointerAngle, currentAngle);
+      setViewRotation(normalizeViewRotation((g.viewRotationStart ?? viewRotation) + delta));
+      g.last = p;
+      g.moved = true;
+      return;
+    }
     if (g.tool === 'hand') {
       if (stage.current) {
-        stage.current.scrollLeft -= p.x - g.last.x;
-        stage.current.scrollTop -= p.y - g.last.y;
+        const delta = screenPanDelta(
+          g.lastClientX ?? e.clientX,
+          g.lastClientY ?? e.clientY,
+          e.clientX,
+          e.clientY,
+        );
+        stage.current.scrollLeft -= delta.x;
+        stage.current.scrollTop -= delta.y;
       }
+      g.lastClientX = e.clientX;
+      g.lastClientY = e.clientY;
       g.last = p;
       return;
     }
@@ -7570,6 +7964,16 @@ export default function Home() {
       }
       return;
     }
+    if (g.tool === 'curvature-pen') {
+      if (e.type === 'pointercancel') {
+        gesture.current = null;
+        void paint(current());
+        setNotice('Curvature Pen path cancelled');
+      } else if (g.points?.length) {
+        previewCurvaturePath(g);
+      }
+      return;
+    }
     const p = point(e),
       f = g.frame;
     const local =
@@ -7591,10 +7995,16 @@ export default function Home() {
       return;
     }
     if (e.type === 'pointercancel') {
+      if (g.tool === 'rotate-view')
+        setViewRotation(normalizeViewRotation(g.viewRotationStart ?? 0));
       if (g.tool === 'ruler') setMeasurementPreview(null);
       discardPreviewAsset(assets.current, g.maskPreviewAsset);
       void paint(current());
       setNotice('Gesture cancelled');
+      return;
+    }
+    if (g.tool === 'rotate-view') {
+      setNotice(`Rotate View: ${normalizeViewRotation(viewRotation)}°`);
       return;
     }
     if (g.tool === 'quick-selection' && g.quickSelectionSource) {
@@ -8358,6 +8768,14 @@ export default function Home() {
     if (format) setExportFormat(format);
     setExporting({ frame: current(), assets: { ...assets.current }, name });
   };
+  const rotateViewBy = (degrees: number) => {
+    setViewRotation((value) => normalizeViewRotation(value + degrees));
+    setNotice(`Rotate View: ${normalizeViewRotation(viewRotation + degrees)}°`);
+  };
+  const resetViewRotation = () => {
+    setViewRotation(0);
+    setNotice('Rotate View reset');
+  };
   const fitToScreen = () => {
       setZoom(72);
       stage.current?.scrollTo({ left: 0, top: 0, behavior: 'smooth' });
@@ -8421,6 +8839,7 @@ export default function Home() {
         e.key === 'Escape' &&
         (gesture.current?.tool === 'pen' ||
           gesture.current?.tool === 'freeform-pen' ||
+          gesture.current?.tool === 'curvature-pen' ||
           gesture.current?.tool === 'direct-select' ||
           gesture.current?.tool === 'selection-brush' ||
           gesture.current?.tool === 'quick-selection' ||
@@ -8430,7 +8849,9 @@ export default function Home() {
         gesture.current = null;
         void paint(current());
         setNotice(
-          canceledTool === 'pen' || canceledTool === 'freeform-pen'
+          canceledTool === 'pen' ||
+          canceledTool === 'freeform-pen' ||
+          canceledTool === 'curvature-pen'
             ? 'Pen path cancelled'
             : canceledTool === 'selection-brush'
               ? 'Selection Brush cancelled'
@@ -8502,6 +8923,13 @@ export default function Home() {
                 ? 'Frame drag cancelled; document unchanged'
                 : 'Crop drag cancelled; document unchanged',
         );
+        return;
+      }
+      if (e.key === 'Escape' && gesture.current?.tool === 'rotate-view') {
+        e.preventDefault();
+        setViewRotation(normalizeViewRotation(gesture.current.viewRotationStart ?? 0));
+        gesture.current = null;
+        setNotice('Rotate View cancelled');
         return;
       }
       if (e.key === 'Enter' && perspectiveCropPreview && !typing) {
@@ -8758,6 +9186,10 @@ export default function Home() {
     else if (command === 'merge-layers') return mergeLayers();
     else if (command === 'merge-visible') return mergeVisible();
     else if (command === 'flatten') return flattenImage();
+    else if (command === 'combine-shapes-union') return combineSelectedShapes('union');
+    else if (command === 'combine-shapes-subtract') return combineSelectedShapes('subtract');
+    else if (command === 'combine-shapes-intersect') return combineSelectedShapes('intersect');
+    else if (command === 'combine-shapes-exclude') return combineSelectedShapes('exclude');
     else if (command === 'patch-tool') {
       setTool('patch');
       setCloneSource(null);
@@ -8832,6 +9264,8 @@ export default function Home() {
     else if (command === 'invert-layer-mask') invertLayerMask();
     else if (command === 'toggle-layer-mask') toggleLayerMask();
     else if (command === 'remove-layer-mask') clearMask();
+    else if (command === 'create-clipping-mask') createClippingMask();
+    else if (command === 'release-clipping-mask') releaseClippingMask();
     else if (command === 'reset') resetAdjustments();
     else if (command === 'levels')
       setNotice('Levels controls are available in Adjust selected layer');
@@ -8941,7 +9375,10 @@ export default function Home() {
         (f) => f[0].toLowerCase() === command.slice(7),
       );
       if (match) chooseFilter(match[1], match[0]);
-    } else if (command === 'zoom-in') setZoom((v) => Math.min(140, v + 10));
+    } else if (command === 'rotate-view-left') rotateViewBy(-15);
+    else if (command === 'rotate-view-right') rotateViewBy(15);
+    else if (command === 'reset-rotate-view') resetViewRotation();
+    else if (command === 'zoom-in') setZoom((v) => Math.min(140, v + 10));
     else if (command === 'zoom-out') setZoom((v) => Math.max(20, v - 10));
     else if (command === 'fit') fitToScreen();
     else if (command === 'actual') setZoom(100);
@@ -9072,6 +9509,26 @@ export default function Home() {
           !layer.visible ||
           !layer.mask
         );
+      case 'create-clipping-mask': {
+        const base = layer ? clippingCandidateBase(frame, layer) : undefined;
+        return (
+          !layer ||
+          !isClippingSourceLayer(layer) ||
+          !base ||
+          Boolean(layer.clippingTo) ||
+          layerIsLocked(frame, layer) ||
+          layerIsLocked(frame, base) ||
+          !layer.visible ||
+          !base.visible
+        );
+      }
+      case 'release-clipping-mask':
+        return (
+          !layer ||
+          !layer.clippingTo ||
+          !validClippingRelationship(frame, layer.id, layer.clippingTo) ||
+          layerIsLocked(frame, layer)
+        );
       case 'auto-tone':
       case 'auto-contrast':
       case 'auto-color':
@@ -9171,6 +9628,19 @@ export default function Home() {
               frame.groups?.find((group) => group.id === item.groupId)
                 ?.visible !== false),
         );
+      case 'combine-shapes-union':
+      case 'combine-shapes-subtract':
+      case 'combine-shapes-intersect':
+      case 'combine-shapes-exclude': {
+        const selected = selectedLayersForFrame(frame);
+        const groupIds = new Set(selected.map((candidate) => candidate.groupId || ''));
+        return selected.length < 2 || groupIds.size > 1 || selected.some((candidate) =>
+          layerIsLocked(frame, candidate) || !candidate.visible ||
+          groupForLayer(frame, candidate)?.visible === false ||
+          (candidate.kind === 'line' || candidate.kind === 'text' || candidate.kind === 'raster' ||
+            candidate.kind === 'smart-object' || candidate.kind === 'adjustment' ||
+            (candidate.kind === 'path' && !booleanPathIsClosed(candidate.path))));
+      }
       default:
         return false;
     }
@@ -9977,9 +10447,15 @@ export default function Home() {
           ) : null}
           <div
             className="canvas-wrap"
-            style={{ width: `${zoom}%` }}
+            data-testid="canvas-wrap"
+            style={{
+              width: `${zoom}%`,
+              transform: `rotate(${normalizeViewRotation(viewRotation)}deg)`,
+              transformOrigin: 'center center',
+            }}
             data-artboard-count={frame?.artboards?.length ?? 0}
             data-active-artboard={frame?.activeArtboardId ?? ''}
+            data-view-rotation={normalizeViewRotation(viewRotation)}
           >
             <canvas
               ref={canvas}
@@ -10358,6 +10834,8 @@ export default function Home() {
               invertMask={invertLayerMask}
               toggleMask={toggleLayerMask}
               clearMask={clearMask}
+              createClipping={createClippingMask}
+              releaseClipping={releaseClippingMask}
               clearSelection={() => setSelection(undefined)}
               invertSelection={invertSelection}
               selectionOperation={selectionOperation}
@@ -10732,6 +11210,26 @@ export default function Home() {
               without changing source pixels.
             </p>
           </section>
+          {tool === 'rotate-view' && (
+            <section className="panel" data-testid="view-rotation-controls">
+              <Title icon={RotateCw} text="Rotate View" />
+              <output data-testid="view-rotation-value" aria-live="polite">
+                {normalizeViewRotation(viewRotation)}°
+              </output>
+              <div className="transform">
+                <button type="button" aria-label="Rotate view left 15 degrees" onClick={() => rotateViewBy(-15)}>
+                  <RotateCcw />
+                </button>
+                <button type="button" aria-label="Rotate view right 15 degrees" onClick={() => rotateViewBy(15)}>
+                  <RotateCw />
+                </button>
+                <button type="button" className="secondary" aria-label="Reset view rotation" onClick={resetViewRotation}>
+                  Reset view
+                </button>
+              </div>
+              <p className="adjust-note">Rotate View changes only the canvas viewport. Document pixels, layers and exports stay unchanged.</p>
+            </section>
+          )}
           <section className="panel">
             <Title icon={Crop} text="Transform" />
             <div className="transform">
@@ -11516,6 +12014,15 @@ export default function Home() {
                     onClick={() => void saveToCloud(true)}
                   >
                     Save as new cloud project
+                  </button>
+                )}
+                {cloudConflict && cloud?.owner === member.id && (
+                  <button
+                    className="apply"
+                    disabled={cloudBusy}
+                    onClick={() => void reloadCloudCopy()}
+                  >
+                    Reload latest cloud copy
                   </button>
                 )}
                 <p>

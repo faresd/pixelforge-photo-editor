@@ -5,10 +5,14 @@ import {
   hitTestPathHandle,
   hitTestPathNode,
   hitTestPathStroke,
+  insertPathNode,
   movePathHandle,
   movePathNode,
+  nearestPathSegment,
   pathBounds,
+  removePathNode,
   serializePathData,
+  setPathNodeSmooth,
   transformPath,
   validatePath,
 } from '../src/paths.ts';
@@ -170,4 +174,55 @@ test('moving and transforming a cubic anchor carries its handles', () => {
     inHandle: { x: 31, y: 69 },
     outHandle: { x: 51, y: 69 },
   });
+});
+
+test('nearest segment and insertion preserve straight and closed path topology', () => {
+  const path = validatePath(triangle());
+  const hit = nearestPathSegment(path, { x: 4.5, y: 2 }, 2);
+  assert.equal(hit?.segmentIndex, 0);
+  assert.ok(Math.abs((hit?.t ?? 0) - 0.5) < 0.05);
+  assert.ok(hit);
+  const inserted = insertPathNode(path, hit.segmentIndex, hit.t);
+  assert.equal(inserted.nodes.length, 4);
+  assert.equal(inserted.closed, true);
+  assert.deepEqual(inserted.nodes[1], { x: 4.5, y: 2 });
+  const closing = insertPathNode(path, 2, 0.5);
+  assert.equal(closing.nodes.length, 4);
+  assert.deepEqual(closing.nodes.at(-1), { x: 2.5, y: 4.5 });
+  assert.deepEqual(path.nodes, triangle().nodes);
+});
+
+test('cubic insertion splits Bezier controls and node removal is bounded', () => {
+  const path = validatePath({
+    nodes: [
+      { x: 0, y: 0, outHandle: { x: 0, y: 100 } },
+      { x: 100, y: 100, inHandle: { x: 100, y: 0 } },
+    ],
+    closed: false,
+    fill: false,
+    stroke: true,
+    strokeWidth: 2,
+    fillColor: '#ff0000',
+    strokeColor: '#000000',
+  });
+  const inserted = insertPathNode(path, 0, 0.5);
+  assert.equal(inserted.nodes.length, 3);
+  assert.deepEqual(inserted.nodes[1], {
+    x: 50,
+    y: 50,
+    inHandle: { x: 25, y: 50 },
+    outHandle: { x: 75, y: 50 },
+  });
+  assert.equal(removePathNode(inserted, 1).nodes.length, 2);
+  assert.throws(() => insertPathNode(path, 0, 1.1), /parameter/);
+});
+
+test('smooth conversion creates mirrored handles and corner conversion removes them', () => {
+  const path = validatePath(triangle({ closed: false }));
+  const smooth = setPathNodeSmooth(path, 1, true);
+  assert.ok(smooth.nodes[1].inHandle && smooth.nodes[1].outHandle);
+  assert.equal(smooth.nodes[1].inHandle.x + smooth.nodes[1].outHandle.x, 2 * smooth.nodes[1].x);
+  assert.equal(smooth.nodes[1].inHandle.y + smooth.nodes[1].outHandle.y, 2 * smooth.nodes[1].y);
+  const corner = setPathNodeSmooth(smooth, 1, false);
+  assert.deepEqual(corner.nodes[1], { x: 8, y: 2 });
 });

@@ -10,6 +10,7 @@ import {
   validateDraft,
 } from '../src/drafts.ts';
 import {
+  CloudConflictError,
   listCloudProjects,
   saveCloudProject,
   validateCloudDelete,
@@ -270,6 +271,31 @@ test('cloud endpoint wrappers fail closed on malformed responses and payloads', 
       /Unsupported project version/,
     );
     assert.equal(called, false, 'invalid documents are rejected before upload');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('cloud generation conflicts retain project identity for explicit recovery', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          error: 'This project changed elsewhere. Save a separate copy.',
+        }),
+        { status: 409, headers: { 'Content-Type': 'application/json' } },
+      );
+    await assert.rejects(
+      () => saveCloudProject('project-1', '7', baseDraft()),
+      (error) => {
+        assert.ok(error instanceof CloudConflictError);
+        assert.equal(error.projectId, 'project-1');
+        assert.equal(error.generation, '7');
+        assert.equal(error.message, 'This project changed elsewhere. Save a separate copy.');
+        return true;
+      },
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }

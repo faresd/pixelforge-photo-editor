@@ -110,11 +110,13 @@ const stroke = async (page: Page, startX: number, endX: number, pointerType = 'm
 
 test.beforeEach(async ({ page }) => openEditor(page));
 
-test('Smudge is available on R and its Flow setting survives a local draft round trip', async ({ page }) => {
+test('R cycles Rotate View and Smudge and its Flow setting survives a local draft round trip', async ({ page }) => {
   await importFixture(page);
   await selectTool(page, 'Smudge');
   await expect(page.getByRole('button', { name: 'Smudge tool', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await page.keyboard.press('r');
+  await expect(page.getByRole('button', { name: 'Rotate View tool', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.press('Shift+r');
   await expect(page.getByRole('button', { name: 'Smudge tool', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await page.getByLabel('Flow', { exact: true }).fill('57');
   const saved = await project(page);
