@@ -64,6 +64,7 @@ import {
 import {
   applyTiledNeighborhoodBlur,
   isTiledNeighborhoodBlur,
+  type TiledNeighborhoodProgress,
   type TiledRenderTelemetry,
 } from './tiledDocument.ts';
 import type { TileCache } from './tilePlan.ts';
@@ -1781,6 +1782,8 @@ export type RenderOptions = {
   tiledMaxWorkingBytes?: number;
   /** Report bounded tile diagnostics without exposing pixels or source URLs. */
   onTiledTelemetry?: (telemetry: TiledRenderTelemetry) => void;
+  /** Report bounded tile completion before the final telemetry envelope. */
+  onTiledProgress?: (progress: TiledNeighborhoodProgress) => void;
 };
 
 /** Render a raster layer's bounded style stack in local coordinates. */
@@ -2116,6 +2119,18 @@ export async function renderFrame(
               isCancelled: options.isCancelled,
               onTelemetry: (telemetry) =>
                 options.onTiledTelemetry?.({ ...telemetry, layerId: layer.id }),
+              onProgress: (completed, total, meta) =>
+                options.onTiledProgress?.({
+                  kind: 'tiled-neighborhood-progress',
+                  effect: filterEffect.type as 'box-blur' | 'gaussian-blur',
+                  layerId: layer.id,
+                  width: filteredWidth,
+                  height: filteredHeight,
+                  tileSize: meta.tileSize,
+                  tileCount: meta.tileCount,
+                  completed,
+                  total,
+                }),
             },
           );
           rasterSource = tiled.canvas;

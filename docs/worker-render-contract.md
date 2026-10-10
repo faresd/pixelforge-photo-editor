@@ -45,6 +45,34 @@ the latest `completed/total` sample in its render-status output while keeping
 the last sample available after completion for diagnostics and assistive
 technology. Progress is advisory: cancellation, timeout and error paths remain
 the authoritative result.
+
+Eligible Box and Gaussian Blur layers also emit an independent bounded tile
+progress envelope before their final telemetry envelope:
+
+```ts
+{
+  kind: 'tiled-progress',
+  id: number,
+  progress: {
+    kind: 'tiled-neighborhood-progress',
+    effect: 'box-blur' | 'gaussian-blur',
+    layerId?: string,
+    width: number,
+    height: number,
+    tileSize: 256 | 512,
+    tileCount: number,
+    completed: number,
+    total: number,
+  },
+}
+```
+
+`completed` is one-based and monotonic; `total` must equal the canonical tile
+count rebuilt from the image dimensions and tile size. The envelope contains
+no pixels, asset URLs or source content. Cancellation is checked before and
+after every tile, and a superseded request cannot publish progress into a
+newer render. The main-thread fallback uses the same callback and validation,
+so the status contract remains consistent when workers are unavailable.
 An invalid request or a worker-side exception produces a bounded error object:
 
 ```ts

@@ -10,7 +10,10 @@ import { sanitizeClippingRelations } from './layerClipping';
 import { renderFrameWithWorker } from './workerRender';
 import type { Draft } from './drafts';
 import { beginPerformanceSpan } from './performanceMarks';
-import type { TiledRenderTelemetry } from './tiledDocument';
+import type {
+  TiledNeighborhoodProgress,
+  TiledRenderTelemetry,
+} from './tiledDocument';
 import {
   rangeLayerSelection,
   selectedLayerIdsForFrame,
@@ -41,6 +44,7 @@ export function useDocument(onError: (message: string) => void) {
     // assistive technology. A new render resets it to zero.
     [renderProgress, setRenderProgress] = useState<RenderProgress | null>(null);
   const [tiledTelemetry, setTiledTelemetry] = useState<TiledRenderTelemetry | null>(null);
+  const [tiledProgress, setTiledProgress] = useState<TiledNeighborhoodProgress | null>(null);
   const renderSequence = useRef(0),
     renderAbort = useRef<AbortController | null>(null);
   const closeImageSource = (image: CanvasImageSource) => {
@@ -60,6 +64,7 @@ export function useDocument(onError: (message: string) => void) {
         total: Math.max(1, value.layers.length),
       });
       setTiledTelemetry(null);
+      setTiledProgress(null);
       try {
         const image = await renderFrameWithWorker(
           value,
@@ -76,6 +81,9 @@ export function useDocument(onError: (message: string) => void) {
             },
             onTiledTelemetry: (telemetry) => {
               if (sequence === renderSequence.current) setTiledTelemetry(telemetry);
+            },
+            onTiledProgress: (progress) => {
+              if (sequence === renderSequence.current) setTiledProgress(progress);
             },
           },
         );
@@ -174,6 +182,7 @@ export function useDocument(onError: (message: string) => void) {
       total: Math.max(1, draft.history[draft.index].layers.length),
     });
     setTiledTelemetry(null);
+    setTiledProgress(null);
     try {
       // Validate every history asset before switching, so undo never discovers a corrupt import.
       for (const asset of Object.values(draft.assets)) {
@@ -197,6 +206,9 @@ export function useDocument(onError: (message: string) => void) {
           },
           onTiledTelemetry: (telemetry) => {
             if (installSequence === renderSequence.current) setTiledTelemetry(telemetry);
+          },
+          onTiledProgress: (progress) => {
+            if (installSequence === renderSequence.current) setTiledProgress(progress);
           },
         },
       );
@@ -284,6 +296,7 @@ export function useDocument(onError: (message: string) => void) {
     rendering,
     renderProgress,
     tiledTelemetry,
+    tiledProgress,
     paint,
     commit,
     install,

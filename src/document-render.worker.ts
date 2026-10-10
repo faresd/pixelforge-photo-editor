@@ -5,18 +5,25 @@ import {
   type Assets,
   type Frame,
 } from './document.ts';
-import type { TiledRenderTelemetry } from './tiledDocument.ts';
+import type {
+  TiledNeighborhoodProgress,
+  TiledRenderTelemetry,
+} from './tiledDocument.ts';
+import { TILE_MAX_BATCH_BYTES } from './tilePlan.ts';
 
 type RenderRequest = {
   kind: 'render';
   id: number;
   frame: Frame;
   assets: Assets;
+  /** Optional bounded temporary-byte budget for eligible tile effects. */
+  tiledMaxWorkingBytes?: number;
 };
 type CancelRequest = { kind: 'cancel'; id: number };
 type Request = RenderRequest | CancelRequest;
 type Response =
   | { kind: 'progress'; id: number; completed: number; total: number }
+  | { kind: 'tiled-progress'; id: number; progress: TiledNeighborhoodProgress }
   | { kind: 'tiled-telemetry'; id: number; telemetry: TiledRenderTelemetry }
   | { kind: 'cancelled'; id: number }
   | {
@@ -58,6 +65,20 @@ function postError(id: number, error: unknown): void {
     name: value.name.slice(0, 100),
     message: value.message.slice(0, 2000),
   });
+}
+
+function validateTiledBudget(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== 'number' ||
+    !Number.isSafeInteger(value) ||
+    value < 1 ||
+    value > TILE_MAX_BATCH_BYTES
+  )
+    throw new RangeError(
+      `Invalid tiled working-byte budget; expected 1-${TILE_MAX_BATCH_BYTES}`,
+    );
+  return value;
 }
 
 async function encodeResult(
@@ -102,12 +123,14 @@ scope.onmessage = (event: MessageEvent<Request>) => {
     let output: OffscreenCanvas | undefined;
     try {
       validateFrame(request.frame, request.assets);
+      const tiledMaxWorkingBytes = validateTiledBudget(request.tiledMaxWorkingBytes);
       output = (await renderFrame(
         request.frame,
         request.assets,
         undefined,
         {
           tiledRevision: request.id,
+          tiledMaxWorkingBytes,
           isCancelled: () => cancelled.has(request.id),
           yieldEveryLayers: 1,
           onProgress: (completed, total) => {
@@ -121,6 +144,10 @@ scope.onmessage = (event: MessageEvent<Request>) => {
           onTiledTelemetry: (telemetry) => {
             if (!cancelled.has(request.id))
               scope.postMessage({ kind: 'tiled-telemetry', id: request.id, telemetry });
+          },
+          onTiledProgress: (progress) => {
+            if (!cancelled.has(request.id))
+              scope.postMessage({ kind: 'tiled-progress', id: request.id, progress });
           },
         },
       )) as unknown as OffscreenCanvas;

@@ -46,6 +46,10 @@ ledger and proves neighbourhood pixel parity against a full-frame oracle.
 Committed renders reuse one worker with latest-wins cancellation and idle
 teardown; partial-pixel streaming, device cache policy and physical telemetry
 remain planned follow-up work and are not implied by this contract.
+Eligible Box/Gaussian Blur renders additionally expose a monotonic bounded tile
+progress sample to the render-status diagnostics. This is work progress only;
+the editor still publishes one complete frame after the worker result passes
+dimension and ownership checks.
 
 ## Verification
 

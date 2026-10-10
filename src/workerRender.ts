@@ -7,7 +7,9 @@ import {
 } from './document.ts';
 import type { TileCache } from './tilePlan.ts';
 import {
+  validTiledNeighborhoodProgress,
   validTiledRenderTelemetry,
+  type TiledNeighborhoodProgress,
   type TiledRenderTelemetry,
 } from './tiledDocument.ts';
 
@@ -26,6 +28,8 @@ export type WorkerRenderOptions = {
   tiledMaxWorkingBytes?: number;
   /** Privacy-safe diagnostics for the latest eligible tiled effect. */
   onTiledTelemetry?: (telemetry: TiledRenderTelemetry) => void;
+  /** Monotonic progress for the latest eligible tiled effect. */
+  onTiledProgress?: (progress: TiledNeighborhoodProgress) => void;
 };
 
 const RENDER_TIMEOUT_MS = 30_000;
@@ -87,6 +91,11 @@ export async function renderFrameWithWorker(
         if (!validTiledRenderTelemetry(telemetry))
           throw new Error('Invalid tiled telemetry from the fallback renderer.');
         options.onTiledTelemetry?.(telemetry);
+      },
+      onTiledProgress: (progress) => {
+        if (!validTiledNeighborhoodProgress(progress))
+          throw new Error('Invalid tiled progress from the fallback renderer.');
+        options.onTiledProgress?.(progress);
       },
     });
     if (isCancelled()) throw abortError();
@@ -206,6 +215,16 @@ export async function renderFrameWithWorker(
         } catch (error) {
           finish(() => reject(error));
         }
+      } else if (value.kind === 'tiled-progress') {
+        if (!validTiledNeighborhoodProgress(value.progress)) {
+          finish(() => reject(new Error('Worker returned invalid tiled progress.')));
+          return;
+        }
+        try {
+          options.onTiledProgress?.(value.progress);
+        } catch (error) {
+          finish(() => reject(error));
+        }
       } else if (
         value.kind === 'result' &&
         value.width === frame.w &&
@@ -273,6 +292,7 @@ export async function renderFrameWithWorker(
         id,
         frame,
         assets: referencedAssets([frame], assets),
+        tiledMaxWorkingBytes: options.tiledMaxWorkingBytes,
       });
     } catch (error) {
       finish(() => reject(error));
@@ -382,6 +402,7 @@ class PersistentWorkerSession {
         id: task.id,
         frame: task.frame,
         assets: referencedAssets([task.frame], task.assets),
+        tiledMaxWorkingBytes: task.options.tiledMaxWorkingBytes,
       });
     } catch {
       // A constructor or postMessage failure can leave the worker unusable or
@@ -484,6 +505,18 @@ class PersistentWorkerSession {
       } catch (error) {
         // Telemetry is advisory, but a throwing consumer still invalidates
         // this worker session. Terminate it before servicing the queue.
+        this.onWorkerFailure(error instanceof Error ? error : new Error(String(error)));
+      }
+      return;
+    }
+    if (value.kind === 'tiled-progress') {
+      if (!validTiledNeighborhoodProgress(value.progress)) {
+        this.onWorkerFailure(new Error('Worker returned invalid tiled progress.'));
+        return;
+      }
+      try {
+        task.options.onTiledProgress?.(value.progress);
+      } catch (error) {
         this.onWorkerFailure(error instanceof Error ? error : new Error(String(error)));
       }
       return;
