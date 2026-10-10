@@ -309,6 +309,10 @@ import {
   neutralFilterEffects,
   type FilterEffectType,
 } from '../src/filterEffects';
+import BlurGalleryControls, {
+  DEFAULT_BLUR_PATH,
+  DEFAULT_SPIN_ELLIPSE,
+} from '../src/BlurGalleryControls';
 import {
   cropMeasurements,
   extractSlices,
@@ -467,6 +471,8 @@ type Command =
   | 'filter-shape-blur'
   | 'filter-motion-blur'
   | 'filter-radial-blur'
+  | 'filter-spin-blur'
+  | 'filter-path-blur'
   | 'filter-field-blur'
   | 'filter-tilt-shift'
   | 'filter-mosaic'
@@ -902,6 +908,8 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Shape Blur…', command: 'filter-shape-blur' },
     { label: 'Blur Gallery', command: 'noop', disabled: true },
     { label: 'Iris Blur…', command: 'filter-iris-blur' },
+    { label: 'Path Blur…', command: 'filter-path-blur' },
+    { label: 'Spin Blur…', command: 'filter-spin-blur' },
     { label: 'Distort', command: 'noop', disabled: true },
     { label: 'Displace…', command: 'filter-displace' },
     { label: 'Pinch…', command: 'filter-pinch' },
@@ -3737,6 +3745,8 @@ export default function Home() {
             : {
                 ...effectiveFilterEffects(filterEffects),
                 type,
+                ...(type === 'path-blur' ? { path: DEFAULT_BLUR_PATH.map((point) => ({ ...point })) } : {}),
+                ...(type === 'spin-blur' ? { spinEllipse: { ...DEFAULT_SPIN_ELLIPSE } } : {}),
                 amount:
                   type === 'average-blur' ||
                   type === 'blur-more' ||
@@ -3759,12 +3769,17 @@ export default function Home() {
                         ? 40
                       : type === 'polar-coordinates'
                         ? 64
-                      : type === 'radial-blur'
+                      : type === 'radial-blur' || type === 'spin-blur'
                         ? 18
                         : type === 'wave'
                           ? 12
                         : 6,
-                angle: type === 'twirl' ? 75 : type === 'shear' ? 90 : 0,
+                angle:
+                  type === 'twirl'
+                    ? 75
+                    : type === 'shear'
+                      ? 90
+                      : 0,
               },
       })
     )
@@ -9339,6 +9354,10 @@ export default function Home() {
       chooseFilterEffect('motion-blur', 'Motion Blur');
     else if (command === 'filter-radial-blur')
       chooseFilterEffect('radial-blur', 'Radial Blur');
+    else if (command === 'filter-spin-blur')
+      chooseFilterEffect('spin-blur', 'Spin Blur (local approximation)');
+    else if (command === 'filter-path-blur')
+      chooseFilterEffect('path-blur', 'Path Blur (local approximation)');
     else if (command === 'filter-field-blur')
       chooseFilterEffect('field-blur', 'Field Blur');
     else if (command === 'filter-tilt-shift')
@@ -9573,6 +9592,8 @@ export default function Home() {
       case 'filter-surface-blur':
       case 'filter-shape-blur':
       case 'filter-tilt-shift':
+      case 'filter-spin-blur':
+      case 'filter-path-blur':
       case 'filter-mosaic':
       case 'filter-crystallize':
       case 'filter-color-halftone':
@@ -11765,6 +11786,12 @@ export default function Home() {
             {filterEffects.type === 'iris-blur' && (
               <p>Local elliptical focal-plane blur. The centre stays sharp and blur ramps to the edge; no depth map is inferred.</p>
             )}
+            {filterEffects.type === 'spin-blur' && (
+              <p>Local fixed-sample polar Spin Blur approximation. The editable centre and angular sweep are bounded; path geometry, depth and bokeh reconstruction remain planned.</p>
+            )}
+            {filterEffects.type === 'path-blur' && (
+              <p>Local Path Blur approximation. The editable motion path and per-point speed stay in project metadata; path strobe and flash controls remain planned.</p>
+            )}
             {filterEffects.type === 'smart-blur' && (
               <p>Local edge-preserving bilateral approximation. Luminance boundaries are protected; semantic edges and depth are not inferred.</p>
             )}
@@ -11797,6 +11824,9 @@ export default function Home() {
             )}
             {filterEffects.type !== 'none' && (
               <>
+                {(filterEffects.type === 'path-blur' || filterEffects.type === 'spin-blur') && (
+                  <BlurGalleryControls effect={filterEffects} change={setFilterEffects} />
+                )}
                 <Slider
                   label="Effect amount"
                   value={filterEffects.amount}
@@ -11818,9 +11848,11 @@ export default function Home() {
                           filterEffects.type === 'smart-blur' ||
                           filterEffects.type === 'surface-blur' ||
                           filterEffects.type === 'shape-blur' ||
-                          filterEffects.type === 'motion-blur'
+                          filterEffects.type === 'motion-blur' ||
+                          filterEffects.type === 'path-blur'
                           ? 'Blur radius'
                       : filterEffects.type === 'radial-blur'
+                          || filterEffects.type === 'spin-blur'
                           ? 'Angular sweep'
                       : filterEffects.type === 'pinch'
                           ? 'Pinch radius'
@@ -11844,7 +11876,11 @@ export default function Home() {
                   min={1}
                   max={64}
                   set={(value) => setFilterEffects({ radius: value })}
-                  suffix={filterEffects.type === 'radial-blur' ? '°' : ' px'}
+                  suffix={
+                    filterEffects.type === 'radial-blur' || filterEffects.type === 'spin-blur'
+                      ? '°'
+                      : ' px'
+                  }
                 />
                 {filterEffects.type === 'twirl' && (
                   <Slider
@@ -11856,9 +11892,9 @@ export default function Home() {
                     suffix="°"
                   />
                 )}
-                {(filterEffects.type === 'wave' || filterEffects.type === 'shear' || filterEffects.type === 'displace') && (
+                {(filterEffects.type === 'wave' || filterEffects.type === 'shear' || filterEffects.type === 'displace' || filterEffects.type === 'path-blur') && (
                   <Slider
-                    label={filterEffects.type === 'shear' ? 'Shear direction' : filterEffects.type === 'displace' ? 'Displace direction' : 'Wave angle'}
+                    label={filterEffects.type === 'shear' ? 'Shear direction' : filterEffects.type === 'displace' ? 'Displace direction' : filterEffects.type === 'path-blur' ? 'Path direction' : 'Wave angle'}
                     value={filterEffects.angle}
                     min={-180}
                     max={180}
@@ -11987,10 +12023,10 @@ export default function Home() {
                     />
                   </>
                 )}
-                {filterEffects.type === 'radial-blur' && (
+                {(filterEffects.type === 'radial-blur' || filterEffects.type === 'spin-blur') && (
                   <>
                     <Slider
-                      label="Blur center X"
+                      label={filterEffects.type === 'spin-blur' ? 'Spin center X' : 'Blur center X'}
                       value={Math.round(filterEffects.centerX * 100)}
                       min={0}
                       max={100}
@@ -11998,7 +12034,27 @@ export default function Home() {
                       suffix="%"
                     />
                     <Slider
-                      label="Blur center Y"
+                      label={filterEffects.type === 'spin-blur' ? 'Spin center Y' : 'Blur center Y'}
+                      value={Math.round(filterEffects.centerY * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      suffix="%"
+                    />
+                  </>
+                )}
+                {filterEffects.type === 'path-blur' && (
+                  <>
+                    <Slider
+                      label="Path center X"
+                      value={Math.round(filterEffects.centerX * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      suffix="%"
+                    />
+                    <Slider
+                      label="Path center Y"
                       value={Math.round(filterEffects.centerY * 100)}
                       min={0}
                       max={100}

@@ -20,6 +20,8 @@ export const FILTER_EFFECT_TYPES = [
   'shape-blur',
   'motion-blur',
   'radial-blur',
+  'spin-blur',
+  'path-blur',
   'field-blur',
   'tilt-shift',
   'mosaic',
@@ -39,6 +41,23 @@ export const FILTER_EFFECT_TYPES = [
 ] as const;
 export type FilterEffectType = (typeof FILTER_EFFECT_TYPES)[number];
 
+/** One layer-local point in a persisted, bounded motion-blur path. */
+export type BlurPathPoint = {
+  x: number;
+  y: number;
+  /** Per-point blur length as a percentage of the effect radius. */
+  speed: number;
+};
+
+/** Rotated layer-local ellipse; radii are fractions of width and height. */
+export type SpinBlurEllipse = {
+  radiusX: number;
+  radiusY: number;
+  rotation: number;
+  /** Fraction of the outer ellipse used for a smooth inner feather. */
+  feather: number;
+};
+
 export type FilterEffects = {
   type: FilterEffectType;
   /** Legacy lens corrections default to inward source sampling. */
@@ -54,6 +73,14 @@ export type FilterEffects = {
   centerY: number;
   /** Stable seed reserved for deterministic procedural variants. */
   seed: number;
+  /** Authored polyline in normalized layer coordinates, limited to 2–8 points. */
+  path?: BlurPathPoint[];
+  /** Omitted for legacy global radial Spin Blur records. */
+  spinEllipse?: SpinBlurEllipse;
+  /** New authored paths are centered unless this is explicitly false. */
+  pathCentered?: boolean;
+  /** Blend falloff along the path trail, in the range 0..1. */
+  pathTaper?: number;
 };
 
 export const neutralFilterEffects: FilterEffects = {
@@ -102,7 +129,48 @@ export function effectiveFilterEffects(
   if (type === 'lens-correction') {
     normalized.lensDirection = source.lensDirection === 'outward' ? 'outward' : 'inward';
   }
+  if (type === 'path-blur' && Array.isArray(source.path)) {
+    const path = source.path.slice(0, 8).filter(
+      (point) => point && typeof point === 'object' && !Array.isArray(point),
+    ).map((point) => ({
+      x: finite(point.x) ? clamp(point.x, 0, 1) : 0.5,
+      y: finite(point.y) ? clamp(point.y, 0, 1) : 0.5,
+      speed: finite(point.speed) ? clamp(point.speed, 0, 100) : 100,
+    }));
+    if (path.length >= 2) {
+      normalized.path = path;
+      normalized.pathCentered = source.pathCentered !== false;
+      normalized.pathTaper = finite(source.pathTaper) ? clamp(source.pathTaper, 0, 1) : 0;
+    }
+  }
+  if (type === 'spin-blur' && source.spinEllipse && typeof source.spinEllipse === 'object' && !Array.isArray(source.spinEllipse)) {
+    const ellipse = source.spinEllipse;
+    normalized.spinEllipse = {
+      radiusX: finite(ellipse.radiusX) ? clamp(ellipse.radiusX, 0.01, 2) : 0.3,
+      radiusY: finite(ellipse.radiusY) ? clamp(ellipse.radiusY, 0.01, 2) : 0.3,
+      rotation: finite(ellipse.rotation) ? clamp(ellipse.rotation, -180, 180) : 0,
+      feather: finite(ellipse.feather) ? clamp(ellipse.feather, 0, 1) : 0.2,
+    };
+  }
   return normalized;
+}
+
+function validBlurPath(value: unknown): value is BlurPathPoint[] {
+  return Array.isArray(value) && value.length >= 2 && value.length <= 8 && value.every((point) =>
+    point && typeof point === 'object' && !Array.isArray(point) &&
+    finite(point.x) && point.x >= 0 && point.x <= 1 &&
+    finite(point.y) && point.y >= 0 && point.y <= 1 &&
+    finite(point.speed) && point.speed >= 0 && point.speed <= 100,
+  );
+}
+
+function validSpinEllipse(value: unknown): value is SpinBlurEllipse {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const ellipse = value as Partial<SpinBlurEllipse>;
+  return finite(ellipse.radiusX) && ellipse.radiusX >= 0.01 && ellipse.radiusX <= 2 &&
+    finite(ellipse.radiusY) && ellipse.radiusY >= 0.01 && ellipse.radiusY <= 2 &&
+    finite(ellipse.rotation) && ellipse.rotation >= -180 && ellipse.rotation <= 180 &&
+    finite(ellipse.feather) && ellipse.feather >= 0 && ellipse.feather <= 1;
 }
 
 export function validFilterEffects(value: unknown): value is FilterEffects {
@@ -111,6 +179,10 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
   return (
     FILTER_EFFECT_TYPES.includes(effect.type as FilterEffectType) &&
     (effect.lensDirection === undefined || effect.lensDirection === 'inward' || effect.lensDirection === 'outward') &&
+    (effect.path === undefined || validBlurPath(effect.path)) &&
+    (effect.spinEllipse === undefined || validSpinEllipse(effect.spinEllipse)) &&
+    (effect.pathCentered === undefined || typeof effect.pathCentered === 'boolean') &&
+    (effect.pathTaper === undefined || (finite(effect.pathTaper) && effect.pathTaper >= 0 && effect.pathTaper <= 1)) &&
     finite(effect.amount) &&
     effect.amount >= 0 &&
     effect.amount <= 100 &&
@@ -141,6 +213,7 @@ export function isNeutralFilterEffects(
   return (
     effect.type === 'none' ||
     effect.amount === 0 ||
+    (effect.type === 'path-blur' && Boolean(effect.path) && effect.path!.every((point) => point.speed === 0)) ||
     (effect.type === 'twirl' && effect.angle === 0) ||
     (effect.type === 'shear' && effect.angle === 0) ||
     (effect.type !== 'twirl' && effect.radius === 0)
@@ -779,6 +852,229 @@ function applyRadialBlur(
   }
 }
 
+/**
+ * Apply the bounded Blur Gallery Spin Blur approximation. Spin is represented
+ * by the same fixed-sample polar integration as Radial Blur, but has its own
+ * metadata type so a document can distinguish the gallery command. The
+ * centre and angular sweep are editable; no depth map or bokeh reconstruction
+ * is inferred.
+ */
+function applySpinBlur(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  centerX: number,
+  centerY: number,
+  output: Uint8ClampedArray,
+  strength: number,
+  ellipse?: SpinBlurEllipse,
+): void {
+  if (!ellipse) {
+    applyRadialBlur(source, width, height, radius, centerX, centerY, output, strength);
+    return;
+  }
+  const bounded = Math.max(1, Math.min(64, Math.round(radius)));
+  const centerPixelX = clamp(centerX, 0, 1) * (width - 1);
+  const centerPixelY = clamp(centerY, 0, 1) * (height - 1);
+  const rotation = (ellipse.rotation * Math.PI) / 180;
+  const cosine = Math.cos(rotation), sine = Math.sin(rotation);
+  const sampleCount = 8;
+  const sweep = (bounded * Math.PI) / 180;
+  const mix = clamp(strength, 0, 1);
+  const feather = clamp(ellipse.feather, 0, 1);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      if (source[destination + 3] === 0) continue;
+      const dx = x - centerPixelX, dy = y - centerPixelY;
+      const rotatedX = dx * cosine + dy * sine;
+      const rotatedY = -dx * sine + dy * cosine;
+      const ellipseDistance = Math.hypot(
+        rotatedX / Math.max(1, ellipse.radiusX * width),
+        rotatedY / Math.max(1, ellipse.radiusY * height),
+      );
+      if (ellipseDistance >= 1) continue;
+      const mask = feather <= 0 || ellipseDistance <= 1 - feather
+        ? 1
+        : clamp((1 - ellipseDistance) / feather, 0, 1);
+      const distance = Math.hypot(dx, dy);
+      if (distance < 0.5) continue;
+      const baseAngle = Math.atan2(dy, dx);
+      const sums = [0, 0, 0];
+      let weight = 0;
+      for (let sampleIndex = -sampleCount; sampleIndex <= sampleCount; sampleIndex += 1) {
+        const angle = baseAngle + (sweep * sampleIndex) / sampleCount;
+        const sample = sourcePixel(
+          source,
+          width,
+          height,
+          centerPixelX + Math.cos(angle) * distance,
+          centerPixelY + Math.sin(angle) * distance,
+        );
+        const alpha = sample[3] / 255;
+        if (!alpha) continue;
+        sums[0] += sample[0] * alpha;
+        sums[1] += sample[1] * alpha;
+        sums[2] += sample[2] * alpha;
+        weight += alpha;
+      }
+      if (!weight) continue;
+      const blend = mix * mask;
+      output[destination] = clampByte(source[destination] * (1 - blend) + (sums[0] / weight) * blend);
+      output[destination + 1] = clampByte(source[destination + 1] * (1 - blend) + (sums[1] / weight) * blend);
+      output[destination + 2] = clampByte(source[destination + 2] * (1 - blend) + (sums[2] / weight) * blend);
+      output[destination + 3] = source[destination + 3];
+    }
+  }
+}
+
+/**
+ * Apply a bounded Path Blur approximation using one deterministic quadratic
+ * path per pixel. Authored normalized points select the nearest segment and
+ * interpolate endpoint speed; legacy records without points retain the
+ * centre/angle approximation. Sampling is source-only, alpha-aware and
+ * clamped to the canvas.
+ */
+function applyPathBlur(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  angle: number,
+  centerX: number,
+  centerY: number,
+  output: Uint8ClampedArray,
+  strength: number,
+  path?: BlurPathPoint[],
+  pathCentered = true,
+  pathTaper = 0,
+): void {
+  if (!path || path.length < 2) {
+    applyLegacyPathBlur(source, width, height, radius, angle, centerX, centerY, output, strength);
+    return;
+  }
+  const bounded = Math.max(1, Math.min(64, Math.round(radius)));
+  const points = path.map((point) => ({ x: point.x * (width - 1), y: point.y * (height - 1), speed: point.speed }));
+  const segments = points.slice(0, -1).map((start, index) => {
+    const end = points[index + 1];
+    const dx = end.x - start.x, dy = end.y - start.y;
+    return { start, end, dx, dy, lengthSquared: Math.max(1e-6, dx * dx + dy * dy), length: Math.hypot(dx, dy) };
+  });
+  const totalLength = segments.reduce((sum, segment) => sum + segment.length, 0);
+  const mix = clamp(strength, 0, 1);
+  const sampleCount = 8;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      if (source[destination + 3] === 0) continue;
+      let bestDistance = Infinity, bestT = 0, bestSegment = segments[0], distanceAlong = 0, bestDistanceAlong = 0;
+      for (const segment of segments) {
+        const projection = clamp(((x - segment.start.x) * segment.dx + (y - segment.start.y) * segment.dy) / segment.lengthSquared, 0, 1);
+        const nearestX = segment.start.x + segment.dx * projection;
+        const nearestY = segment.start.y + segment.dy * projection;
+        const distance = Math.hypot(x - nearestX, y - nearestY);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestT = projection;
+          bestSegment = segment;
+          bestDistanceAlong = distanceAlong + segment.length * projection;
+        }
+        distanceAlong += segment.length;
+      }
+      const influence = clamp(1 - bestDistance / Math.max(1, bounded * 2), 0, 1);
+      if (influence <= 0) continue;
+      const speedStart = bestSegment.start.speed, speedEnd = bestSegment.end.speed;
+      const speed = (speedStart + (speedEnd - speedStart) * bestT) / 100;
+      const taperDistance = totalLength > 0 ? bestDistanceAlong / totalLength : 0;
+      const taper = 1 - clamp(pathTaper, 0, 1) * Math.max(taperDistance, 1 - taperDistance);
+      const length = bounded * Math.max(0, speed) * taper;
+      if (length < 0.5) continue;
+      const direction = Math.atan2(bestSegment.dy, bestSegment.dx) + (angle * Math.PI) / 180;
+      const tangentX = Math.cos(direction), tangentY = Math.sin(direction);
+      const start = pathCentered ? -sampleCount : 0;
+      const end = pathCentered ? sampleCount : sampleCount;
+      const sums = [0, 0, 0];
+      let weight = 0;
+      for (let index = start; index <= end; index += 1) {
+        const t = index / sampleCount;
+        const sample = sourcePixelBilinear(source, width, height, x + tangentX * length * t, y + tangentY * length * t);
+        const alpha = sample[3] / 255;
+        if (!alpha) continue;
+        sums[0] += sample[0] * alpha;
+        sums[1] += sample[1] * alpha;
+        sums[2] += sample[2] * alpha;
+        weight += alpha;
+      }
+      if (!weight) continue;
+      const blend = mix * influence;
+      output[destination] = clampByte(source[destination] * (1 - blend) + (sums[0] / weight) * blend);
+      output[destination + 1] = clampByte(source[destination + 1] * (1 - blend) + (sums[1] / weight) * blend);
+      output[destination + 2] = clampByte(source[destination + 2] * (1 - blend) + (sums[2] / weight) * blend);
+      output[destination + 3] = source[destination + 3];
+    }
+  }
+}
+
+function applyLegacyPathBlur(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  angle: number,
+  centerX: number,
+  centerY: number,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const bounded = Math.max(1, Math.min(64, Math.round(radius)));
+  const radians = (angle * Math.PI) / 180;
+  const tangentX = Math.cos(radians),
+    tangentY = Math.sin(radians),
+    normalX = -tangentY,
+    normalY = tangentX,
+    centrePixelX = clamp(centerX, 0, 1) * (width - 1),
+    centrePixelY = clamp(centerY, 0, 1) * (height - 1),
+    maxDimension = Math.max(1, Math.max(width, height)),
+    sampleCount = 8,
+    mix = clamp(strength, 0, 1);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      if (source[destination + 3] === 0) continue;
+      // Points farther from the centre bend more strongly, while the centre
+      // remains a straight directional path and therefore predictable.
+      const centreOffset =
+        ((x - centrePixelX) * normalX + (y - centrePixelY) * normalY) /
+        maxDimension;
+      const curve = clamp(centreOffset, -1, 1) * bounded * 0.85;
+      const sums = [0, 0, 0];
+      let weight = 0;
+      for (let index = -sampleCount; index <= sampleCount; index += 1) {
+        const t = index / sampleCount;
+        const sample = sourcePixelBilinear(
+          source,
+          width,
+          height,
+          x + tangentX * bounded * t + normalX * curve * t * t,
+          y + tangentY * bounded * t + normalY * curve * t * t,
+        );
+        const alpha = sample[3] / 255;
+        if (!alpha) continue;
+        sums[0] += sample[0] * alpha;
+        sums[1] += sample[1] * alpha;
+        sums[2] += sample[2] * alpha;
+        weight += alpha;
+      }
+      if (!weight) continue;
+      output[destination] = clampByte(source[destination] * (1 - mix) + (sums[0] / weight) * mix);
+      output[destination + 1] = clampByte(source[destination + 1] * (1 - mix) + (sums[1] / weight) * mix);
+      output[destination + 2] = clampByte(source[destination + 2] * (1 - mix) + (sums[2] / weight) * mix);
+      output[destination + 3] = source[destination + 3];
+    }
+  }
+}
+
 function applyMosaic(
   source: Uint8ClampedArray,
   width: number,
@@ -1271,6 +1567,33 @@ export function applyFilterEffectsPixels(
       effect.centerY,
       output,
       strength,
+    );
+  } else if (effect.type === 'spin-blur') {
+    applySpinBlur(
+      data,
+      width,
+      height,
+      effect.radius,
+      effect.centerX,
+      effect.centerY,
+      output,
+      strength,
+      effect.spinEllipse,
+    );
+  } else if (effect.type === 'path-blur') {
+    applyPathBlur(
+      data,
+      width,
+      height,
+      effect.radius,
+      effect.angle,
+      effect.centerX,
+      effect.centerY,
+      output,
+      strength,
+      effect.path,
+      effect.pathCentered,
+      effect.pathTaper,
     );
   } else if (effect.type === 'mosaic') {
     applyMosaic(data, width, height, effect.radius, output, strength);

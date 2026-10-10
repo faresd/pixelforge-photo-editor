@@ -1,18 +1,19 @@
 # Local blur effects contract
 
-PixelForge's Filter → Blur family includes thirteen local, nondestructive effects:
+PixelForge's Filter → Blur family includes fifteen local, nondestructive effects:
 **Average**, **Blur More**, **Box Blur…**, **Gaussian Blur…**, **Lens Blur…**, **Iris Blur…**, **Smart Blur…**, **Surface Blur…**, **Shape Blur…**, **Motion Blur…**, **Radial Blur…**, **Field
-Blur…** and **Tilt-Shift…**. Each effect is stored on the selected
+Blur…**, **Path Blur…** and **Spin Blur…**. Each effect is stored on the selected
 layer as `adjustments.filterEffects`, so changing or clearing the effect never
 rewrites the immutable raster asset.
 
 The metadata record uses the existing validated effect shape:
 
-- `type` is `average-blur`, `blur-more`, `box-blur`, `gaussian-blur`, `lens-blur`, `iris-blur`, `smart-blur`, `surface-blur`, `shape-blur`, `motion-blur` or `radial-blur`.
+- `type` is `average-blur`, `blur-more`, `box-blur`, `gaussian-blur`, `lens-blur`, `iris-blur`, `smart-blur`, `surface-blur`, `shape-blur`, `motion-blur`, `radial-blur`, `spin-blur` or `path-blur`.
 - `amount` is a 0–100 blend percentage. Zero is an identity operation.
 - `radius` is an integer source-pixel radius from 0–64. Zero is an identity
   operation and the inspector exposes the value as **Blur radius**. Radial
-  Blur uses the same bounded field as degrees of **Angular sweep**.
+  Blur and Spin Blur use the same bounded field as degrees of **Angular sweep**;
+  Path Blur uses it as bounded path length.
 - `angle`, `centerX`, `centerY` and `seed` remain serialized for the shared
   filter schema and are normalized at every document boundary.
 
@@ -74,14 +75,24 @@ transparent RGB, clamps samples to source bounds, and runs with a fixed sample
 count independent of the sweep. This is a local spin effect; zoom-style Radial
 Blur and Blur Gallery multi-pin controls remain separate planned capabilities.
 
+Spin Blur uses the same fixed-sample polar integration as Radial Blur under a
+separate `spin-blur` type so gallery intent survives project interchange. New
+Spin records can scope that sampling to a rotated, feathered ellipse. Path
+Blur accepts a persisted two-to-eight-point normalized polyline and
+per-endpoint speed values, then integrates source-only samples along the
+nearest segment with optional centered/tapered controls. Both are explicit
+local approximations: shape guides, rear-sync flash, strobe controls, depth
+maps, bokeh/highlight reconstruction and camera-style focus simulation remain
+planned. See [`path-spin-blur-contract.md`](./path-spin-blur-contract.md).
+
 The pure filter suite covers normalization and strict validation, identity and
 one-pixel bounds, deterministic repeatability, source immutability, opaque and
 transparent alpha edges, hidden RGB padding, and representative Average/Box/Gaussian/
-Motion/Radial kernel output. Radial fixtures also cover centre changes, corner
+Motion/Radial/Spin/Path kernel output. Radial and Spin fixtures also cover centre changes, corner
 centres, constant colour, partial-alpha neighbours, one-pixel/one-column bounds,
 zero amount/sweep and fixed-buffer source preservation. The desktop/mobile browser suite covers enabled menu
 commands, inspector editing, angle/radius controls, undo-compatible history
 metadata, source-asset retention, alpha preservation, reload and project-
-download round trips. Radial acceptance explicitly checks reload, project
-import, editable centre/sweep metadata and undo restoration. These checks run in both Playwright projects (`desktop`
-and `mobile`).
+download round trips. Radial, Spin and Path acceptance explicitly checks reload,
+project import, editable centre/sweep/direction metadata and undo restoration.
+These checks run in both Playwright projects (`desktop` and `mobile`).
