@@ -1,6 +1,9 @@
 import { selectTool } from './tool-selection';
 import { test, expect } from '@playwright/test';
 
+const additiveModifier: 'Meta' | 'Control' =
+  process.platform === 'darwin' ? 'Meta' : 'Control';
+
 async function project(page: import('@playwright/test').Page) {
   await page.getByRole('button', { name: 'File', exact: true }).click();
   const pending = page.waitForEvent('download');
@@ -1135,6 +1138,85 @@ test('Merge Layers rasterizes the adjacent pair, preserves pixels, and round-tri
   project = await downloadProject();
   expect(project.history[project.index].layers).toHaveLength(1);
   expect(project.history[project.index].layers[0].kind).toBe('raster');
+});
+
+test('Merge Layers merges a contiguous multi-selection and keeps selection guards visible', async ({
+  page,
+}) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute(
+    'aria-busy',
+    'false',
+  );
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^New white document/ }).click();
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Duplicate Layer/ }).click();
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Duplicate Layer/ }).click();
+
+  const rows = page.getByRole('button', { name: /^Select layer / });
+  await expect(rows).toHaveCount(3);
+  // Layer rows are rendered top-to-bottom. Control-click builds the same
+  // additive selection used by the desktop and mobile layer panels.
+  await rows.nth(1).click({ modifiers: [additiveModifier] });
+  await rows.nth(2).click({ modifiers: [additiveModifier] });
+  await expect(page.locator('[data-selected="true"]')).toHaveCount(3);
+
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await expect(
+    page.getByRole('menuitem', { name: 'Merge Layers', exact: true }),
+  ).toBeEnabled();
+  await page
+    .getByRole('menuitem', { name: 'Merge Layers', exact: true })
+    .click();
+  await expect(page.getByText('3 layers merged; undo restores the individual layers')).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Layers/ })).toContainText(
+    '1 /',
+  );
+
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  await expect(page.getByRole('heading', { name: /Layers/ })).toContainText(
+    '3 /',
+  );
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Redo/ }).click();
+  await expect(page.getByRole('heading', { name: /Layers/ })).toContainText(
+    '1 /',
+  );
+
+  const restoredRows = page.getByRole('button', { name: /^Select layer / });
+  await expect(restoredRows).toHaveCount(1);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute(
+    'aria-busy',
+    'false',
+  );
+  await expect(page.getByRole('heading', { name: /Layers/ })).toContainText(
+    '1 /',
+  );
+});
+
+test('Merge Layers disables non-contiguous multi-selection', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute(
+    'aria-busy',
+    'false',
+  );
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^New white document/ }).click();
+  for (let index = 0; index < 2; index += 1) {
+    await page.getByRole('button', { name: 'Layer', exact: true }).click();
+    await page.getByRole('menuitem', { name: /^Duplicate Layer/ }).click();
+  }
+  const rows = page.getByRole('button', { name: /^Select layer / });
+  await expect(rows).toHaveCount(3);
+  await rows.nth(2).click({ modifiers: [additiveModifier] });
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await expect(
+    page.getByRole('menuitem', { name: 'Merge Layers', exact: true }),
+  ).toBeDisabled();
 });
 
 test('layer menu copy, paste, hide and flatten preserve an undoable project', async ({
