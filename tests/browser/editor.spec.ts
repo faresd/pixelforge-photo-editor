@@ -494,6 +494,19 @@ test('signed-in users save, revisit and continue cloud projects without automati
   await expect(page.getByLabel('Document name')).toHaveValue(
     'My private art continued',
   );
+  const remote = JSON.parse(JSON.stringify(saved!.document)) as {
+    name: string;
+  };
+  remote.name = 'Remote winner';
+  saved = { ...saved!, generation: '3', document: remote };
+  page.once('dialog', (dialog) => dialog.accept());
+  await page
+    .getByRole('button', { name: 'Reload latest cloud copy', exact: true })
+    .click();
+  await expect(page.getByLabel('Document name')).toHaveValue('Remote winner');
+  await expect(
+    page.getByText('Latest cloud project restored.', { exact: false }),
+  ).toBeVisible();
   await page.getByRole('button', { name: 'Save as new cloud project' }).click();
   await expect(
     page.getByText('Cloud copy saved.', { exact: false }),

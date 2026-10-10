@@ -60,8 +60,10 @@ import {
 } from '../src/drafts';
 import {
   useMember,
+  openCloudProject,
   saveCloudProject,
   SIGN_IN,
+  CloudConflictError,
   type CloudLink,
 } from '../src/cloud';
 import {
@@ -1795,7 +1797,8 @@ export default function Home() {
   const [cloud, setCloud] = useState<CloudLink | undefined>(),
     [cloudBusy, setCloudBusy] = useState(false),
     [recovering, setRecovering] = useState(false),
-    [cloudMessage, setCloudMessage] = useState('');
+    [cloudMessage, setCloudMessage] = useState(''),
+    [cloudConflict, setCloudConflict] = useState<CloudConflictError | null>(null);
   const active = frame?.layers.find((l) => l.id === frame.active),
     adjustments = active ? effectiveAdjustments(active.adjustments) : neutral;
   const {
@@ -4059,6 +4062,7 @@ export default function Home() {
     if (!member || cloudBusy) return;
     setCloudBusy(true);
     setCloudMessage('Saving private cloud project…');
+    setCloudConflict(null);
     const link = !asCopy && cloud?.owner === member.id ? cloud : undefined;
     try {
       const result = await saveCloudProject(
@@ -4071,10 +4075,56 @@ export default function Home() {
         'Cloud copy saved. Choose Update cloud project after further edits.',
       );
     } catch (error) {
+      if (error instanceof CloudConflictError) setCloudConflict(error);
       setCloudMessage(
         error instanceof Error
           ? error.message
           : 'Cloud save failed. Your local draft is safe.',
+      );
+    } finally {
+      setCloudBusy(false);
+    }
+  };
+  const reloadCloudCopy = async () => {
+    if (!member || cloudBusy || !cloudConflict) return;
+    const projectId = cloudConflict.projectId || cloud?.id;
+    if (!projectId) {
+      setCloudMessage('The remote project identity is unavailable. Save a new cloud copy.');
+      return;
+    }
+    if (
+      !confirm(
+        'Replace the current local edits with the latest cloud project? Save as a new cloud project first if you want to keep these edits.',
+      )
+    )
+      return;
+    const expected = current();
+    setCloudBusy(true);
+    setCloudMessage('Loading the latest cloud project…');
+    try {
+      const result = await openCloudProject(projectId);
+      if (current() !== expected)
+        throw new Error('Document changed while the cloud project was loading.');
+      await install(result.document);
+      clearClipboard();
+      setName(result.document.name);
+      setCloud({
+        id: result.id,
+        generation: result.generation,
+        owner: member.id,
+      });
+      restoreSettings(result.document.settings);
+      quickMaskRef.current = null;
+      setQuickMask(null);
+      setQuickMasking(false);
+      setCloudConflict(null);
+      setCloudMessage('Latest cloud project restored. Local edits were replaced.');
+      setNotice('Latest cloud project restored');
+    } catch (error) {
+      setCloudMessage(
+        error instanceof Error
+          ? error.message
+          : 'Could not reload the cloud project. Your local edits are still available.',
       );
     } finally {
       setCloudBusy(false);
@@ -11964,6 +12014,15 @@ export default function Home() {
                     onClick={() => void saveToCloud(true)}
                   >
                     Save as new cloud project
+                  </button>
+                )}
+                {cloudConflict && cloud?.owner === member.id && (
+                  <button
+                    className="apply"
+                    disabled={cloudBusy}
+                    onClick={() => void reloadCloudCopy()}
+                  >
+                    Reload latest cloud copy
                   </button>
                 )}
                 <p>

@@ -16,6 +16,28 @@ export type CloudSession =
   | { authenticated: false }
   | { authenticated: true; user: Member };
 
+/**
+ * A generation mismatch means the authenticated project was edited from
+ * another device or browser since this document was opened. Keep the project
+ * identity on the error so the editor can offer an explicit, validated reload
+ * path while leaving the current local edits untouched.
+ */
+export class CloudConflictError extends Error {
+  readonly projectId: string | undefined;
+  readonly generation: string | undefined;
+
+  constructor(
+    message: string,
+    projectId?: string,
+    generation?: string,
+  ) {
+    super(message);
+    this.name = 'CloudConflictError';
+    this.projectId = projectId;
+    this.generation = generation;
+  }
+}
+
 const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 const token = (value: unknown): value is string =>
@@ -138,12 +160,26 @@ async function request<T>(
   } catch {
     body = undefined;
   }
-  if (!response.ok)
-    throw new Error(
+  if (!response.ok) {
+    const message =
       record(body) && typeof body.error === 'string'
         ? body.error
-        : 'Cloud projects are unavailable',
-    );
+        : 'Cloud projects are unavailable';
+    if (response.status === 409) {
+      const request = record(payload) ? payload : undefined;
+      const bodyRecord = record(body) ? body : undefined;
+      throw new CloudConflictError(
+        message,
+        token(bodyRecord?.id) ? bodyRecord.id : token(request?.id) ? request.id : undefined,
+        token(bodyRecord?.generation)
+          ? bodyRecord.generation
+          : token(request?.generation)
+            ? request.generation
+            : undefined,
+      );
+    }
+    throw new Error(message);
+  }
   return parse(body);
 }
 export function useMember() {
