@@ -88,3 +88,25 @@ test('parametric point conversion is bounded and deterministic', () => {
   assert.deepEqual(flattenPathContours(path), [[{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 0, y: 10 }]]);
   assert.throws(() => booleanPathFromPoints([{ x: 0, y: 0 }, { x: Number.NaN, y: 1 }], style), /points/);
 });
+
+test('self-intersecting even-odd operands split crossings before tracing', () => {
+  const left = booleanPathFromPoints([
+    { x: 9.9200323, y: 15.6940323 },
+    { x: 5.750392, y: 13.8093072 },
+    { x: 3.3105492, y: 10.9174121 },
+    { x: 11.5411862, y: 6.1409679 },
+    { x: 11.3371566, y: 3.8497457 },
+  ], style);
+  const right = booleanPathFromPoints([
+    { x: 11.9258892, y: 11.499021 },
+    { x: 10.0847474, y: 14.0699338 },
+    { x: 8.2502544, y: 12.8277843 },
+    { x: 10.3231237, y: 2.5370194 },
+    { x: 15.2920569, y: 3.7997499 },
+  ], style);
+  const intersection = combinePathBooleans([left, right], 'intersect');
+  const exclude = combinePathBooleans([left, right], 'exclude');
+  assert.ok(pathContours(intersection).length >= 1);
+  assert.ok(flattenPathContours(intersection).every((contour) => Math.abs(signedArea(contour)) > 0));
+  assert.ok(pathContours(exclude).length >= 2);
+});

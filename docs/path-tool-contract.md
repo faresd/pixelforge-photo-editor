@@ -46,13 +46,16 @@ and style values are bounded to keep malformed or oversized project files from
 allocating unbounded work. Compound paths preserve the legacy `nodes` and
 `closed` fields as a mirror of their first contour and add at most 64 validated
 contours with a shared `fillRule`. Older single-contour drafts therefore remain
-readable and render with the `nonzero` default, while boolean results use `evenodd` so subtraction holes and
-disjoint components render without baking pixels.
+readable and render with the `nonzero` default, while boolean results use
+`evenodd` so subtraction holes and disjoint components render without baking
+pixels. Arrangement splitting also cuts self-intersections before tracing, so
+valid even-odd paths do not leave dangling edges.
 
 Layer → Combine Shapes now accepts two to eight visible, unlocked, closed path
 or parametric rectangle/ellipse/polygon layers in one group (or at the document
-root). Union, Subtract Front Shape, Intersect and Exclude split bounded line
-arrangements, preserve every resulting contour, and replace the selected layers
+root). Parent folders must also be visible. Union, Subtract Front Shape,
+Intersect and Exclude split bounded line arrangements, including self-crossings,
+preserve every resulting contour, and replace the selected layers
 with one editable path at the original stack position. Open paths, raster/text
 layers, mixed groups, oversized edge sets and empty intersections are rejected
 without a history entry. The operation is local and nondestructive to source

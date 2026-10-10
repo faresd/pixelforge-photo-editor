@@ -1985,7 +1985,17 @@ export default function Home() {
         return { x: layer.width / 2 + Math.cos(angle) * layer.width / 2, y: layer.height / 2 + Math.sin(angle) * layer.height / 2 };
       });
     } else {
-      points = shapePoints(layer.width, layer.height, layer.variant, layer.sides);
+      // Match the renderer's stroke-centered polygon geometry so a boolean
+      // result follows the pixels users see on the canvas.
+      points = shapePoints(
+        Math.max(1, layer.width - layer.stroke),
+        Math.max(1, layer.height - layer.stroke),
+        layer.variant,
+        layer.sides,
+      ).map((point) => ({
+        x: point.x + layer.stroke / 2,
+        y: point.y + layer.stroke / 2,
+      }));
     }
     return booleanPathFromPoints(points.map(map), {
       fill: layer.fill,
@@ -2001,7 +2011,9 @@ export default function Home() {
       setNotice('Select at least two closed vector layers before combining shapes');
       return;
     }
-    if (selected.some((layer) => layerIsLocked(f, layer) || !layer.visible)) {
+    if (selected.some((layer) =>
+      layerIsLocked(f, layer) || !layer.visible || groupForLayer(f, layer)?.visible === false,
+    )) {
       setNotice('Unlock and show all selected vector layers before combining shapes');
       return;
     }
@@ -5242,10 +5254,10 @@ export default function Home() {
     context.fillStyle = 'rgba(56,189,248,.14)';
     context.lineWidth = 1.5;
     context.setLineDash(dashed ? [7, 5] : []);
-    for (const [contourIndex, contour] of contours.entries()) {
+    context.beginPath();
+    for (const contour of contours) {
       if (!contour.nodes.length) continue;
       const transformed = contour.nodes.map(map);
-      context.beginPath();
       context.moveTo(transformed[0].x, transformed[0].y);
       for (const [index, node] of transformed.slice(1).entries()) {
         const sourcePrevious = contour.nodes[index], sourceNode = contour.nodes[index + 1];
@@ -5264,8 +5276,12 @@ export default function Home() {
         }
         context.closePath();
       }
-      context.stroke();
-      if (contour.closed && path.fill) context.fill(path.fillRule === 'evenodd' ? 'evenodd' : 'nonzero');
+    }
+    context.stroke();
+    if (path.fill) context.fill(path.fillRule === 'evenodd' ? 'evenodd' : 'nonzero');
+    for (const [contourIndex, contour] of contours.entries()) {
+      if (!contour.nodes.length) continue;
+      const transformed = contour.nodes.map(map);
       // Expose editable Bezier controls while a path is selected so Direct
       // Selection can discover and drag them without hiding the curve shape.
       context.lineWidth = 1;
@@ -9490,6 +9506,7 @@ export default function Home() {
         const groupIds = new Set(selected.map((candidate) => candidate.groupId || ''));
         return selected.length < 2 || groupIds.size > 1 || selected.some((candidate) =>
           layerIsLocked(frame, candidate) || !candidate.visible ||
+          groupForLayer(frame, candidate)?.visible === false ||
           (candidate.kind === 'line' || candidate.kind === 'text' || candidate.kind === 'raster' ||
             candidate.kind === 'smart-object' || candidate.kind === 'adjustment' ||
             (candidate.kind === 'path' && !booleanPathIsClosed(candidate.path))));

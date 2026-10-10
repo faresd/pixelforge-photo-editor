@@ -216,8 +216,13 @@ export function combinePathBooleans(
       if (left === right) return;
       boundaries.push(left ? edge : { a: edge.b, b: edge.a });
     };
-    for (const edge of splitEdges(leftEdges, rightEdges)) addBoundary(edge);
-    for (const edge of splitEdges(rightEdges, leftEdges)) addBoundary(edge);
+    // Split both operand boundaries at every crossing, including crossings
+    // within one operand. Self-intersecting paths are valid even-odd paths;
+    // leaving an internal crossing unsplit creates dangling half-edges that
+    // cannot be traced into a closed boolean result.
+    const allEdges = [...leftEdges, ...rightEdges];
+    for (const edge of splitEdges(leftEdges, allEdges)) addBoundary(edge);
+    for (const edge of splitEdges(rightEdges, allEdges)) addBoundary(edge);
     const deduped = new Map<string, Edge>();
     for (const edge of boundaries) deduped.set(edgeKey(edge), edge);
     const adjacency = new Map<string, Edge[]>();
@@ -247,11 +252,16 @@ export function combinePathBooleans(
         }
         const candidates = (adjacency.get(destination) || []).filter((candidate) => !used.has(edgeKey(candidate)));
         if (!candidates.length) break;
-        const incoming = Math.atan2(edge.b.y - edge.a.y, edge.b.x - edge.a.x);
+        // Boundary edges are oriented with the selected result on their left.
+        // At a vertex, continue along the half-edge immediately clockwise from
+        // the reverse incoming direction.  Sorting from the forward direction
+        // alone works for convex rectangles but can jump across a concave
+        // junction or discard one branch of an XOR/intersection result.
+        const reverseIncoming = Math.atan2(edge.a.y - edge.b.y, edge.a.x - edge.b.x);
         candidates.sort((left, right) => {
           const angle = (candidate: Edge) => {
-            const value = Math.atan2(candidate.b.y - candidate.a.y, candidate.b.x - candidate.a.x) - incoming;
-            return (value + Math.PI * 2) % (Math.PI * 2);
+            const outgoing = Math.atan2(candidate.b.y - candidate.a.y, candidate.b.x - candidate.a.x);
+            return (reverseIncoming - outgoing + Math.PI * 2) % (Math.PI * 2);
           };
           return angle(left) - angle(right) || edgeKey(left).localeCompare(edgeKey(right));
         });
