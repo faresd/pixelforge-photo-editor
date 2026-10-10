@@ -139,7 +139,13 @@ import {
   type AlignmentMode,
   type DistributionAxis,
 } from '../src/layerAlignment';
-import { layerMergeReason, planLayerMerge } from '../src/layerMerge';
+import {
+  applySelectedLayerMerge,
+  layerMergeReason,
+  planLayerMerge,
+  planSelectedLayerMerge,
+  selectedLayerMergeReason,
+} from '../src/layerMerge';
 import { combineSelectionBounds } from '../src/layerSelection';
 import {
   clippingCandidateBase,
@@ -4972,23 +4978,34 @@ export default function Home() {
   };
   const mergeLayers = async () => {
     const f = current();
-    const plan = planLayerMerge(f);
-    if (!plan.ok) {
-      setNotice(layerMergeReason(plan.reason));
+    const selectionIds = selectedIdsForFrame(f);
+    const selectedPlan =
+      selectionIds.length >= 2 ? planSelectedLayerMerge(f) : undefined;
+    if (selectedPlan && !selectedPlan.ok) {
+      setNotice(selectedLayerMergeReason(selectedPlan.reason));
       return;
     }
+    const pairPlan = selectedPlan ? undefined : planLayerMerge(f);
+    if (!selectedPlan && !pairPlan?.ok) {
+      setNotice(layerMergeReason(pairPlan!.reason));
+      return;
+    }
+    const pairSuccess = pairPlan?.ok ? pairPlan : undefined;
     const beforeIndex = index.current;
     const beforeFrame = f;
-    const lower = f.layers[plan.lowerIndex];
-    const active = f.layers[plan.activeIndex];
+    const selectedIndices = selectedPlan?.ok
+      ? selectedPlan.selectedIndices
+      : [pairSuccess!.lowerIndex, pairSuccess!.activeIndex];
+    const selectedLayers = selectedIndices.map((layerIndex) => f.layers[layerIndex]);
+    const active = selectedLayers[selectedLayers.length - 1];
     try {
-      // Render only the adjacent pair in stack order. Grouped pairs stay
-      // guarded by planLayerMerge because merging them needs its own command
-      // semantics; ordinary folder rendering is isolated in renderFrame.
+      // Render only the selected root-level range in stack order. Grouped
+      // selections are rejected by the planner because they need isolated
+      // folder merge semantics; ordinary folder rendering remains unchanged.
       const image = await renderFrame(
         {
           ...f,
-          layers: [lower, active],
+          layers: selectedLayers,
           groups: [],
           active: active.id,
         },
@@ -4998,32 +5015,43 @@ export default function Home() {
       const mergedFrame = rasterFrame(
         image,
         assets.current,
-        `${lower.name || 'Lower layer'} + ${active.name || 'Active layer'}`,
+        selectedLayers
+          .map((layer) => layer.name || 'Layer')
+          .join(' + '),
       );
       const merged = {
         ...mergedFrame.layers[0],
         visible: true,
         locked: false,
       };
-      const layers = f.layers.slice();
-      layers.splice(plan.lowerIndex, 2, merged);
+      const next = selectedPlan?.ok
+        ? applySelectedLayerMerge(f, selectedPlan, merged)
+        : (() => {
+            const layers = f.layers.slice();
+            layers.splice(pairSuccess!.lowerIndex, 2, merged);
+            return {
+              ...f,
+              layers,
+              ...(f.artboards
+                ? {
+                    artboards: sanitizeArtboardLayerMembership(
+                      f.artboards,
+                      layers.map((layer) => layer.id),
+                    ),
+                  }
+                : {}),
+              active: merged.id,
+              selectedLayerIds: [merged.id],
+            };
+          })();
       if (
-        commit({
-          ...f,
-          layers,
-          ...(f.artboards
-            ? {
-                artboards: sanitizeArtboardLayerMembership(
-                  f.artboards,
-                  layers.map((layer) => layer.id),
-                ),
-              }
-            : {}),
-          active: merged.id,
-          selectedLayerIds: [merged.id],
-        })
+        commit(next)
       )
-        setNotice('Layers merged; undo restores the individual layers');
+        setNotice(
+          selectedPlan?.ok
+            ? `${selectedLayers.length} layers merged; undo restores the individual layers`
+            : 'Layers merged; undo restores the individual layers',
+        );
     } catch {
       setNotice('Could not merge the selected layers');
     }
@@ -9612,8 +9640,10 @@ export default function Home() {
       case 'hide-layer':
         return !layer || Boolean(groupForLayer(frame, layer)?.locked);
       case 'merge-layers': {
-        const plan = planLayerMerge(frame);
-        return !plan.ok;
+        const selected = selectedIdsForFrame(frame);
+        if (selected.length >= 2)
+          return !planSelectedLayerMerge(frame).ok;
+        return !planLayerMerge(frame).ok;
       }
       case 'text-align-left':
       case 'text-align-center':
